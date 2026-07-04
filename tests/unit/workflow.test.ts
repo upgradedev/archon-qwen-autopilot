@@ -11,6 +11,10 @@ import { defaultDecider } from "../../src/ap/decider.js";
 import { fakeSinks, type Sinks } from "../../src/ap/sinks.js";
 import { AutopilotAgent, ConflictError, NotFoundError } from "../../src/agents/autopilot-agent.js";
 
+// Guarantee the offline FakeQwenChatClient (never a live Qwen call) even if a
+// maintainer runs this with DASHSCOPE_API_KEY exported.
+delete process.env.DASHSCOPE_API_KEY;
+
 function makeAgent(): { agent: AutopilotAgent; sinks: Sinks; memory: InMemoryStore } {
   const memory = new InMemoryStore();
   const sinks = fakeSinks();
