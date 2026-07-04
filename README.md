@@ -1,10 +1,19 @@
-# Archon Autopilot — an autonomous accounts-payable agent (Qwen · Track 4)
+# Archon Autopilot — a human-gated accounts-payable agent (Qwen · Track 4)
 
-Archon Autopilot is an **autonomous financial back-office agent** that runs an
-**accounts-payable (AP) workflow end to end** — from a messy incoming vendor
-invoice all the way to an executed action — with **tool-use** driven by **Qwen
-function-calling** and a **human-in-the-loop approval gate** in the middle. It
+Archon Autopilot is a **human-gated accounts-payable (AP) agent**. For each
+incoming vendor invoice, **Qwen function-calling** proposes exactly **one** AP
+action — and **nothing executes until a human approves the exact arguments** (the
+human-in-the-loop gate). It runs the AP workflow from a messy incoming invoice to
+a *proposed* action automatically, then stops and waits for a person. It
 recommends; it never auto-executes.
+
+> **Scope, stated honestly.** The decider is **single-shot** — one tool call per
+> invoice, not a multi-step agentic loop. The execution **sinks are in-memory
+> stubs** (ledger / payment-rail / SMTP), with the interfaces in place for real
+> adapters. **Live Qwen is wired** (real `qwen-plus` function-calling +
+> `text-embedding-v4`); the whole loop is **verified offline via deterministic
+> Fakes** so it runs in CI with no key. Decision quality is **measured** — see
+> [Decision-quality eval](#decision-quality-eval) and [`EVAL.md`](EVAL.md).
 
 It is the **Track-4 (Autopilot Agent)** entry for the Global AI Hackathon Series
 with Qwen Cloud, and it is the **top layer on top of our Track-1 [Archon
@@ -123,7 +132,8 @@ in-memory), and the same "auto-select real Qwen vs. deterministic Fakes by
 environment" design. Where the MemoryAgent *answers questions* from memory, the
 Autopilot *acts* on memory: it recalls a vendor's history to ground a decision,
 then remembers the outcome so the next invoice is judged with more context. Track
-1 is the memory; Track 4 is the autonomous agent that reasons and acts on it.
+1 is the memory; Track 4 is the human-gated agent that reasons over it and acts
+only once a person approves.
 
 ---
 
@@ -199,18 +209,56 @@ The suite is the full pyramid, offline-first:
 
 CI (`.github/workflows/ci.yml`): **gitleaks** (pinned v8.18.4) → **dep-audit**
 (`npm audit`, fails on high/critical) → **typecheck** → **build** (`tsc`) →
-**test** — all with no `DASHSCOPE_API_KEY`, so the whole agent runs on the
-deterministic Fakes.
+**test** → **demo smoke** → **decision-quality eval gate** — all with no
+`DASHSCOPE_API_KEY`, so the whole agent runs on the deterministic Fakes.
 
 ---
 
-## Deferred to follow-ups
+## Decision-quality eval
 
-- A web approval UI over `/pending` + `/approve` + `/amend` + `/reject`.
-- Actual Alibaba Cloud deployment (ECS / Function Compute + ApsaraDB RDS for
-  PostgreSQL) — see [`deploy/DEPLOY_NOTE.md`](deploy/DEPLOY_NOTE.md).
-- An H0-style accuracy eval harness (labelled invoices → decision-quality score).
-- Real ledger / payment-rail / SMTP adapters behind the `Sinks` interfaces.
+The eval turns "the agent proposes actions" into a **measured number**. A labelled
+set of **22 AP scenarios** (`eval/dataset.ts`) — clean new-vendor, clean recurring
+vendor, missing/unreconciled fields, suspected duplicate, amount anomaly,
+ambiguous/messy input, and signal-precedence collisions — each carries the tool a
+human AP clerk would deem correct (**business ground truth**, never traced from the
+Fake's policy). The runner drives the **real decider path** (normalize → validate
+R1–R6 → recall vendor history → Qwen function-calling) and grades **tool-choice
+accuracy**:
+
+```bash
+npm run eval            # drive every scenario, print the table + accuracy N/M
+npm run eval -- --gate  # CI gate: fail if accuracy < the floor
+```
+
+- **Offline (deterministic Fakes, gated in CI):** **21 / 22 (95.5%)** — a
+  **policy / regression** guard over the real intake pipeline. The single miss
+  (`s22`) is a **documented, deliberately-surfaced limitation**, not a hidden
+  failure: a no-parseable-total invoice has no deterministic signal, so it falls
+  through instead of drafting a vendor query. The eval reports it rather than
+  labelling around it.
+- **Online (real `qwen-plus`, run with a key):** the actual **decision-quality**
+  number — the model choosing freely against the same labels. Set
+  `DASHSCOPE_API_KEY` and re-run `npm run eval`; the header self-labels the run
+  `ONLINE` and prints the live model ids.
+
+Method, honesty caveats, and the offline/online split: [`EVAL.md`](EVAL.md).
+
+---
+
+## Current scope and follow-ups
+
+Stated plainly (see also the Scope note up top):
+
+- **Sinks are in-memory stubs.** `draft_journal_entry` / `draft_payment` /
+  `draft_vendor_reply` / `flag_for_review` record what *would* happen to inspectable
+  in-memory Fakes; the `Sinks` interfaces are the drop-in seam for real ledger /
+  payment-rail / SMTP adapters. No ERP, bank, or mail server is contacted.
+- **The decider is single-shot** — one function-calling tool call per invoice, not
+  a multi-step plan/act/observe loop.
+- **Deferred:** a web approval UI over `/pending` + `/approve` + `/amend` +
+  `/reject`; actual Alibaba Cloud deployment (ECS / Function Compute + ApsaraDB RDS
+  for PostgreSQL, see [`deploy/DEPLOY_NOTE.md`](deploy/DEPLOY_NOTE.md)); and the
+  real Sinks adapters above.
 
 ## License
 

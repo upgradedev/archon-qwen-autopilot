@@ -1,4 +1,4 @@
-// HTTP backend for Archon Autopilot — the autonomous accounts-payable agent.
+// HTTP backend for Archon Autopilot — the human-gated accounts-payable agent.
 //
 // This is the service that runs ON ALIBABA CLOUD (Function Compute custom
 // container, or ECS / Container Service). It is a thin HTTP shell around the
@@ -71,13 +71,17 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
       info: {
         title: "Archon Autopilot API",
         description:
-          "HTTP API for Archon Autopilot — an autonomous accounts-payable agent. It " +
+          "HTTP API for Archon Autopilot — a human-gated accounts-payable agent. It " +
           "ingests a messy vendor invoice, validates it, recalls the vendor's history " +
           "from a persistent pgvector memory (the Track-1 MemoryAgent foundation), and " +
-          "uses Qwen function-calling to PROPOSE one AP action. Every proposal waits " +
-          "behind a human approval gate: approve to execute for real, amend to edit " +
+          "uses Qwen function-calling to PROPOSE one AP action per invoice. Nothing " +
+          "executes until a human approves: every proposal waits behind a human approval " +
+          "gate — approve to execute the exact proposed args for real, amend to edit " +
           "then execute, or reject to discard. On approval the outcome is written back " +
-          "to memory so the agent gets smarter over time.",
+          "to memory so the next decision for that vendor is better grounded. The " +
+          "decider is single-shot (one tool call per invoice, not a multi-step loop); " +
+          "the execution sinks are in-memory stubs (interfaces ready for real ledger / " +
+          "SMTP / payment adapters).",
         version: pkg.version,
       },
       tags: [
