@@ -1,0 +1,47 @@
+# Local dev stack: a pgvector database (memory + work-item store) + the Autopilot
+# HTTP backend. Mirrors the CI service container and the production Alibaba Cloud
+# PostgreSQL — same pg-wire, same pgvector SQL.
+#
+#   docker compose up -d db      # just the database (for `npm run db:schema` + tests)
+#   docker compose up --build    # database + backend
+#
+# Without a DASHSCOPE_API_KEY the backend runs the deterministic offline Fakes,
+# so the whole intake → decide → approve → execute loop works with no key.
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  backend:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/postgres
+      PORT: 9000
+      # Real Qwen when DASHSCOPE_API_KEY is present (from the shell env or a .env
+      # file next to this compose file); otherwise it resolves to empty and the
+      # app falls back to the deterministic offline Fakes (src/qwen/client.ts
+      # hasQwenCreds()). The `:-` defaults keep `docker compose config` valid even
+      # when neither is set, so a fresh clone works with or without a key.
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      DASHSCOPE_BASE_URL: ${DASHSCOPE_BASE_URL:-https://dashscope-intl.aliyuncs.com/compatible-mode/v1}
+    ports:
+      - "9000:9000"
+
+volumes:
+  pgdata:

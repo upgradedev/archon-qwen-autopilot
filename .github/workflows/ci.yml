@@ -1,0 +1,94 @@
+name: CI
+
+# Archon Autopilot CI — gitleaks-first, then dep-audit → typecheck → build → test.
+# Runs FULLY OFFLINE: with no DASHSCOPE_API_KEY the decider + embedder auto-fall
+# back to the deterministic Fakes (FakeQwenChatClient + FakeEmbedder), so the
+# whole AP loop — intake → Qwen-decide → HITL approve → execute — is exercised end
+# to end with no secrets and no spend. A pgvector service container backs the
+# DB-integration tests; the mandatory intake→pending→approve→executed slice runs
+# in-memory, so the suite is green even with no database.
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # Stage 1 — fail fast on any committed secret.
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks detect (pinned v8.18.4, redacted)
+        run: |
+          curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.18.4/gitleaks_8.18.4_linux_x64.tar.gz | tar -xz gitleaks
+          ./gitleaks detect --source . --redact --no-banner
+
+  # Stage 2a — dependency vulnerability audit (offline; runs in parallel with tests).
+  # High/critical advisories fail the job; low/moderate are reported, not blocking.
+  dep-audit:
+    needs: secret-scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install deps
+        run: npm ci
+      - name: npm audit (fail on high/critical)
+        run: npm audit --audit-level=high
+
+  # Stage 2b — typecheck → build → the full testing pyramid.
+  build-test:
+    needs: secret-scan
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+    services:
+      pgvector:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build (tsc)
+        run: npm run build
+
+      - name: Apply schema (creates agent_memory vector(1024) + ap_workitems)
+        run: npm run db:schema
+
+      - name: Unit tests (no infra, no key)
+        run: npm run test:unit
+
+      - name: Integration tests (offline HTTP slice + real pgvector stores)
+        run: npm run test:integration
+
+      - name: End-to-end AP loop smoke (offline Fakes — no key)
+        run: npm run demo

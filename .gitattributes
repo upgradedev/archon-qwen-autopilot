@@ -1,0 +1,4 @@
+# Shell scripts MUST stay LF-only — they run on the Linux deploy box (bash chokes
+# on CRLF: `\r` becomes part of args/paths). Force LF in the working tree too, so a
+# Windows checkout that gets rsync'd to the box never carries CRLF.
+*.sh text eol=lf

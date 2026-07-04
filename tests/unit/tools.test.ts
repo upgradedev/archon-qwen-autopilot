@@ -1,0 +1,62 @@
+// Unit — the tool layer: each tool's schema is a well-formed OpenAI-compatible
+// function (with the reasoning + confidence meta-fields), and each execute() stub
+// produces the correct side-effect on the injected Fake sinks.
+
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { TOOLS, toolByName, toolDefs, META_FIELDS } from "../../src/ap/tools.js";
+import { fakeSinks } from "../../src/ap/sinks.js";
+import { normalizeInvoice } from "../../src/ap/normalize.js";
+
+const inv = normalizeInvoice({ vendor: "Acme", invoice_number: "A-1", tax_id: "T", total: 1200, currency: "EUR" });
+
+test("every tool exposes a valid function schema with reasoning + confidence", () => {
+  assert.equal(TOOLS.length, 4);
+  for (const t of TOOLS) {
+    assert.equal(t.def.type, "function");
+    assert.equal(t.def.function.name, t.name);
+    const params = t.def.function.parameters as { properties: Record<string, unknown>; required: string[] };
+    for (const meta of META_FIELDS) {
+      assert.ok(meta in params.properties, `${t.name} schema should declare ${meta}`);
+      assert.ok(params.required.includes(meta), `${t.name} should require ${meta}`);
+    }
+  }
+});
+
+test("toolDefs returns one def per tool; toolByName resolves and rejects unknowns", () => {
+  assert.equal(toolDefs().length, 4);
+  assert.ok(toolByName("draft_payment"));
+  assert.equal(toolByName("nonexistent_tool"), undefined);
+});
+
+test("draft_journal_entry posts a balanced debit/credit entry to the ledger", () => {
+  const sinks = fakeSinks();
+  const r = toolByName("draft_journal_entry")!.execute({ expense_account: "Office Supplies", amount: 1200 }, inv, sinks);
+  assert.equal(r.ok, true);
+  assert.equal(sinks.ledger.entries().length, 1);
+  const entry = sinks.ledger.entries()[0]!;
+  assert.equal(entry.lines.find((l) => l.debit)!.debit, 1200);
+  assert.equal(entry.lines.find((l) => l.credit)!.credit, 1200);
+});
+
+test("draft_payment records a payment, falling back to the invoice total when amount is omitted", () => {
+  const sinks = fakeSinks();
+  const r = toolByName("draft_payment")!.execute({ vendor: "Acme" }, inv, sinks);
+  assert.equal(r.ok, true);
+  assert.equal(sinks.payments.payments().length, 1);
+  assert.equal(sinks.payments.payments()[0]!.amount, 1200); // fell back to inv.total
+});
+
+test("draft_vendor_reply sends an email to the Fake outbox", () => {
+  const sinks = fakeSinks();
+  toolByName("draft_vendor_reply")!.execute({ subject: "Query", body: "Please confirm your tax id." }, inv, sinks);
+  assert.equal(sinks.email.outbox().length, 1);
+  assert.equal(sinks.email.outbox()[0]!.subject, "Query");
+});
+
+test("flag_for_review raises an escalation and clamps an invalid priority to normal", () => {
+  const sinks = fakeSinks();
+  toolByName("flag_for_review")!.execute({ reason: "Suspected duplicate", priority: "bogus" }, inv, sinks);
+  assert.equal(sinks.reviews.escalations().length, 1);
+  assert.equal(sinks.reviews.escalations()[0]!.priority, "normal");
+});

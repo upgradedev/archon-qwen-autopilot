@@ -1,0 +1,35 @@
+{
+  "name": "archon-qwen-autopilot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Archon Autopilot — an autonomous accounts-payable back-office agent that runs the AP workflow end-to-end with Qwen function-calling (Alibaba Cloud Model Studio / DashScope), a human-in-the-loop approval gate, and a persistent pgvector MemoryAgent foundation. Track-4 (Autopilot Agent) entry; layers on the Track-1 Archon MemoryAgent.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "db:schema": "tsx scripts/apply-schema.ts",
+    "demo": "tsx scripts/demo-autopilot.ts",
+    "start": "tsx src/server.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc",
+    "test:unit": "node --import tsx --test tests/unit/embeddings.test.ts tests/unit/memory.test.ts tests/unit/normalize.test.ts tests/unit/validate.test.ts tests/unit/tools.test.ts tests/unit/decider.test.ts tests/unit/workflow.test.ts tests/unit/server.test.ts",
+    "test:integration": "node --import tsx --test --test-concurrency=1 tests/integration/workflow-http.test.ts tests/integration/pgvector-store.test.ts",
+    "test": "node --import tsx --test --test-concurrency=1 tests/unit/embeddings.test.ts tests/unit/memory.test.ts tests/unit/normalize.test.ts tests/unit/validate.test.ts tests/unit/tools.test.ts tests/unit/decider.test.ts tests/unit/workflow.test.ts tests/unit/server.test.ts tests/integration/workflow-http.test.ts tests/integration/pgvector-store.test.ts"
+  },
+  "dependencies": {
+    "@fastify/cors": "^10.1.0",
+    "@fastify/swagger": "^9.7.0",
+    "@fastify/swagger-ui": "^5.2.6",
+    "fastify": "^5.1.0",
+    "openai": "^4.77.0",
+    "pg": "^8.13.1",
+    "tsx": "^4.19.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "@types/pg": "^8.11.10",
+    "typescript": "^5.5.3"
+  }
+}
