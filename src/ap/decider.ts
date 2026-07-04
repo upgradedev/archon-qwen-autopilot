@@ -37,7 +37,7 @@ export interface DecisionInput {
 }
 
 const SYSTEM_PROMPT =
-  "You are Archon Autopilot, an autonomous accounts-payable clerk for a small " +
+  "You are Archon Autopilot, a human-gated accounts-payable clerk for a small " +
   "business. For each incoming vendor invoice you are given the normalized " +
   "invoice, the automated validation findings, and the vendor's history recalled " +
   "from your persistent memory. You MUST choose exactly ONE tool to act on the " +

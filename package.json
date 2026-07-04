@@ -2,7 +2,7 @@
   "name": "archon-qwen-autopilot",
   "version": "0.1.0",
   "private": true,
-  "description": "Archon Autopilot — an autonomous accounts-payable back-office agent that runs the AP workflow end-to-end with Qwen function-calling (Alibaba Cloud Model Studio / DashScope), a human-in-the-loop approval gate, and a persistent pgvector MemoryAgent foundation. Track-4 (Autopilot Agent) entry; layers on the Track-1 Archon MemoryAgent.",
+  "description": "Archon Autopilot — a human-gated accounts-payable agent. Qwen function-calling (Alibaba Cloud Model Studio / DashScope) proposes ONE action per invoice; nothing executes until a human approves the exact args (human-in-the-loop gate). Grounded on a persistent pgvector MemoryAgent foundation. Live Qwen wired, verified offline via deterministic Fakes. Track-4 (Autopilot Agent) entry; layers on the Track-1 Archon MemoryAgent.",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -11,6 +11,7 @@
   "scripts": {
     "db:schema": "tsx scripts/apply-schema.ts",
     "demo": "tsx scripts/demo-autopilot.ts",
+    "eval": "tsx eval/run.ts",
     "start": "tsx src/server.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc",
