@@ -92,3 +92,6 @@ jobs:
 
       - name: End-to-end AP loop smoke (offline Fakes — no key)
         run: npm run demo
+
+      - name: Decision-quality eval (offline policy/regression gate — no key)
+        run: npm run eval -- --gate
