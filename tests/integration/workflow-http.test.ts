@@ -113,3 +113,98 @@ test("memory grounds the next decision: a re-sent invoice is flagged as a duplic
   const reject = await app.inject({ method: "POST", url: `/reject/${item.id}`, payload: { reason: "duplicate" } });
   assert.equal(reject.json().status, "rejected");
 });
+
+test("amend audit trail: BOTH the proposed args and the amended args are persisted (prev → new)", async () => {
+  const intake = await app.inject({
+    method: "POST",
+    url: "/intake",
+    payload: { invoice: { vendor: "Wonka", invoice_number: "WK-1", tax_id: "TX-3", subtotal: 700, tax: 140, total: 840, date: "2026-05-01" } },
+  });
+  const id = intake.json().id;
+  const proposedArgs = intake.json().proposed.args;
+
+  const amend = await app.inject({
+    method: "POST",
+    url: `/amend/${id}`,
+    payload: { args: { expense_account: "Consulting", amount: 840 }, reason: "reclassify", by: "clerk@demo" },
+  });
+  const item = amend.json();
+  assert.equal(item.status, "approved");
+  assert.equal(item.amended, true);
+  // The audit trail keeps the ORIGINAL proposal AND the human's amended args.
+  assert.ok(item.amendment, "amendment audit must be present");
+  assert.deepEqual(item.amendment.proposedArgs, proposedArgs); // prev preserved, not overwritten
+  assert.equal(item.amendment.amendedArgs.expense_account, "Consulting"); // new
+  assert.equal(item.amendment.amendedBy, "clerk@demo");
+  assert.equal(item.amendment.reason, "reclassify");
+  // The amended args are exactly what the approved proposal now carries (== what ran).
+  assert.equal(item.proposed.args.expense_account, "Consulting");
+});
+
+test("GET /decided returns approved/amended/rejected items with outcome + timestamp; pending excludes them", async () => {
+  // Fresh, isolated app so this test owns its decided history deterministically.
+  const local = await buildServer({
+    embedder: new FakeEmbedder(),
+    memory: new InMemoryStore(),
+    workitems: new InMemoryWorkItemStore(),
+    loop: defaultLoop(),
+    sinks: fakeSinks(),
+  });
+  await local.ready();
+  try {
+    const a = await local.inject({ method: "POST", url: "/intake", payload: { invoice: { vendor: "Aperture", invoice_number: "AP-1", tax_id: "T", subtotal: 100, tax: 20, total: 120 } } });
+    const b = await local.inject({ method: "POST", url: "/intake", payload: { invoice: { vendor: "Black Mesa", invoice_number: "BM-1", tax_id: "T", subtotal: 200, tax: 40, total: 240 } } });
+    await local.inject({ method: "POST", url: `/approve/${a.json().id}` });
+    await local.inject({ method: "POST", url: `/reject/${b.json().id}`, payload: { reason: "not ours" } });
+
+    const decided = (await local.inject({ method: "GET", url: "/decided" })).json().decided;
+    assert.equal(decided.length, 2);
+    const statuses = decided.map((d: { status: string }) => d.status).sort();
+    assert.deepEqual(statuses, ["approved", "rejected"]);
+    for (const d of decided) {
+      assert.ok(d.decidedAt, "each decided item carries a decision timestamp");
+    }
+    // Decided items are gone from the pending queue.
+    assert.equal((await local.inject({ method: "GET", url: "/pending" })).json().pending.length, 0);
+  } finally {
+    await local.close();
+  }
+});
+
+test("gate invariant through the STREAM path: /intake/stream proposes only; approve executes exactly once; re-approve 409", async () => {
+  const local = await buildServer({
+    embedder: new FakeEmbedder(),
+    memory: new InMemoryStore(),
+    workitems: new InMemoryWorkItemStore(),
+    loop: defaultLoop(),
+    sinks,
+  });
+  await local.ready();
+  try {
+    const ledgerBefore = sinks.ledger.entries().length;
+    const stream = await local.inject({
+      method: "POST",
+      url: "/intake/stream",
+      payload: { invoice: { vendor: "Cyberdyne", invoice_number: "CY-1", tax_id: "T", subtotal: 100, tax: 20, total: 120 } },
+    });
+    assert.equal(stream.statusCode, 200);
+    // Nothing side-effecting fired during the streamed loop.
+    assert.equal(sinks.ledger.entries().length, ledgerBefore);
+
+    const pending = (await local.inject({ method: "GET", url: "/pending" })).json().pending;
+    assert.equal(pending.length, 1);
+    const id = pending[0].id;
+
+    const approve = await local.inject({ method: "POST", url: `/approve/${id}` });
+    assert.equal(approve.statusCode, 200);
+    assert.equal(sinks.ledger.entries().length, ledgerBefore + 1); // executed exactly once
+
+    // It now shows in /decided and can NEVER re-execute (the gate).
+    assert.ok((await local.inject({ method: "GET", url: "/decided" })).json().decided.some((d: { id: string }) => d.id === id));
+    const reapprove = await local.inject({ method: "POST", url: `/approve/${id}` });
+    assert.equal(reapprove.statusCode, 409);
+    assert.equal(sinks.ledger.entries().length, ledgerBefore + 1); // still exactly once — no double-execute
+  } finally {
+    await local.close();
+  }
+});

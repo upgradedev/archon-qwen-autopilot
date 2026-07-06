@@ -32,7 +32,7 @@ import { toolByName } from "../ap/tools.js";
 import { toRecalledFact } from "../ap/validate.js";
 import type { Sinks } from "../ap/sinks.js";
 import type { WorkItemStore } from "../ap/workitem-store.js";
-import type { RawInvoice, RecalledFact, WorkItem } from "../types.js";
+import type { RawInvoice, RecalledFact, TraceStep, WorkItem } from "../types.js";
 
 // Raised when a work item id does not exist → HTTP 404.
 export class NotFoundError extends Error {}
@@ -43,6 +43,14 @@ export class ConflictError extends Error {}
 export interface AmendPatch {
   args?: Record<string, unknown>; // domain-arg edits merged onto the proposal
   reason?: string; // human note on why it was amended
+  by?: string; // optional operator identity, recorded on the amend audit trail
+}
+
+// Options for a single intake run. `onStep` is an optional live observer of the
+// loop's autonomous read/analyze steps (used by the SSE /intake/stream route to
+// stream the reasoning as it happens); it never affects the decision.
+export interface IntakeOptions {
+  onStep?: (step: TraceStep) => void;
 }
 
 export class AutopilotAgent {
@@ -55,7 +63,7 @@ export class AutopilotAgent {
   ) {}
 
   // ── intake → multi-step ReAct loop → PENDING (no execution) ────────────────
-  async intake(raw: RawInvoice): Promise<WorkItem> {
+  async intake(raw: RawInvoice, opts: IntakeOptions = {}): Promise<WorkItem> {
     const invoice = normalizeInvoice(raw);
 
     // Run the bounded observe→decide→act loop. Inside it the agent recalls the
@@ -68,6 +76,7 @@ export class AutopilotAgent {
       invoice,
       embedder: this.embedder,
       memory: this.memory,
+      onStep: opts.onStep, // live-stream each reasoning step (SSE) — no effect on the decision
     });
 
     const item: WorkItem = {
@@ -109,6 +118,13 @@ export class AutopilotAgent {
     return this.workitems.listPending();
   }
 
+  // The DECIDED history (approved / amended / rejected), most-recent first — the
+  // "where did the one I approved go?" view. Read-only: decided items are terminal
+  // and can never re-execute.
+  async decided(): Promise<WorkItem[]> {
+    return this.workitems.listDecided();
+  }
+
   async get(id: string): Promise<WorkItem> {
     const item = await this.workitems.get(id);
     if (!item) throw new NotFoundError(`work item ${id} not found`);
@@ -137,11 +153,16 @@ export class AutopilotAgent {
   }
 
   // A human edits the proposed DOMAIN arguments, then approves. The merged args
-  // are what execute — so the human approves EXACTLY what runs.
+  // are what execute — so the human approves EXACTLY what runs. We capture the
+  // ORIGINAL proposed args BEFORE merging, then persist both sides as an audit
+  // trail (item.amendment = { proposedArgs → amendedArgs }) so the decided view can
+  // show the exact prev → new diff.
   async amend(id: string, patch: AmendPatch): Promise<WorkItem> {
     const item = await this.requirePending(id);
-    const mergedArgs = { ...item.proposed.args, ...(patch.args ?? {}) };
+    const proposedArgs = item.proposed.args; // the agent's original args, before the human edit
+    const mergedArgs = { ...proposedArgs, ...(patch.args ?? {}) };
     item.proposed = { ...item.proposed, args: mergedArgs };
+    item.amendment = { proposedArgs, amendedArgs: mergedArgs, amendedBy: patch.by, reason: patch.reason };
     return this.executeAndRemember(item, mergedArgs, { amended: true, reason: patch.reason });
   }
 

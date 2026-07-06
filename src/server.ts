@@ -29,12 +29,16 @@ import { UI_HTML } from "./ui.js";
 import { buildAgent, type AutopilotDeps } from "./deps.js";
 import { skillCatalog } from "./skills/catalog.js";
 import { ConflictError, NotFoundError } from "./agents/autopilot-agent.js";
+import { DailyRateLimiter } from "./ap/rate-limit.js";
+import type { TraceStep } from "./types.js";
 
 const pkg = createRequire(import.meta.url)("../package.json") as { version: string };
 
 // The HTTP server shares the exact dependency wiring the MCP server uses (deps.ts),
-// so the two surfaces can never drift.
-export type ServerDeps = AutopilotDeps;
+// so the two surfaces can never drift. It adds one HTTP-only concern the agent does
+// not have: the daily upload rate limiter (the open demo's budget guardrail). It is
+// injectable so a test can supply a limiter with a low cap + a fake clock.
+export type ServerDeps = AutopilotDeps & { rateLimiter?: DailyRateLimiter };
 
 // Response bodies are intentionally permissive (`additionalProperties: true`).
 // Fastify serializes responses against their schema and STRIPS undeclared fields,
@@ -109,6 +113,11 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
   const { agent, deps: resolved } = buildAgent(deps);
   const { embedder, loop } = resolved;
 
+  // The open demo's budget guardrail: invoice uploads are capped per UTC day. Built
+  // per server instance (never a module singleton, so counts never bleed across
+  // tests). See src/ap/rate-limit.ts for the 10/day rationale.
+  const rateLimiter = deps.rateLimiter ?? new DailyRateLimiter();
+
   app.get(
     "/health",
     {
@@ -182,14 +191,66 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
       },
     },
     async (req, reply) => {
-      const body = req.body ?? {};
-      // Accept either { invoice: {...} } or a bare invoice object.
-      const raw = body.invoice && typeof body.invoice === "object" ? body.invoice : body;
-      if (!raw || typeof raw !== "object" || Object.keys(raw).length === 0) {
-        return reply.code(400).send({ error: "an invoice payload is required (send { invoice: {...} })" });
+      // Order matters: validate the payload FIRST (a 400 must not burn budget), then
+      // check-and-consume the daily limiter (429 when the cap is reached), then run
+      // the loop. So an invalid or over-limit upload never reaches the agent.
+      const raw = extractInvoice(req.body);
+      if (!raw) return reply.code(400).send({ error: "an invoice payload is required (send { invoice: {...} })" });
+      const rl = rateLimiter.consume();
+      if (!rl.allowed) return reply.code(429).send(rateLimitError(rl));
+      return agent.intake(raw);
+    }
+  );
+
+  // 1..5 — SAME pipeline as /intake, but STREAMED: the loop's reasoning steps are
+  // emitted live as Server-Sent Events (`event: step`), then the final proposal
+  // (`event: proposal`) and a close (`event: done`). This backs the UI's "watch the
+  // agent work" upload view. The human gate is unchanged — the loop only proposes;
+  // nothing executes here.
+  app.post<{ Body: { invoice?: Record<string, unknown> } }>(
+    "/intake/stream",
+    {
+      schema: {
+        summary: "Intake a vendor invoice, streaming the reasoning live (SSE)",
+        description:
+          "Same as POST /intake, but streams each autonomous read/analyze step as a Server-Sent " +
+          "Event (`event: step`) as it happens, then `event: proposal` (the full PENDING work item) " +
+          "and `event: done`. Nothing executes — it only proposes. Rate-limited like /intake.",
+        tags: ["workflow"],
+        body: {
+          type: "object",
+          additionalProperties: true,
+          properties: { invoice: { type: "object", additionalProperties: true } },
+        },
+        produces: ["text/event-stream"],
+      },
+    },
+    async (req, reply) => {
+      const raw = extractInvoice(req.body);
+      if (!raw) return reply.code(400).send({ error: "an invoice payload is required (send { invoice: {...} })" });
+      const rl = rateLimiter.consume();
+      if (!rl.allowed) return reply.code(429).send(rateLimitError(rl));
+
+      // Take over the raw socket and speak text/event-stream by hand.
+      reply.hijack();
+      const res = reply.raw;
+      res.writeHead(200, {
+        "content-type": "text/event-stream",
+        "cache-control": "no-cache",
+        connection: "keep-alive",
+      });
+      const send = (event: string, data: unknown) =>
+        res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      try {
+        send("start", { message: "processing invoice", remaining: rl.remaining });
+        const item = await agent.intake(raw, { onStep: (step: TraceStep) => send("step", step) });
+        send("proposal", item);
+        send("done", { id: item.id });
+      } catch (err) {
+        send("error", { error: err instanceof Error ? err.message : "intake failed" });
+      } finally {
+        res.end();
       }
-      const item = await agent.intake(raw as Record<string, unknown>);
-      return item;
     }
   );
 
@@ -204,6 +265,22 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
       },
     },
     async () => ({ pending: await agent.pending() })
+  );
+
+  app.get(
+    "/decided",
+    {
+      schema: {
+        summary: "The decided history",
+        description:
+          "Lists every work item a human has already decided — approved, amended, or rejected — " +
+          "most-recently-decided first, each with its outcome, decision timestamp, and (for an " +
+          "amended item) the prev → new amend audit trail. Read-only: decided items never re-execute.",
+        tags: ["approval"],
+        response: { 200: looseObject },
+      },
+    },
+    async () => ({ decided: await agent.decided() })
   );
 
   app.post<{ Params: { id: string } }>(
@@ -264,6 +341,26 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
   );
 
   return app;
+}
+
+// Accept either { invoice: {...} } or a bare invoice object; return the invoice
+// record, or null when there is no usable payload (→ 400). Shared by /intake +
+// /intake/stream so both validate identically.
+function extractInvoice(body: unknown): Record<string, unknown> | null {
+  const b = (body ?? {}) as { invoice?: unknown };
+  const raw = b.invoice && typeof b.invoice === "object" ? b.invoice : b;
+  if (!raw || typeof raw !== "object" || Object.keys(raw as object).length === 0) return null;
+  return raw as Record<string, unknown>;
+}
+
+// The 429 body for an over-limit upload — states the cap explicitly so the caller
+// (and the UI) can show a clear "come back tomorrow" message.
+function rateLimitError(rl: { limit: number; day: string }): { error: string; limit: number; day: string } {
+  return {
+    error: `daily upload limit reached (${rl.limit}/day, UTC). This is an open demo — the cap protects the Qwen API budget. Resets at 00:00 UTC.`,
+    limit: rl.limit,
+    day: rl.day,
+  };
 }
 
 // Map the agent's domain errors to HTTP status codes: unknown id → 404, an

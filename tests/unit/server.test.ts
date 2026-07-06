@@ -11,18 +11,22 @@ import { InMemoryStore } from "../../src/memory/store.js";
 import { InMemoryWorkItemStore } from "../../src/ap/workitem-store.js";
 import { defaultLoop } from "../../src/ap/loop.js";
 import { fakeSinks } from "../../src/ap/sinks.js";
+import { DailyRateLimiter } from "../../src/ap/rate-limit.js";
 
 let app: FastifyInstance;
 
-function deps(): ServerDeps {
+function deps(extra: Partial<ServerDeps> = {}): ServerDeps {
   return {
     embedder: new FakeEmbedder(),
     memory: new InMemoryStore(),
     workitems: new InMemoryWorkItemStore(),
     loop: defaultLoop(),
     sinks: fakeSinks(),
+    ...extra,
   };
 }
+
+const sampleInvoice = { vendor: "Acme", invoice_number: "A-1", tax_id: "T", subtotal: 100, tax: 20, total: 120 };
 
 before(async () => {
   delete process.env.DASHSCOPE_API_KEY; // guarantee the offline Fakes
@@ -149,5 +153,72 @@ test("GET /docs serves the interactive Swagger UI", async () => {
   if (res.statusCode >= 300) {
     const follow = await app.inject({ method: "GET", url: res.headers.location as string });
     assert.equal(follow.statusCode, 200);
+  }
+});
+
+test("GET /decided lists decided items (empty array on a fresh app)", async () => {
+  const res = await app.inject({ method: "GET", url: "/decided" });
+  assert.equal(res.statusCode, 200);
+  assert.ok(Array.isArray(res.json().decided));
+});
+
+test("upload rate limit: the default cap is 10/day and the 11th upload → 429 (open-demo budget guard)", async () => {
+  // A dedicated app so the shared `before` app's usage does not affect the count,
+  // and a pinned clock so all 11 uploads land in the same UTC day.
+  const local = await buildServer(deps({ rateLimiter: new DailyRateLimiter(10, () => new Date("2026-07-06T09:00:00Z")) }));
+  await local.ready();
+  try {
+    for (let i = 1; i <= 10; i++) {
+      const ok = await local.inject({ method: "POST", url: "/intake", payload: { invoice: sampleInvoice } });
+      assert.equal(ok.statusCode, 200, `upload #${i} should be accepted`);
+    }
+    const over = await local.inject({ method: "POST", url: "/intake", payload: { invoice: sampleInvoice } });
+    assert.equal(over.statusCode, 429);
+    assert.match(over.json().error, /daily upload limit/i);
+    assert.equal(over.json().limit, 10);
+    // The streaming upload shares the same budget — also 429 once over.
+    const overStream = await local.inject({ method: "POST", url: "/intake/stream", payload: { invoice: sampleInvoice } });
+    assert.equal(overStream.statusCode, 429);
+  } finally {
+    await local.close();
+  }
+});
+
+test("rate limit: an invalid payload is a 400 and does NOT consume budget", async () => {
+  const local = await buildServer(deps({ rateLimiter: new DailyRateLimiter(1) }));
+  await local.ready();
+  try {
+    // Two empty-body 400s must not exhaust the budget-of-1 …
+    for (let i = 0; i < 2; i++) {
+      const bad = await local.inject({ method: "POST", url: "/intake", payload: {} });
+      assert.equal(bad.statusCode, 400);
+    }
+    // … so the one real upload still succeeds.
+    const ok = await local.inject({ method: "POST", url: "/intake", payload: { invoice: sampleInvoice } });
+    assert.equal(ok.statusCode, 200);
+  } finally {
+    await local.close();
+  }
+});
+
+test("POST /intake/stream streams the reasoning live (SSE) then the proposal, executing nothing", async () => {
+  const local = await buildServer(deps());
+  await local.ready();
+  try {
+    const res = await local.inject({ method: "POST", url: "/intake/stream", payload: { invoice: sampleInvoice } });
+    assert.equal(res.statusCode, 200);
+    assert.match(String(res.headers["content-type"]), /text\/event-stream/);
+    // The stream carries live step events, then the final proposal + done.
+    assert.match(res.body, /event: step/);
+    assert.match(res.body, /recall_vendor_history/);
+    assert.match(res.body, /event: proposal/);
+    assert.match(res.body, /event: done/);
+    // It only PROPOSED — the item sits PENDING in the queue, nothing executed.
+    const pending = await local.inject({ method: "GET", url: "/pending" });
+    assert.equal(pending.json().pending.length, 1);
+    assert.equal(pending.json().pending[0].status, "pending");
+    assert.equal(pending.json().pending[0].execution, undefined);
+  } finally {
+    await local.close();
   }
 });

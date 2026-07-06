@@ -68,6 +68,20 @@ test("clean new vendor: the loop recalls + validates (≥2 autonomous steps), th
   assert.ok(res.findings.some((f) => f.rule === "R1"));
 });
 
+test("onStep streams each autonomous step live, once per trace step, before the terminal action", async () => {
+  const streamed: string[] = [];
+  const loop = new AutopilotLoop(new FakeQwenChatClient());
+  const invoice = normalizeInvoice({ vendor: "StreamCo", invoice_number: "S-1", tax_id: "T", subtotal: 100, tax: 20, total: 120 });
+  const res = await loop.run({ invoice, ...loopDeps(), onStep: (s) => streamed.push(s.tool) });
+
+  // The observer fired exactly once per persisted trace step, in order — this is the
+  // SSE stream's contract. It is a pure observer: the decision is unchanged.
+  assert.equal(streamed.length, res.trace.length);
+  assert.deepEqual(streamed, res.trace.map((t) => t.tool));
+  assert.equal(streamed[0], "recall_vendor_history");
+  assert.equal(res.stopReason, "terminal_action");
+});
+
 test("known/recurring vendor: the loop computes variance before proposing draft_payment", async () => {
   // Seed the vendor's history through a full intake so it lands in memory.
   const memory = new InMemoryStore();

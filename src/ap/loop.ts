@@ -63,6 +63,12 @@ export interface LoopInput {
   invoice: NormalizedInvoice;
   embedder: Embedder;
   memory: MemoryStore;
+  // Optional run-scoped observer, fired as each autonomous read/analyze step is
+  // appended to the trace. This is what lets a caller STREAM the loop's reasoning
+  // live (the SSE /intake/stream route) without changing the loop's logic — it is a
+  // pure observer with no side-effect on the decision. Absent (tests, MCP, eval),
+  // the loop behaves exactly as before.
+  onStep?: (step: TraceStep) => void;
 }
 
 export interface LoopResult {
@@ -155,7 +161,9 @@ export class AutopilotLoop {
         const alreadyRan = hasRun(state, name);
         const observation = await executeAnalysisTool(name, parsed, state, input);
         const reasoning = typeof parsed["reasoning"] === "string" ? (parsed["reasoning"] as string) : "";
-        trace.push({ step, tool: name, args: stripMeta(parsed), observation, reasoning });
+        const traceStep = { step, tool: name, args: stripMeta(parsed), observation, reasoning };
+        trace.push(traceStep);
+        input.onStep?.(traceStep); // stream the step live (SSE) — pure observer, no effect on the decision
         if (alreadyRan) {
           noProgress++;
           if (noProgress >= MAX_NO_PROGRESS) {
