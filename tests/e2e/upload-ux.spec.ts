@@ -112,3 +112,21 @@ test('clicking "Process invoice" runs the loop, streams the live steps, and the 
   await page.locator("#tabDecided").click();
   await expect(page.locator("#decided")).toContainText("Nothing decided yet");
 });
+
+test("paste-JSON path still works: filling the box and clicking Process runs the loop → a PENDING proposal", async ({ page }) => {
+  await page.goto("/");
+  await dismissTour(page);
+
+  // "Use sample JSON" fills the editable box (the paste-JSON entry point) — no upload,
+  // no extraction, no ticket. Processing it must still run the loop and queue a proposal.
+  await page.locator("#fillSample").click();
+  await expect(page.locator("#invoiceInput")).toHaveValue(/Meridian Logistics/);
+
+  await page.locator("#processBtn").click();
+
+  await expect(page.locator("#processView").locator(".proc-step").first()).toBeVisible();
+  const card = page.locator("#queue .card").first();
+  await expect(card).toBeVisible();
+  await expect(card).toContainText("Meridian Logistics");
+  await expect(card.locator("button.approve")).toBeVisible();
+});

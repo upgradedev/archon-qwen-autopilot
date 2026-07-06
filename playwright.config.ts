@@ -34,7 +34,9 @@ export default defineConfig({
     url: `${BASE_URL}/health`,
     reuseExistingServer: !process.env.CI,
     timeout: 60_000,
-    // Force the offline posture regardless of the host environment.
-    env: { PORT, DASHSCOPE_API_KEY: "", DATABASE_URL: "" },
+    // Force the offline posture regardless of the host environment. A high daily
+    // upload cap keeps the shared-server suite well clear of the 10/day guard (which
+    // exists for the open live demo, not the test run).
+    env: { PORT, DASHSCOPE_API_KEY: "", DATABASE_URL: "", UPLOAD_DAILY_LIMIT: "1000" },
   },
 });
