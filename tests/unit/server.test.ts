@@ -156,8 +156,15 @@ test("GET / ships the enriched UI: upload + live process view, collapsible trace
   assert.match(res.body, /accept="\.pdf,\.png,\.jpg,\.jpeg/);
   assert.match(res.body, /Qwen-VL/);
   assert.match(res.body, /id="sampleDoc"/); // "Use sample document" button
-  assert.match(res.body, /\/intake\/document/); // the UI posts the multipart upload
-  assert.match(res.body, /\/intake\/stream/); // the UI consumes the SSE stream
+  // The two-step review flow: the UI posts the file to the extract-only endpoint,
+  // renders it for review, then processes the reviewed invoice over the SSE stream.
+  assert.match(res.body, /\/extract\/document/); // step 1: extract-only upload
+  assert.match(res.body, /\/intake\/stream/); // step 2: process the reviewed invoice (SSE)
+  assert.match(res.body, /id="fileName"/); // selected-filename display
+  assert.match(res.body, /Choose file/); // custom file-picker button (wired change handler)
+  assert.match(res.body, /id="extractReview"/); // the extracted-invoice review panel
+  assert.match(res.body, /review the extracted fields, then Process/); // the demo review note
+  assert.match(res.body, /pendingTicket/); // single-use ticket → process without re-consuming
   assert.match(res.body, /getReader|text\/event-stream|Processing invoice/);
   // The 10/day limit is surfaced to the visitor in the upload panel.
   assert.match(res.body, /10\/day/);
@@ -305,6 +312,125 @@ test("POST /intake/document shares the daily budget — the 2nd upload → 429 (
     // The JSON intake shares the SAME exhausted budget.
     const overJson = await local.inject({ method: "POST", url: "/intake", payload: { invoice: sampleInvoice } });
     assert.equal(overJson.statusCode, 429);
+  } finally {
+    await local.close();
+  }
+});
+
+test("POST /extract/document: a PNG upload → Qwen-VL extraction → invoice JSON + a ticket, running NO loop", async () => {
+  const local = await buildServer(deps());
+  await local.ready();
+  try {
+    const { payload, headers } = multipartFile("file", "invoice.png", "image/png", Buffer.from("png-bytes"));
+    const res = await local.inject({ method: "POST", url: "/extract/document", payload, headers });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    // The extracted invoice is returned for review …
+    assert.equal(body.invoice.vendor, "Meridian Logistics");
+    assert.equal(body.invoice.total, 6448);
+    assert.equal(body.sourceType, "image");
+    // … with a single-use process ticket …
+    assert.ok(typeof body.ticket === "string" && body.ticket.length > 0);
+    // … and NOTHING was proposed or executed: the queue is still empty.
+    const pending = (await local.inject({ method: "GET", url: "/pending" })).json().pending;
+    assert.equal(pending.length, 0);
+  } finally {
+    await local.close();
+  }
+});
+
+test("POST /extract/document surfaces an extractor failure as 502 (the vision call failed)", async () => {
+  const failing = {
+    modelId: "boom-vision",
+    async extract() { throw new Error("vision backend unavailable"); },
+  };
+  const local = await buildServer(deps({ extractor: failing }));
+  await local.ready();
+  try {
+    const { payload, headers } = multipartFile("file", "invoice.png", "image/png", Buffer.from("png"));
+    const res = await local.inject({ method: "POST", url: "/extract/document", payload, headers });
+    assert.equal(res.statusCode, 502);
+    assert.match(res.json().error, /vision backend unavailable/);
+  } finally {
+    await local.close();
+  }
+});
+
+test("POST /extract/document rejects an unsupported type (400) WITHOUT burning the daily budget", async () => {
+  const local = await buildServer(deps({ rateLimiter: new DailyRateLimiter(1) }));
+  await local.ready();
+  try {
+    const bad = multipartFile("file", "notes.txt", "text/plain", "hello");
+    const badRes = await local.inject({ method: "POST", url: "/extract/document", payload: bad.payload, headers: bad.headers });
+    assert.equal(badRes.statusCode, 400);
+    // Budget-of-1 intact → a valid extract still succeeds.
+    const ok = multipartFile("file", "invoice.png", "image/png", Buffer.from("png"));
+    const okRes = await local.inject({ method: "POST", url: "/extract/document", payload: ok.payload, headers: ok.headers });
+    assert.equal(okRes.statusCode, 200);
+  } finally {
+    await local.close();
+  }
+});
+
+test("two-step flow: extract consumes ONE slot, process-with-ticket consumes NONE (open-demo budget honored once)", async () => {
+  const local = await buildServer(deps({ rateLimiter: new DailyRateLimiter(1) }));
+  await local.ready();
+  try {
+    // Extract consumes the only slot and mints a ticket.
+    const up = multipartFile("file", "invoice.png", "image/png", Buffer.from("png"));
+    const ex = await local.inject({ method: "POST", url: "/extract/document", payload: up.payload, headers: up.headers });
+    assert.equal(ex.statusCode, 200);
+    const ticket = ex.json().ticket;
+    const invoice = ex.json().invoice;
+    // Processing the reviewed invoice WITH the ticket runs the loop WITHOUT a 2nd slot.
+    const proc = await local.inject({ method: "POST", url: "/intake/stream", payload: { invoice, ticket } });
+    assert.equal(proc.statusCode, 200);
+    assert.match(proc.body, /event: proposal/);
+    // Exactly one PENDING proposal, nothing executed (the human gate held).
+    const pending = (await local.inject({ method: "GET", url: "/pending" })).json().pending;
+    assert.equal(pending.length, 1);
+    assert.equal(pending[0].status, "pending");
+    assert.equal(pending[0].execution, undefined);
+    // The budget is now exhausted for a NON-ticketed intake → 429.
+    const over = await local.inject({ method: "POST", url: "/intake", payload: { invoice: sampleInvoice } });
+    assert.equal(over.statusCode, 429);
+  } finally {
+    await local.close();
+  }
+});
+
+test("a process ticket is single-use: replaying the SAME ticket consumes the daily budget the second time", async () => {
+  const local = await buildServer(deps({ rateLimiter: new DailyRateLimiter(2) }));
+  await local.ready();
+  try {
+    const up = multipartFile("file", "invoice.png", "image/png", Buffer.from("png"));
+    const ex = await local.inject({ method: "POST", url: "/extract/document", payload: up.payload, headers: up.headers });
+    const ticket = ex.json().ticket; // consumed slot #1
+    const invoice = ex.json().invoice;
+    // First use: free (ticket valid) — budget still has 1 left.
+    const first = await local.inject({ method: "POST", url: "/intake/stream", payload: { invoice, ticket } });
+    assert.equal(first.statusCode, 200);
+    // Replay the SAME ticket: it is spent, so this consumes slot #2 …
+    const second = await local.inject({ method: "POST", url: "/intake/stream", payload: { invoice, ticket } });
+    assert.equal(second.statusCode, 200);
+    // … and the budget of 2 is now exhausted.
+    const third = await local.inject({ method: "POST", url: "/intake", payload: { invoice: sampleInvoice } });
+    assert.equal(third.statusCode, 429);
+  } finally {
+    await local.close();
+  }
+});
+
+test("an unknown ticket does not skip the limiter (no free bypass)", async () => {
+  const local = await buildServer(deps({ rateLimiter: new DailyRateLimiter(1) }));
+  await local.ready();
+  try {
+    // A made-up ticket must NOT grant free processing: it consumes the slot …
+    const first = await local.inject({ method: "POST", url: "/intake/stream", payload: { invoice: sampleInvoice, ticket: "not-a-real-ticket" } });
+    assert.equal(first.statusCode, 200);
+    // … so the next intake is over budget.
+    const over = await local.inject({ method: "POST", url: "/intake", payload: { invoice: sampleInvoice } });
+    assert.equal(over.statusCode, 429);
   } finally {
     await local.close();
   }
