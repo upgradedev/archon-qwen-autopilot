@@ -25,3 +25,6 @@ Thumbs.db
 
 # Serverless Devs local state
 .s/
+
+# Claude Code local worktrees/settings (never commit)
+.claude/
