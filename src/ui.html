@@ -195,6 +195,73 @@
     }
     @keyframes spin { to { transform: rotate(360deg); } }
 
+    /* ── Upload polish: custom file button + filename chip + a dashed dropzone ───── */
+    .dropzone {
+      border: 1px dashed var(--border); border-radius: 10px;
+      padding: 14px 16px; background: var(--panel-2);
+    }
+    .dropzone .row { margin-top: 0; }
+    .dropzone .row + .row { margin-top: 8px; }
+    input[type=file]#fileInput {
+      position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+    }
+    .filebtn {
+      display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+      font-size: 13px; font-weight: 500; border-radius: 6px;
+      border: 1px solid var(--accent); color: var(--accent);
+      background: rgba(88,166,255,.08); padding: 8px 16px;
+      transition: background .12s ease;
+    }
+    .filebtn:hover { background: rgba(88,166,255,.16); }
+    .filebtn::before { content: "📄"; font-size: 14px; }
+    .filename { font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
+    .filename.set { color: var(--text); }
+    .row.divider { justify-content: center; margin: 16px 0 10px; }
+    .row.divider .hint { text-transform: uppercase; letter-spacing: .6px; font-size: 11px; }
+    .processbar { margin-top: 12px; }
+
+    /* ── Extract-for-review panel (step 1 of the two-step flow) ──────────────────── */
+    .review { display: none; margin-top: 14px; }
+    .review.show { display: block; animation: fadein .35s ease both; }
+    .review-head {
+      display: flex; align-items: center; gap: 10px; font-size: 13px;
+      font-weight: 600; color: var(--text); margin-bottom: 12px;
+    }
+    .review-head .done-check { color: var(--green-hi); font-weight: 700; }
+    .review-head .review-model { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--muted); font-weight: 400; }
+    .review-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 10px 18px; margin-bottom: 10px;
+      background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px;
+    }
+    .kv { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .kv .k { font-size: 10.5px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); }
+    .kv .v { font-family: var(--mono); font-size: 13px; color: var(--text); overflow-wrap: anywhere; }
+    .review-note {
+      display: none; margin-top: 10px; font-size: 12.5px; color: var(--amber);
+      background: rgba(210,153,34,.08); border: 1px solid rgba(210,153,34,.3);
+      border-radius: 8px; padding: 9px 13px;
+    }
+    .review-note.show { display: block; }
+
+    /* ── General polish: elevated header + cards, stronger primary CTA ──────────── */
+    header {
+      background: linear-gradient(180deg, #12171f 0%, var(--bg) 100%);
+      position: sticky; top: 0; z-index: 20; backdrop-filter: blur(4px);
+    }
+    header h1 { display: flex; align-items: center; gap: 9px; }
+    header h1::before {
+      content: ""; width: 22px; height: 22px; border-radius: 6px;
+      background: linear-gradient(135deg, var(--accent), var(--purple));
+      display: inline-block; box-shadow: 0 2px 8px rgba(88,166,255,.35);
+    }
+    .card { box-shadow: 0 1px 3px rgba(0,0,0,.3); }
+    .card:hover { border-color: #3a4452; }
+    .upload { box-shadow: 0 1px 3px rgba(0,0,0,.3); }
+    button.primary { background: var(--accent); color: #08101c; border-color: var(--accent); font-weight: 600; }
+    button.primary:hover { background: #6cb0ff; border-color: #6cb0ff; }
+
     /* ── Collapsible "How the agent decided" trace ───────────────────────────── */
     .collapsible > .toggle {
       display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;
@@ -285,18 +352,30 @@
     <section class="upload" id="uploadPanel" data-tour="upload">
       <div class="section-label">Upload an invoice — watch the agent work in real time</div>
       <div class="hint">Upload a real <code>PDF</code>, <code>PNG</code>, or <code>JPG</code> invoice — it is read by <b>Qwen-VL</b> vision extraction — or paste invoice JSON below. The agent then streams each reasoning step live and proposes one action for your approval. <b>Uploads are limited to 10/day</b> (open demo — the cap protects the Qwen API budget).</div>
-      <div class="row">
-        <input type="file" id="fileInput" accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg" title="Upload a PDF, PNG, or JPG invoice" />
-        <button class="ghost" id="sampleDoc" title="Upload the bundled sample invoice document">Use sample document</button>
-        <span class="hint">PDF / PNG / JPG — extracted by Qwen-VL.</span>
+      <div class="dropzone">
+        <div class="row">
+          <label class="filebtn" for="fileInput">Choose file</label>
+          <input type="file" id="fileInput" accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg" title="Upload a PDF, PNG, or JPG invoice" />
+          <span class="filename" id="fileName" aria-live="polite">No file selected</span>
+          <span class="spacer"></span>
+          <button class="ghost" id="sampleDoc" title="Upload the bundled sample invoice document">Use sample document</button>
+        </div>
+        <div class="row"><span class="hint">PDF / PNG / JPG — extracted by Qwen-VL for your review, then you Process.</span></div>
       </div>
-      <div class="row"><span class="hint">— or paste invoice JSON —</span></div>
+
+      <!-- Two-step review: after extraction the parsed invoice appears here for the
+           human to review BEFORE the decision loop runs. Hidden until a file is
+           extracted. -->
+      <div id="extractReview" class="review"></div>
+
+      <div class="row divider"><span class="hint">— or paste invoice JSON —</span></div>
       <textarea id="invoiceInput" spellcheck="false" aria-label="Invoice JSON"></textarea>
-      <div class="row">
+      <div class="row processbar">
         <button class="primary" id="processBtn" title="Run the multi-step loop, streaming each step">Process invoice</button>
         <button class="ghost" id="fillSample" title="Fill the box with a sample invoice">Use sample JSON</button>
         <span class="hint">Nothing executes here — the agent only proposes.</span>
       </div>
+      <div class="review-note" id="reviewNote">For the demo, review the extracted fields, then Process. In production this could run automatically on upload.</div>
       <div id="processView"></div>
     </section>
 
@@ -775,23 +854,88 @@
       }
     }
 
-    // Paste-JSON path: POST the invoice object and stream the loop.
-    async function streamIntake(invoice, onEvent) {
+    // The two-step review flow holds a single-use "process ticket" minted by
+    // /extract/document. When present, POST /intake/stream skips the daily limiter
+    // (the extraction already paid the slot). Any manual edit of the JSON box clears
+    // it, so a hand-pasted invoice consumes normally.
+    let pendingTicket = null;
+
+    // Paste-JSON path (and the reviewed-invoice path): POST the invoice object and
+    // stream the loop. A ticket, when held, is sent so the reviewed invoice does not
+    // re-consume the daily budget.
+    async function streamIntake(invoice, onEvent, ticket) {
+      const body = ticket ? { invoice, ticket } : { invoice };
       const res = await fetch('/intake/stream', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ invoice }),
+        body: JSON.stringify(body),
       });
       await readSSE(res, onEvent);
     }
 
-    // Real-document path: POST the file as multipart/form-data → Qwen-VL vision
-    // extraction → the same streamed loop.
-    async function streamDocument(file, onEvent) {
-      const fd = new FormData();
-      fd.append('file', file, file.name || 'invoice');
-      const res = await fetch('/intake/document', { method: 'POST', body: fd });
-      await readSSE(res, onEvent);
+    // ---- Step 1 of 2: extract-only. Upload the file → Qwen-VL extraction → render the
+    // parsed invoice for the human to REVIEW. Nothing is processed yet. ---------------
+    function reviewField(label, value) {
+      return el('div', { class: 'kv' }, [
+        el('span', { class: 'k', text: label }),
+        el('span', { class: 'v', text: (value == null || value === '') ? '—' : String(value) }),
+      ]);
+    }
+
+    function renderExtractReview(data) {
+      const host = $('#extractReview');
+      const inv = (data && data.invoice) || {};
+      host.innerHTML = '';
+      host.classList.add('show');
+      const items = Array.isArray(inv.line_items) ? inv.line_items.length : 0;
+      host.appendChild(el('div', { class: 'review-head' }, [
+        el('span', { class: 'done-check', text: '✓' }),
+        el('span', { text: 'Extracted for review' }),
+        el('span', { class: 'review-model', text: (data && data.model ? data.model : 'qwen-vl') + (data && data.pages ? ' · ' + data.pages + (data.pages === 1 ? ' page' : ' pages') : '') }),
+      ]));
+      host.appendChild(el('div', { class: 'review-grid' }, [
+        reviewField('Vendor', inv.vendor),
+        reviewField('Invoice #', inv.invoice_number),
+        reviewField('Date', inv.invoice_date),
+        reviewField('Tax id', inv.tax_id),
+        reviewField('Currency', inv.currency),
+        reviewField('Subtotal', inv.subtotal),
+        reviewField('Tax', inv.tax),
+        reviewField('Total', inv.total),
+        reviewField('Line items', items),
+      ]));
+      host.appendChild(el('div', { class: 'hint', text: 'Fields are editable in the JSON box below — correct anything the extractor got wrong, then Process.' }));
+    }
+
+    async function extractDocument(file, busyBtns) {
+      if (!file) return;
+      $('#fileName').textContent = file.name || 'document';
+      $('#fileName').classList.add('set');
+      const review = $('#extractReview');
+      review.innerHTML = '';
+      review.classList.add('show');
+      review.appendChild(el('div', { class: 'review-head' }, [ el('span', { class: 'spin' }), el('span', { text: 'Extracting ' + (file.name || 'document') + ' with Qwen-VL…' }) ]));
+      (busyBtns || []).forEach((b) => { if (b) b.disabled = true; });
+      try {
+        const fd = new FormData();
+        fd.append('file', file, file.name || 'invoice');
+        const res = await fetch('/extract/document', { method: 'POST', body: fd });
+        const text = await res.text();
+        let data = {};
+        try { data = text ? JSON.parse(text) : {}; } catch (_) { data = {}; }
+        if (!res.ok) throw new Error((data && data.error) || ('HTTP ' + res.status));
+        pendingTicket = data.ticket || null;
+        $('#invoiceInput').value = JSON.stringify(data.invoice || {}, null, 2);
+        renderExtractReview(data);
+        $('#reviewNote').classList.add('show');
+        toast('Extracted — review the fields below, then click Process invoice', 'ok');
+      } catch (e) {
+        review.classList.remove('show');
+        review.innerHTML = '';
+        toast(e.message || 'could not extract the document', 'err');
+      } finally {
+        (busyBtns || []).forEach((b) => { if (b) b.disabled = false; });
+      }
     }
 
     function parseSSE(frame) {
@@ -810,7 +954,10 @@
     // the pending queue. `busyBtns` are disabled for the duration.
     async function runProcess(headLabel, kickoff, busyBtns) {
       const pv = $('#processView');
-      pv.style.display = '';
+      // Must be an explicit non-empty display value: '' reverts to the stylesheet's
+      // `#processView { display: none }`, which would silently hide the live step
+      // stream (the bug the browser e2e caught).
+      pv.style.display = 'block';
       pv.innerHTML = '';
       const head = el('div', { class: 'proc-head' }, [ el('span', { class: 'spin' }), el('span', { text: headLabel }) ]);
       const stepsWrap = el('div', { class: 'proc-steps' });
@@ -863,17 +1010,20 @@
       }
     }
 
+    // ---- Step 2 of 2: process the REVIEWED invoice. Runs the multi-step loop over
+    // SSE. A held ticket (from extraction) is spent so it does not re-consume budget;
+    // a hand-pasted invoice (no ticket) consumes normally. ---------------------------
     function processInvoice() {
       let invoice;
       try { invoice = JSON.parse($('#invoiceInput').value); }
       catch (_) { toast('The invoice box is not valid JSON — fix it or click "Use sample JSON".', 'err'); return; }
-      return runProcess('Processing invoice — the agent is reasoning…', (onEvent) => streamIntake(invoice, onEvent), [$('#processBtn')]);
-    }
-
-    // Upload a REAL document (PDF/PNG/JPG) → Qwen-VL extraction → the streamed loop.
-    function processDocument(file) {
-      if (!file) return;
-      return runProcess('Uploading ' + (file.name || 'document') + ' — extracting with Qwen-VL…', (onEvent) => streamDocument(file, onEvent), [$('#processBtn'), $('#sampleDoc'), $('#fileInput')]);
+      const ticket = pendingTicket;
+      pendingTicket = null; // single-use — spent on this run
+      const p = runProcess('Processing invoice — the agent is reasoning…', (onEvent) => streamIntake(invoice, onEvent, ticket), [$('#processBtn')]);
+      // Collapse the review panel once the reviewed invoice has been sent to process.
+      $('#extractReview').classList.remove('show');
+      $('#reviewNote').classList.remove('show');
+      return p;
     }
 
     // ---- Tabs -------------------------------------------------------------------
@@ -1011,23 +1161,35 @@
     $('#loadSample').onclick = () => loadSample();
     $('#tourBtn').onclick = startTour;
     $('#processBtn').onclick = processInvoice;
-    $('#fillSample').onclick = () => { $('#invoiceInput').value = JSON.stringify(SAMPLE_INVOICE, null, 2); };
-    // Real-document upload: on pick, POST the file to /intake/document and stream the
-    // Qwen-VL extraction + the loop. (JSON is pasted in the box below, not uploaded.)
+    $('#fillSample').onclick = () => {
+      $('#invoiceInput').value = JSON.stringify(SAMPLE_INVOICE, null, 2);
+      pendingTicket = null; // a fresh paste — process it as a normal (budgeted) intake
+      $('#extractReview').classList.remove('show');
+      $('#reviewNote').classList.remove('show');
+    };
+    // A manual edit / paste in the JSON box is a fresh invoice — drop any held ticket
+    // so it is processed as a normal (budgeted) intake, not a free reviewed one.
+    $('#invoiceInput').oninput = () => { pendingTicket = null; };
+    // Real-document upload — STEP 1: on pick, POST the file to /extract/document, show
+    // the filename, and render the extracted invoice for review. The multi-step loop
+    // does NOT run until the human clicks "Process invoice".
     $('#fileInput').onchange = (e) => {
       const file = e.target.files && e.target.files[0];
-      if (file) processDocument(file);
+      if (file) extractDocument(file, [$('#sampleDoc'), $('#processBtn')]);
       e.target.value = ''; // allow re-picking the same file
     };
-    // "Use sample document" — fetch the bundled real invoice PNG and run it through
-    // the exact vision path a judge would use.
+    // "Use sample document" — fetch the bundled real invoice PNG and run it through the
+    // exact vision extraction path a judge would use, then hand it to review.
     $('#sampleDoc').onclick = async () => {
+      const b = $('#sampleDoc');
+      b.disabled = true;
       try {
         const res = await fetch('/sample-document');
         if (!res.ok) throw new Error('sample document unavailable');
         const blob = await res.blob();
-        await processDocument(new File([blob], 'sample-invoice.png', { type: blob.type || 'image/png' }));
+        await extractDocument(new File([blob], 'sample-invoice.png', { type: blob.type || 'image/png' }), [$('#sampleDoc'), $('#processBtn')]);
       } catch (e) { toast(e.message || 'could not load the sample document', 'err'); }
+      finally { b.disabled = false; }
     };
     document.querySelectorAll('.tab').forEach((t) => { t.onclick = () => setActiveTab(t.getAttribute('data-tab')); });
     document.addEventListener('keydown', (e) => {

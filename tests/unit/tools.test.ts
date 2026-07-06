@@ -29,6 +29,20 @@ test("toolDefs returns one def per tool; toolByName resolves and rejects unknown
   assert.equal(toolByName("nonexistent_tool"), undefined);
 });
 
+test("every tool executes with EMPTY args on a SPARSE invoice — the fallback defaults hold (no throw)", () => {
+  // The model may omit optional domain args; execute() must fall back to invoice-
+  // derived or safe defaults rather than crash. A sparse invoice (no total, currency
+  // or refs) exercises every `?? default` / `str(_, fallback)` / `num(_, inv.total ?? 0)`
+  // branch — the "field absent" side the happy-path tests never take.
+  const sparse = normalizeInvoice({ vendor: "" });
+  for (const t of TOOLS) {
+    const sinks = fakeSinks();
+    const r = t.execute({}, sparse, sinks);
+    assert.equal(r.ok, true, `${t.name} should execute on a sparse invoice with empty args`);
+    assert.ok(typeof r.summary === "string" && r.summary.length > 0, `${t.name} should summarize its effect`);
+  }
+});
+
 test("draft_journal_entry posts a balanced debit/credit entry to the ledger", () => {
   const sinks = fakeSinks();
   const r = toolByName("draft_journal_entry")!.execute({ expense_account: "Office Supplies", amount: 1200 }, inv, sinks);

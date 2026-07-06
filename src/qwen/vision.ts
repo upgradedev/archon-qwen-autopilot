@@ -33,8 +33,13 @@ import type { RawInvoice } from "../types.js";
 // extraction; VISION_MODEL overrides it (parity with the memory pipeline's env).
 export const DEFAULT_VISION_MODEL = process.env.VISION_MODEL || "qwen-vl-max";
 
-// poppler binary (overridable so a non-standard install path still works).
-const PDFTOPPM_BIN = process.env.POPPLER_PDFTOPPM || "pdftoppm";
+// poppler binary (overridable so a non-standard install path still works). Read at
+// call time (not module load) so it stays overridable per-invocation — which also
+// lets a test point it at a bogus path to exercise the "poppler not installed" path
+// deterministically, offline.
+function pdftoppmBin(): string {
+  return process.env.POPPLER_PDFTOPPM || "pdftoppm";
+}
 
 // Upload guardrails. 10 MB is generous for a single invoice while bounding memory
 // and the vision spend; only the first few PDF pages are ever rasterized.
@@ -156,10 +161,15 @@ Return ONLY the raw JSON object — no markdown fences, no commentary.`;
 
 export class QwenVisionExtractionClient implements ExtractionClient {
   readonly modelId: string;
-  private client = createQwenClient();
+  private client: VisionChat;
 
-  constructor(modelId: string = DEFAULT_VISION_MODEL) {
+  // The OpenAI-compatible vision client is injectable — like the chat/embeddings
+  // seams — so extract() (the clean-JSON + toRawInvoice mapping) is unit-testable
+  // offline with a fake completion, no key and no network. Defaults to the real
+  // DashScope client.
+  constructor(modelId: string = DEFAULT_VISION_MODEL, client?: VisionChat) {
     this.modelId = modelId;
+    this.client = client ?? (createQwenClient() as unknown as VisionChat);
   }
 
   async extract(doc: UploadedDocument): Promise<ExtractionResult> {
@@ -180,7 +190,7 @@ export class QwenVisionExtractionClient implements ExtractionClient {
 
     // The vision surface is the SAME OpenAI-compatible chat-completions API; the
     // multi-part user content (image_url + text) is what qwen-vl-max expects.
-    const res = await (this.client as unknown as VisionChat).chat.completions.create({
+    const res = await this.client.chat.completions.create({
       model: this.modelId,
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
@@ -255,6 +265,7 @@ async function renderPdfToImages(pdf: Buffer): Promise<Array<{ b64: string; mime
   try {
     await readFileWrite(inPath, pdf);
     await runPdftoppm(["-png", "-r", "150", "-l", String(MAX_PDF_PAGES), inPath, outPrefix]);
+    /* c8 ignore start -- reached only once real poppler produced page PNGs; the offline suite asserts the pdftoppm-missing path instead */
     const files = (await readdir(dir))
       .filter((f) => f.startsWith("page") && f.endsWith(".png"))
       .sort();
@@ -264,6 +275,7 @@ async function renderPdfToImages(pdf: Buffer): Promise<Array<{ b64: string; mime
       pages.push({ b64: buf.toString("base64"), mime: "image/png" });
     }
     return pages;
+    /* c8 ignore stop */
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => {});
   }
@@ -274,7 +286,7 @@ function runPdftoppm(args: string[]): Promise<void> {
     let stderr = "";
     let proc: ReturnType<typeof spawn>;
     try {
-      proc = spawn(PDFTOPPM_BIN, args, { stdio: ["ignore", "ignore", "pipe"] });
+      proc = spawn(pdftoppmBin(), args, { stdio: ["ignore", "ignore", "pipe"] });
     } catch (err) {
       return reject(wrapPopplerError(err));
     }
@@ -364,8 +376,9 @@ function toRawInvoice(data: Record<string, unknown>): RawInvoice {
 }
 
 // Minimal shape of the OpenAI-compatible vision chat call we use — the real
-// `openai` client satisfies it. Kept local so this module owns its own seam.
-interface VisionChat {
+// `openai` client satisfies it. Exported so a test can inject a fake completion
+// and exercise extract() offline.
+export interface VisionChat {
   chat: {
     completions: {
       create(args: {

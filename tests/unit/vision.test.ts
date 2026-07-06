@@ -14,11 +14,30 @@ import assert from "node:assert/strict";
 import {
   validateDocument,
   FakeExtractionClient,
+  QwenVisionExtractionClient,
   FAKE_EXTRACTED_INVOICE,
   defaultExtractionClient,
   DEFAULT_VISION_MODEL,
   MAX_DOCUMENT_BYTES,
+  type VisionChat,
 } from "../../src/qwen/vision.js";
+
+// A fake OpenAI-compatible vision chat that returns a canned completion string — lets
+// us exercise QwenVisionExtractionClient.extract() (JSON-clean + toRawInvoice) offline,
+// with no key and no network. `capture` records the request so we can assert the
+// multi-part (image_url + text) content is what the model receives.
+function fakeVisionChat(content: string, capture?: (args: unknown) => void): VisionChat {
+  return {
+    chat: {
+      completions: {
+        async create(args) {
+          capture?.(args);
+          return { choices: [{ message: { content } }] };
+        },
+      },
+    },
+  };
+}
 
 test("validateDocument accepts a PNG, a JPG, and a PDF", () => {
   const png = validateDocument({ filename: "invoice.png", mimetype: "image/png", size: 100 });
@@ -97,4 +116,67 @@ test("defaultExtractionClient uses the offline fake when no DASHSCOPE key is set
 test("the default vision model is qwen-vl-max (VISION_MODEL overridable)", () => {
   // Absent an override, the flagship DashScope vision model.
   assert.ok(DEFAULT_VISION_MODEL === "qwen-vl-max" || DEFAULT_VISION_MODEL === process.env.VISION_MODEL);
+});
+
+test("QwenVisionExtractionClient.extract maps a model completion (image path) → canonical RawInvoice, offline via an injected chat", async () => {
+  let seen: any;
+  const chat = fakeVisionChat(
+    // Markdown-fenced JSON with mixed types — exercises cleanJson + toRawInvoice
+    // (string amounts pass through for the normalizer; a numeric total is kept).
+    "```json\n" +
+      JSON.stringify({
+        vendor: "Northwind Freight",
+        invoice_number: "NW-77",
+        invoice_date: "2026-05-01",
+        tax_id: "TAX-9",
+        currency: "EUR",
+        subtotal: "€1,000.00",
+        tax: 240,
+        total: 1240,
+        line_items: [{ description: "Haulage", quantity: 1, unit_price: 1000, amount: 1000 }],
+        confidence: 0.9,
+      }) +
+      "\n```",
+    (a) => (seen = a)
+  );
+  const client = new QwenVisionExtractionClient("qwen-vl-max", chat);
+  const out = await client.extract({ buffer: Buffer.from("img"), filename: "invoice.png", mimetype: "image/png" });
+  assert.equal(out.model, "qwen-vl-max");
+  assert.equal(out.sourceType, "image");
+  assert.equal(out.pages, 1);
+  assert.equal(out.invoice.vendor, "Northwind Freight");
+  assert.equal(out.invoice.invoice_number, "NW-77");
+  assert.equal(out.invoice.total, 1240);
+  assert.equal(out.invoice.subtotal, "€1,000.00"); // string amount preserved for the normalizer
+  assert.ok(Array.isArray(out.invoice.line_items));
+  // The request carried the image as a data URL plus the extraction text prompt.
+  const content = seen.messages[1].content;
+  assert.equal(content[0].type, "image_url");
+  assert.match(content[0].image_url.url, /^data:image\/png;base64,/);
+  assert.equal(content[content.length - 1].type, "text");
+});
+
+test("QwenVisionExtractionClient.extract tolerates a non-JSON / empty completion → an empty invoice (no throw)", async () => {
+  const client = new QwenVisionExtractionClient("qwen-vl-max", fakeVisionChat("sorry, I could not read it"));
+  const out = await client.extract({ buffer: Buffer.from("img"), filename: "invoice.jpg", mimetype: "image/jpeg" });
+  assert.deepEqual(out.invoice, {}); // safeParseJson → {} → toRawInvoice → {}
+  assert.equal(out.sourceType, "image");
+});
+
+test("QwenVisionExtractionClient PDF path surfaces a clear 'poppler not installed' error when the binary is missing", async () => {
+  // Point poppler at a guaranteed-nonexistent binary so the PDF rasterization path
+  // (renderPdfToImages → pdftoppm spawn ENOENT → wrapPopplerError) runs deterministically
+  // offline, with no key and no real poppler. The vision model is never reached.
+  const prev = process.env.POPPLER_PDFTOPPM;
+  process.env.POPPLER_PDFTOPPM = "pdftoppm-does-not-exist-xyz";
+  try {
+    const client = new QwenVisionExtractionClient("qwen-vl-max", fakeVisionChat("{}"));
+    await assert.rejects(
+      () => client.extract({ buffer: Buffer.from("%PDF-1.4 fake"), filename: "invoice.pdf", mimetype: "application/pdf" }),
+      /poppler|pdftoppm/i
+    );
+  } finally {
+    if (prev === undefined) delete process.env.POPPLER_PDFTOPPM;
+    else process.env.POPPLER_PDFTOPPM = prev;
+  }
 });
