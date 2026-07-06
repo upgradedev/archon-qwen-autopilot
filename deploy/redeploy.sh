@@ -130,7 +130,9 @@ ok "image built"
 # ── Apply the schema BEFORE serving new code (fail-closed) ────────────────────
 # Creates agent_memory + ap_workitems + the vector extension in the autopilot DB.
 log "Apply schema to '$DB_NAME' (BEFORE serving — fail-closed)"
-docker run --rm --network "$NETWORK" -e DATABASE_URL="$DATABASE_URL" "${ENV_ARGS[@]}" \
+# --env-file FIRST so the explicit -e DATABASE_URL (the isolated autopilot DB)
+# always wins over any DATABASE_URL a `.env` copied from .env.example may carry.
+docker run --rm --network "$NETWORK" "${ENV_ARGS[@]}" -e DATABASE_URL="$DATABASE_URL" \
   "$IMAGE" npm run db:schema \
   || die "schema apply FAILED — NOT serving new code (it would 500 on every /intake). Fix the DB and re-run."
 ok "schema applied (idempotent)"
@@ -138,12 +140,14 @@ ok "schema applied (idempotent)"
 # ── (Re)deploy the backend on host port $HOST_PORT ────────────────────────────
 log "(Re)deploy backend on host port $HOST_PORT"
 docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+# --env-file FIRST so the explicit -e DATABASE_URL (isolated autopilot DB) + -e PORT
+# always win over any DATABASE_URL/PORT a `.env` copied from .env.example may carry.
 docker run -d --name "$CONTAINER" --restart unless-stopped \
   --network "$NETWORK" \
   -p "${HOST_PORT}:${CONTAINER_PORT}" \
+  "${ENV_ARGS[@]}" \
   -e DATABASE_URL="$DATABASE_URL" \
   -e PORT="$CONTAINER_PORT" \
-  "${ENV_ARGS[@]}" \
   "$IMAGE" >/dev/null \
   || die "docker run failed."
 ok "backend container '$CONTAINER' up (network $NETWORK, port ${HOST_PORT}->${CONTAINER_PORT})"
