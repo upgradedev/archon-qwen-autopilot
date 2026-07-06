@@ -616,6 +616,7 @@ async function guard<T>(reply: import("fastify").FastifyReply, fn: () => Promise
   }
 }
 
+/* c8 ignore start -- process bootstrap: only runs when invoked as the entrypoint (`npm start`), never under test */
 const isMain = Boolean(process.argv[1]) && import.meta.url === pathToFileURL(process.argv[1]!).href;
 if (isMain) {
   const port = Number(process.env.PORT ?? 9000);
@@ -627,3 +628,4 @@ if (isMain) {
       process.exit(1);
     });
 }
+/* c8 ignore stop */

@@ -265,6 +265,7 @@ async function renderPdfToImages(pdf: Buffer): Promise<Array<{ b64: string; mime
   try {
     await readFileWrite(inPath, pdf);
     await runPdftoppm(["-png", "-r", "150", "-l", String(MAX_PDF_PAGES), inPath, outPrefix]);
+    /* c8 ignore start -- reached only once real poppler produced page PNGs; the offline suite asserts the pdftoppm-missing path instead */
     const files = (await readdir(dir))
       .filter((f) => f.startsWith("page") && f.endsWith(".png"))
       .sort();
@@ -274,6 +275,7 @@ async function renderPdfToImages(pdf: Buffer): Promise<Array<{ b64: string; mime
       pages.push({ b64: buf.toString("base64"), mime: "image/png" });
     }
     return pages;
+    /* c8 ignore stop */
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => {});
   }
