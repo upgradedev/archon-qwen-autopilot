@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { FakeEmbedder } from "../../src/memory/embeddings.js";
 import { InMemoryStore } from "../../src/memory/store.js";
 import { InMemoryWorkItemStore } from "../../src/ap/workitem-store.js";
-import { defaultDecider } from "../../src/ap/decider.js";
+import { defaultLoop } from "../../src/ap/loop.js";
 import { fakeSinks, type Sinks } from "../../src/ap/sinks.js";
 import { AutopilotAgent, ConflictError, NotFoundError } from "../../src/agents/autopilot-agent.js";
 
@@ -18,7 +18,7 @@ delete process.env.DASHSCOPE_API_KEY;
 function makeAgent(): { agent: AutopilotAgent; sinks: Sinks; memory: InMemoryStore } {
   const memory = new InMemoryStore();
   const sinks = fakeSinks();
-  const agent = new AutopilotAgent(new FakeEmbedder(), memory, new InMemoryWorkItemStore(), defaultDecider(), sinks);
+  const agent = new AutopilotAgent(new FakeEmbedder(), memory, new InMemoryWorkItemStore(), defaultLoop(), sinks);
   return { agent, sinks, memory };
 }
 
@@ -36,6 +36,22 @@ test("intake produces a PENDING work item and executes NOTHING (the gate)", asyn
   const queue = await agent.pending();
   assert.equal(queue.length, 1);
   assert.equal(queue[0]!.id, item.id);
+});
+
+test("the multi-step gate: ≥2 autonomous read/analyze steps run, and NOTHING side-effecting fires", async () => {
+  const { agent, sinks } = makeAgent();
+  const item = await agent.intake(cleanInvoice);
+  // The loop genuinely iterated: it recalled history + validated before proposing.
+  assert.ok(item.trace.length >= 2, `expected ≥2 autonomous steps, got ${item.trace.length}`);
+  assert.equal(item.trace[0]!.tool, "recall_vendor_history");
+  assert.ok(item.trace.every((t) => t.step >= 1 && typeof t.observation === "string"));
+  assert.equal(item.stopReason, "terminal_action");
+  // Every autonomous step is side-effect-free: after the whole loop, all four sinks
+  // are still empty. This IS the Track-4 invariant — the loop reasons, it never acts.
+  assert.equal(sinks.ledger.entries().length, 0);
+  assert.equal(sinks.payments.payments().length, 0);
+  assert.equal(sinks.email.outbox().length, 0);
+  assert.equal(sinks.reviews.escalations().length, 0);
 });
 
 test("approve executes the tool and moves the item to approved", async () => {

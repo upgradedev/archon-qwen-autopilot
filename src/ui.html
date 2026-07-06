@@ -99,6 +99,13 @@
     }
     .conf { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-left: 10px; }
     .reasoning { color: var(--text); margin-top: 8px; white-space: pre-wrap; }
+    .trace { display: grid; gap: 8px; }
+    .trace-step { display: grid; grid-template-columns: 22px 1fr; gap: 8px; align-items: baseline; }
+    .trace-step .num { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+    .trace-step .tool { font-family: var(--mono); font-size: 12.5px; color: var(--accent); }
+    .trace-step .obs { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+    .trace-step .why { color: var(--text); font-size: 12px; opacity: .75; margin-top: 1px; }
+    .stopreason { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-left: 10px; }
     textarea {
       width: 100%;
       min-height: 96px;
@@ -239,6 +246,23 @@
       return wrap;
     }
 
+    function renderTrace(trace) {
+      const wrap = el('div', { class: 'trace' });
+      (trace || []).forEach((t) => {
+        const kids = [
+          el('span', { class: 'num', text: (t.step != null ? t.step + '.' : '·') }),
+        ];
+        const body = el('div', {}, [
+          el('div', { class: 'tool', text: t.tool || '' }),
+        ]);
+        if (t.observation) body.appendChild(el('div', { class: 'obs', text: '→ ' + t.observation }));
+        if (t.reasoning) body.appendChild(el('div', { class: 'why', text: t.reasoning }));
+        kids.push(body);
+        wrap.appendChild(el('div', { class: 'trace-step' }, kids));
+      });
+      return wrap;
+    }
+
     function renderRecalled(recalled) {
       const wrap = el('div', { class: 'recalled' });
       (recalled || []).forEach((r) => {
@@ -266,6 +290,7 @@
         el('div', { class: 'section-label', text: 'Proposed action (Qwen)' }),
         el('span', { class: 'tool', text: p.tool || 'flag_for_review' }),
         el('span', { class: 'conf', text: (p.modelId ? p.modelId : '') + conf }),
+        (item.stopReason ? el('span', { class: 'stopreason', text: 'stop: ' + item.stopReason }) : document.createTextNode('')),
         el('div', { class: 'reasoning', text: p.reasoning || '' }),
       ]);
 
@@ -278,6 +303,15 @@
       ]);
 
       const body = el('div', { class: 'card-body' }, [proposed, argsBlock]);
+      // The agent's multi-step reasoning trace — HOW it reached this proposal (the
+      // autonomous read/analyze steps it took, each with no side-effect).
+      if ((item.trace || []).length) {
+        const n = item.trace.length;
+        body.appendChild(el('div', {}, [
+          el('div', { class: 'section-label', text: 'How the agent decided — ' + n + (n === 1 ? ' step' : ' steps') + ' (no side-effect)' }),
+          renderTrace(item.trace),
+        ]));
+      }
       if ((item.findings || []).length) {
         body.appendChild(el('div', {}, [ el('div', { class: 'section-label', text: 'Validation findings' }), renderFindings(item.findings) ]));
       }

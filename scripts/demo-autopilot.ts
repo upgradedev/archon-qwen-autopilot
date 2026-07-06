@@ -2,16 +2,18 @@
 //
 //   npm run demo
 //
-// Drives four invoices through intake → decide → human gate → execute, using the
-// in-memory stores + FakeQwenChatClient + Fake sinks, so it runs anywhere with
-// zero credentials and zero spend. It shows the four decision branches (journal
+// Drives four invoices through intake → multi-step ReAct loop → human gate →
+// execute, using the in-memory stores + FakeQwenChatClient + Fake sinks, so it runs
+// anywhere with zero credentials and zero spend. For each invoice it prints the
+// autonomous read/analyze step TRACE (recall → validate → check/variance) the agent
+// took before proposing a terminal action, then the four decision branches (journal
 // entry, payment for a recurring vendor, vendor reply for a messy invoice, and a
 // flagged duplicate) and the human approving / rejecting each proposal.
 
 import { FakeEmbedder } from "../src/memory/embeddings.js";
 import { InMemoryStore } from "../src/memory/store.js";
 import { InMemoryWorkItemStore } from "../src/ap/workitem-store.js";
-import { defaultDecider } from "../src/ap/decider.js";
+import { defaultLoop } from "../src/ap/loop.js";
 import { fakeSinks } from "../src/ap/sinks.js";
 import { AutopilotAgent } from "../src/agents/autopilot-agent.js";
 import type { RawInvoice } from "../src/types.js";
@@ -22,7 +24,7 @@ async function main() {
     new FakeEmbedder(),
     new InMemoryStore(),
     new InMemoryWorkItemStore(),
-    defaultDecider(), // FakeQwenChatClient (no DASHSCOPE_API_KEY)
+    defaultLoop(), // FakeQwenChatClient (no DASHSCOPE_API_KEY)
     sinks
   );
 
@@ -49,7 +51,11 @@ async function main() {
     console.log("\n" + "─".repeat(78));
     console.log("INTAKE:", label);
     const item = await agent.intake(raw);
-    console.log(`  proposed: ${item.proposed.tool} (confidence ${item.proposed.confidence})`);
+    console.log(`  loop trace (${item.trace.length} autonomous step${item.trace.length === 1 ? "" : "s"}, no side-effect):`);
+    for (const t of item.trace) {
+      console.log(`    ${t.step}. ${t.tool} → ${t.observation}`);
+    }
+    console.log(`  proposed: ${item.proposed.tool} (confidence ${item.proposed.confidence}, stop: ${item.stopReason})`);
     console.log(`  reasoning: ${item.proposed.reasoning}`);
     console.log(`  findings: ${item.findings.filter((f) => !f.passed).map((f) => f.rule).join(", ") || "all pass"}`);
 

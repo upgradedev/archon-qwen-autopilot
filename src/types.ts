@@ -1,10 +1,13 @@
 // Domain types for the Archon Autopilot accounts-payable (AP) workflow.
 //
 // The autopilot ingests an incoming vendor invoice (structured, but treated as
-// possibly messy/ambiguous — real emails and PDFs are), normalizes it, validates
-// it, recalls the vendor's history from persistent memory, then asks Qwen (via
-// function-calling) to CHOOSE one AP action. The chosen action is persisted as a
-// PENDING proposal — never auto-executed — behind a human approval gate.
+// possibly messy/ambiguous — real emails and PDFs are), normalizes it, then runs a
+// bounded multi-step ReAct loop: Qwen (via function-calling) repeatedly chooses the
+// next AUTONOMOUS read/analyze tool (recall vendor history, validate, check for a
+// duplicate, compute the amount variance) — each executed with no side-effect — and
+// finally chooses ONE terminal, side-effecting action. That terminal action is
+// persisted as a PENDING proposal — never auto-executed — behind a human approval
+// gate, together with the full step trace of how it decided.
 //
 // Positioning: universal financial-intelligence terms only. `tax_id` / `tax`
 // are generic accounting fields, not tied to any national authority or scheme.
@@ -69,6 +72,30 @@ export interface ProposedAction {
   modelId: string; // which decider produced it (real Qwen model id or fake tag)
 }
 
+// ── Agent trace (the multi-step ReAct loop's record of HOW it decided) ─────────
+
+// One step of the bounded observe→decide→act loop. Autonomous read/analyze tools
+// (recall_vendor_history / check_duplicate / validate_invoice /
+// compute_variance_vs_history / request_more_context) each produce a TraceStep;
+// they run INSIDE the loop with NO external side-effect, so the agent genuinely
+// reasons over several observations before proposing a terminal, human-gated
+// action. The ordered list is persisted on the work item and surfaced in
+// /pending + the approval UI, so a human sees HOW the agent decided — not just
+// the final action.
+export interface TraceStep {
+  step: number; // 1-based position in the loop
+  tool: string; // the autonomous tool the model chose this step
+  args: Record<string, unknown>; // the (domain) arguments it passed
+  observation: string; // what the read/analyze tool returned (the "observe")
+  reasoning: string; // the model's self-reported reason for this step
+}
+
+// Why the loop stopped — surfaced on the work item for transparency + debugging.
+export type LoopStopReason =
+  | "terminal_action" // the model chose a side-effecting tool → PENDING for approval
+  | "max_steps_fallback" // the step budget was exhausted → deterministic flag_for_review
+  | "no_progress_fallback"; // the model looped without progress → deterministic flag_for_review
+
 // ── Work item (a unit of AP work moving through the HITL gate) ──────────────────
 
 export type WorkItemStatus = "pending" | "approved" | "rejected";
@@ -96,6 +123,11 @@ export interface WorkItem {
   findings: ValidationFinding[];
   recalled: RecalledFact[];
   proposed: ProposedAction;
+  // The ordered autonomous steps the loop took before proposing `proposed`. Each
+  // is a no-side-effect read/analyze observation, so a human can audit the
+  // reasoning path. Persisted inside the ap_workitems JSONB item (no new column).
+  trace: TraceStep[];
+  stopReason: LoopStopReason; // why the loop stopped (terminal vs. a guard fallback)
   execution?: ExecutionResult; // set once approved + executed
   amended?: boolean; // true when a human edited the args before approving
   decisionReason?: string; // human-supplied note on reject / amend

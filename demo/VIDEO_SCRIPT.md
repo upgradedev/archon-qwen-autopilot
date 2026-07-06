@@ -1,8 +1,9 @@
 # Archon Autopilot — demo video script
 
 *Target length 3–5 minutes. Track-4 (Autopilot Agent), Global AI Hackathon Series
-with Qwen Cloud. Honest framing throughout: a **human-gated** AP agent, live Qwen
-wired, verified offline via Fakes, single-shot decider, stub sinks.*
+with Qwen Cloud. Honest framing throughout: a **human-gated** AP agent, a real
+bounded multi-step ReAct loop, live Qwen wired, verified offline via Fakes,
+simulated terminal sinks.*
 
 Two capture options:
 - **A (recommended, visual):** run the backend, then `demo/capture_demo.sh` — clean
@@ -95,12 +96,12 @@ self-labelling `ONLINE` and the online accuracy.)*
 
 ## 4:00–4:40 — Engineering + honesty
 
-> "One decider, one seam: a Fake chat client returns the exact `tool_calls` shape
-> DashScope returns, so the real parse path is tested in CI with no key. The args a
-> human approves are exactly the args that execute. And we're honest about scope —
-> the decider is single-shot, the execution sinks are in-memory stubs with the
-> interfaces ready for real ledger, payment, and SMTP adapters. Live Qwen is wired;
-> the offline path is deterministic Fakes."
+> "One loop, one seam: a Fake chat client returns the exact `tool_calls` shape
+> DashScope returns at every step, so the real multi-step parse path is tested in CI
+> with no key. The args a human approves are exactly the args that execute. And we're
+> honest about scope — the loop and the read/analyze tools are real; only the terminal
+> execution sinks are simulated in-memory adapters, with the interfaces ready for real
+> ledger, payment, and SMTP. Live Qwen is wired; the offline path is deterministic Fakes."
 
 On screen: CI green (gitleaks → dep-audit → typecheck → build → tests → demo → eval
 gate), and the README "Current scope and follow-ups" section.

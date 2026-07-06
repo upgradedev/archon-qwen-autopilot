@@ -147,10 +147,12 @@ test pyramid → the demo smoke → the eval gate, all green on a bare clone.
 
 ## Honest scope
 
-No overselling: the decider is **single-shot** (one tool call per invoice, not a
-multi-step agentic loop), and the execution **sinks are in-memory stubs** — they
-record what *would* post to a ledger / payment rail / SMTP, with the interfaces ready
-for real adapters. No ERP or bank is contacted. Live Qwen is wired and verified; the
+No overselling: the decision engine is a **real bounded multi-step ReAct loop** (the
+agent chains autonomous read/analyze tools — recall → validate → check_duplicate /
+compute_variance — before proposing one terminal action), and the **loop + memory
+grounding are real**. Only the **terminal execution sinks are simulated in-memory
+adapters** — they record what *would* post to a ledger / payment rail / SMTP, behind
+real interfaces. No ERP or bank is contacted. Live Qwen is wired and verified; the
 offline path is deterministic Fakes.
 
 ## Try it

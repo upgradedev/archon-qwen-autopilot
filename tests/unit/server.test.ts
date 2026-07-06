@@ -9,7 +9,7 @@ import { buildServer, type ServerDeps } from "../../src/server.js";
 import { FakeEmbedder } from "../../src/memory/embeddings.js";
 import { InMemoryStore } from "../../src/memory/store.js";
 import { InMemoryWorkItemStore } from "../../src/ap/workitem-store.js";
-import { defaultDecider } from "../../src/ap/decider.js";
+import { defaultLoop } from "../../src/ap/loop.js";
 import { fakeSinks } from "../../src/ap/sinks.js";
 
 let app: FastifyInstance;
@@ -19,7 +19,7 @@ function deps(): ServerDeps {
     embedder: new FakeEmbedder(),
     memory: new InMemoryStore(),
     workitems: new InMemoryWorkItemStore(),
-    decider: defaultDecider(),
+    loop: defaultLoop(),
     sinks: fakeSinks(),
   };
 }

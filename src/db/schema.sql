@@ -49,10 +49,13 @@ CREATE INDEX IF NOT EXISTS idx_agent_memory_source_ref ON agent_memory (source_r
 -- ─────────────────────────────────────────────────────────────────────────────
 -- AP WORK ITEMS  ← the human-in-the-loop approval queue
 -- ─────────────────────────────────────────────────────────────────────────────
+-- NOTE: the multi-step loop's decision `trace` + `stopReason` live INSIDE the `item`
+-- JSONB (the entire WorkItem is serialized there) — no dedicated column is needed, so
+-- adding the trace required NO migration and deploy/redeploy.sh is unaffected.
 CREATE TABLE IF NOT EXISTS ap_workitems (
     id          UUID PRIMARY KEY,
     status      TEXT NOT NULL,               -- pending | approved | rejected
-    item        JSONB NOT NULL,              -- the full WorkItem (invoice, findings, proposal, execution)
+    item        JSONB NOT NULL,              -- the full WorkItem (invoice, findings, recall, trace, proposal, execution)
     created_at  TIMESTAMPTZ DEFAULT now(),
     decided_at  TIMESTAMPTZ
 );

@@ -2,7 +2,7 @@
   "name": "archon-qwen-autopilot",
   "version": "0.1.0",
   "private": true,
-  "description": "Archon Autopilot — a human-gated accounts-payable agent. Qwen function-calling (Alibaba Cloud Model Studio / DashScope) proposes ONE action per invoice; nothing executes until a human approves the exact args (human-in-the-loop gate). Grounded on a persistent pgvector MemoryAgent foundation. Live Qwen wired, verified offline via deterministic Fakes. Track-4 (Autopilot Agent) entry; layers on the Track-1 Archon MemoryAgent.",
+  "description": "Archon Autopilot — a human-gated accounts-payable agent. A bounded multi-step ReAct loop over Qwen function-calling (Alibaba Cloud Model Studio / DashScope): the agent autonomously recalls vendor history, validates, checks for duplicates and computes amount variance (read/analyze tools, no side-effect) before proposing ONE terminal action; nothing executes until a human approves the exact args (human-in-the-loop gate). Grounded on a persistent pgvector MemoryAgent foundation. Live Qwen wired, verified offline via deterministic Fakes. Track-4 (Autopilot Agent) entry; layers on the Track-1 Archon MemoryAgent.",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -15,9 +15,9 @@
     "start": "tsx src/server.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc",
-    "test:unit": "node --import tsx --test tests/unit/embeddings.test.ts tests/unit/memory.test.ts tests/unit/normalize.test.ts tests/unit/validate.test.ts tests/unit/tools.test.ts tests/unit/decider.test.ts tests/unit/workflow.test.ts tests/unit/server.test.ts",
+    "test:unit": "node --import tsx --test tests/unit/embeddings.test.ts tests/unit/memory.test.ts tests/unit/normalize.test.ts tests/unit/validate.test.ts tests/unit/tools.test.ts tests/unit/analysis-tools.test.ts tests/unit/loop.test.ts tests/unit/workflow.test.ts tests/unit/server.test.ts",
     "test:integration": "node --import tsx --test --test-concurrency=1 tests/integration/workflow-http.test.ts tests/integration/pgvector-store.test.ts",
-    "test": "node --import tsx --test --test-concurrency=1 tests/unit/embeddings.test.ts tests/unit/memory.test.ts tests/unit/normalize.test.ts tests/unit/validate.test.ts tests/unit/tools.test.ts tests/unit/decider.test.ts tests/unit/workflow.test.ts tests/unit/server.test.ts tests/integration/workflow-http.test.ts tests/integration/pgvector-store.test.ts"
+    "test": "node --import tsx --test --test-concurrency=1 tests/unit/embeddings.test.ts tests/unit/memory.test.ts tests/unit/normalize.test.ts tests/unit/validate.test.ts tests/unit/tools.test.ts tests/unit/analysis-tools.test.ts tests/unit/loop.test.ts tests/unit/workflow.test.ts tests/unit/server.test.ts tests/integration/workflow-http.test.ts tests/integration/pgvector-store.test.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.1.0",
