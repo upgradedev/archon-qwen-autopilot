@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Archon Autopilot — Approval Queue</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --panel: #161b22;
+      --panel-2: #1c2330;
+      --border: #2b333f;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --accent: #58a6ff;
+      --green: #2ea043;
+      --green-hi: #3fb950;
+      --amber: #d29922;
+      --red: #da3633;
+      --red-hi: #f85149;
+      --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    header {
+      padding: 20px 28px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: baseline;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    header h1 { font-size: 18px; margin: 0; font-weight: 600; letter-spacing: .2px; }
+    header .sub { color: var(--muted); font-size: 13px; }
+    header .spacer { flex: 1; }
+    .pill {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--muted);
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 3px 12px;
+    }
+    main { max-width: 980px; margin: 0 auto; padding: 24px 20px 80px; }
+    .bar { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+    .bar h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); margin: 0; }
+    .count { font-family: var(--mono); font-size: 12px; color: var(--accent); }
+    button {
+      font-family: inherit;
+      font-size: 13px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--panel-2);
+      color: var(--text);
+      padding: 7px 14px;
+      cursor: pointer;
+      transition: background .12s ease, border-color .12s ease;
+    }
+    button:hover { border-color: var(--accent); }
+    button:disabled { opacity: .5; cursor: default; }
+    button.ghost { background: transparent; }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      margin-bottom: 16px;
+      overflow: hidden;
+    }
+    .card-head {
+      display: flex;
+      align-items: baseline;
+      gap: 14px;
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+    .vendor { font-size: 16px; font-weight: 600; }
+    .amount { font-family: var(--mono); font-size: 15px; color: var(--green-hi); }
+    .ref { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+    .card-body { padding: 16px 18px; display: grid; gap: 16px; }
+    .section-label { font-size: 11px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); margin-bottom: 6px; }
+    .tool {
+      display: inline-block;
+      font-family: var(--mono);
+      font-size: 13px;
+      color: var(--accent);
+      background: rgba(88,166,255,.08);
+      border: 1px solid rgba(88,166,255,.3);
+      border-radius: 6px;
+      padding: 3px 10px;
+    }
+    .conf { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-left: 10px; }
+    .reasoning { color: var(--text); margin-top: 8px; white-space: pre-wrap; }
+    textarea {
+      width: 100%;
+      min-height: 96px;
+      font-family: var(--mono);
+      font-size: 12.5px;
+      color: var(--text);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      resize: vertical;
+      line-height: 1.5;
+    }
+    textarea:focus { outline: none; border-color: var(--accent); }
+    .findings { display: grid; gap: 4px; }
+    .finding { display: flex; gap: 8px; align-items: baseline; font-size: 12.5px; }
+    .finding .rule { font-family: var(--mono); color: var(--muted); min-width: 26px; }
+    .sev-error { color: var(--red-hi); }
+    .sev-warn { color: var(--amber); }
+    .sev-info { color: var(--muted); }
+    .ok { color: var(--green-hi); }
+    .recalled { display: grid; gap: 6px; }
+    .memo { font-size: 12.5px; color: var(--muted); }
+    .memo .score { font-family: var(--mono); color: var(--accent); }
+    .actions { display: flex; gap: 10px; padding: 14px 18px; border-top: 1px solid var(--border); background: var(--panel-2); flex-wrap: wrap; }
+    button.approve { border-color: rgba(46,160,67,.5); color: var(--green-hi); }
+    button.approve:hover { background: rgba(46,160,67,.12); border-color: var(--green-hi); }
+    button.amend { border-color: rgba(210,153,34,.5); color: var(--amber); }
+    button.amend:hover { background: rgba(210,153,34,.12); border-color: var(--amber); }
+    button.reject { border-color: rgba(218,54,51,.5); color: var(--red-hi); }
+    button.reject:hover { background: rgba(218,54,51,.12); border-color: var(--red-hi); }
+    .empty { text-align: center; color: var(--muted); padding: 60px 20px; border: 1px dashed var(--border); border-radius: 10px; }
+    .history { margin-top: 40px; }
+    .history .row { display: flex; gap: 10px; align-items: baseline; font-size: 12.5px; padding: 7px 0; border-bottom: 1px solid var(--border); }
+    .history .badge { font-family: var(--mono); font-size: 11px; padding: 1px 8px; border-radius: 999px; }
+    .badge.approved { color: var(--green-hi); border: 1px solid rgba(46,160,67,.4); }
+    .badge.rejected { color: var(--red-hi); border: 1px solid rgba(218,54,51,.4); }
+    #toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(20px);
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 11px 20px;
+      border-radius: 8px;
+      font-size: 13px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .18s ease, transform .18s ease;
+      box-shadow: 0 8px 24px rgba(0,0,0,.4);
+      max-width: 80vw;
+    }
+    #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    #toast.err { border-color: var(--red); }
+    #toast.ok { border-color: var(--green); }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Archon Autopilot</h1>
+    <span class="sub">Human-gated accounts-payable approval queue</span>
+    <span class="spacer"></span>
+    <span class="pill" id="model">decider …</span>
+    <button class="ghost" id="refresh" title="Reload the queue">Refresh</button>
+  </header>
+
+  <main>
+    <div class="bar">
+      <h2>Pending approvals</h2>
+      <span class="count" id="count"></span>
+    </div>
+    <div id="queue"></div>
+
+    <div class="history" id="historyWrap" style="display:none">
+      <div class="bar"><h2>Decided this session</h2></div>
+      <div id="history"></div>
+    </div>
+  </main>
+
+  <div id="toast"></div>
+
+  <script>
+    // Vanilla JS approval client. Same-origin: the page is served by the same
+    // Fastify backend, so all fetches are relative. No framework, no build step.
+    const $ = (sel, root) => (root || document).querySelector(sel);
+    const el = (tag, props, kids) => {
+      const n = document.createElement(tag);
+      if (props) for (const k in props) {
+        if (k === 'class') n.className = props[k];
+        else if (k === 'text') n.textContent = props[k];
+        else n.setAttribute(k, props[k]);
+      }
+      (kids || []).forEach((c) => n.appendChild(typeof c === 'string' ? document.createTextNode(c) : c));
+      return n;
+    };
+    const decided = []; // session-local record; the API exposes only the pending queue
+
+    let toastTimer;
+    function toast(msg, kind) {
+      const t = $('#toast');
+      t.textContent = msg;
+      t.className = 'show ' + (kind || '');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => { t.className = ''; }, 3200);
+    }
+
+    function money(inv) {
+      if (inv.total == null) return (inv.currency || '') + ' —';
+      const n = Number(inv.total).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      return (inv.currency || '') + ' ' + n;
+    }
+
+    async function api(method, path, body) {
+      const res = await fetch(path, {
+        method,
+        headers: body ? { 'content-type': 'application/json' } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      const text = await res.text();
+      let data = {};
+      try { data = text ? JSON.parse(text) : {}; } catch (_) { data = { raw: text }; }
+      if (!res.ok) throw new Error((data && data.error) || ('HTTP ' + res.status));
+      return data;
+    }
+
+    function renderFindings(findings) {
+      const wrap = el('div', { class: 'findings' });
+      (findings || []).forEach((f) => {
+        const cls = f.passed ? 'ok' : ('sev-' + (f.severity || 'info'));
+        wrap.appendChild(el('div', { class: 'finding' }, [
+          el('span', { class: 'rule', text: f.rule || '' }),
+          el('span', { class: cls, text: (f.passed ? '✓ ' : '✗ ') + (f.message || '') }),
+        ]));
+      });
+      return wrap;
+    }
+
+    function renderRecalled(recalled) {
+      const wrap = el('div', { class: 'recalled' });
+      (recalled || []).forEach((r) => {
+        const line = el('div', { class: 'memo' });
+        line.appendChild(el('span', { class: 'score', text: '· ' + (r.kind || 'memory') + ' ' + (typeof r.score === 'number' ? r.score.toFixed(2) : '') + '  ' }));
+        line.appendChild(document.createTextNode(r.content || ''));
+        wrap.appendChild(line);
+      });
+      return wrap;
+    }
+
+    function card(item) {
+      const inv = item.invoice || {};
+      const p = item.proposed || {};
+      const c = el('div', { class: 'card' });
+
+      const head = el('div', { class: 'card-head' }, [
+        el('span', { class: 'vendor', text: inv.vendor || 'Unknown vendor' }),
+        el('span', { class: 'amount', text: money(inv) }),
+        el('span', { class: 'ref', text: (inv.vendor_ref || inv.invoice_id || '') }),
+      ]);
+
+      const conf = typeof p.confidence === 'number' ? ' · confidence ' + Math.round(p.confidence * 100) + '%' : '';
+      const proposed = el('div', {}, [
+        el('div', { class: 'section-label', text: 'Proposed action (Qwen)' }),
+        el('span', { class: 'tool', text: p.tool || 'flag_for_review' }),
+        el('span', { class: 'conf', text: (p.modelId ? p.modelId : '') + conf }),
+        el('div', { class: 'reasoning', text: p.reasoning || '' }),
+      ]);
+
+      // Editable arguments — what a human approves is exactly what executes.
+      const ta = el('textarea', { spellcheck: 'false' });
+      ta.value = JSON.stringify(p.args || {}, null, 2);
+      const argsBlock = el('div', {}, [
+        el('div', { class: 'section-label', text: 'Action arguments — edit to amend' }),
+        ta,
+      ]);
+
+      const body = el('div', { class: 'card-body' }, [proposed, argsBlock]);
+      if ((item.findings || []).length) {
+        body.appendChild(el('div', {}, [ el('div', { class: 'section-label', text: 'Validation findings' }), renderFindings(item.findings) ]));
+      }
+      if ((item.recalled || []).length) {
+        body.appendChild(el('div', {}, [ el('div', { class: 'section-label', text: 'Recalled vendor history' }), renderRecalled(item.recalled) ]));
+      }
+
+      const approveBtn = el('button', { class: 'approve', text: 'Approve' });
+      const amendBtn = el('button', { class: 'amend', text: 'Amend & approve' });
+      const rejectBtn = el('button', { class: 'reject', text: 'Reject' });
+      const actions = el('div', { class: 'actions' }, [approveBtn, amendBtn, rejectBtn]);
+
+      const setBusy = (b) => { approveBtn.disabled = amendBtn.disabled = rejectBtn.disabled = b; };
+      const remember = (status) => decided.unshift({ vendor: inv.vendor || 'vendor', ref: inv.vendor_ref || inv.invoice_id || '', tool: p.tool, status });
+
+      approveBtn.onclick = async () => {
+        setBusy(true);
+        try {
+          const r = await api('POST', '/approve/' + item.id);
+          toast('Approved · ' + ((r.execution && r.execution.summary) || p.tool), 'ok');
+          remember('approved');
+          await load();
+        } catch (e) { toast(e.message, 'err'); setBusy(false); }
+      };
+
+      amendBtn.onclick = async () => {
+        let args;
+        try { args = JSON.parse(ta.value); }
+        catch (_) { toast('Arguments are not valid JSON — fix them first.', 'err'); return; }
+        setBusy(true);
+        try {
+          const r = await api('POST', '/amend/' + item.id, { args, reason: 'Amended in the approval UI' });
+          toast('Amended & approved · ' + ((r.execution && r.execution.summary) || p.tool), 'ok');
+          remember('approved');
+          await load();
+        } catch (e) { toast(e.message, 'err'); setBusy(false); }
+      };
+
+      rejectBtn.onclick = async () => {
+        setBusy(true);
+        try {
+          await api('POST', '/reject/' + item.id, { reason: 'Rejected in the approval UI' });
+          toast('Rejected — nothing executed', 'ok');
+          remember('rejected');
+          await load();
+        } catch (e) { toast(e.message, 'err'); setBusy(false); }
+      };
+
+      c.appendChild(head);
+      c.appendChild(body);
+      c.appendChild(actions);
+      return c;
+    }
+
+    function renderHistory() {
+      const wrap = $('#historyWrap');
+      const list = $('#history');
+      list.innerHTML = '';
+      if (!decided.length) { wrap.style.display = 'none'; return; }
+      wrap.style.display = '';
+      decided.slice(0, 12).forEach((d) => {
+        list.appendChild(el('div', { class: 'row' }, [
+          el('span', { class: 'badge ' + d.status, text: d.status }),
+          el('span', { text: d.vendor + ' ' }),
+          el('span', { class: 'ref', text: d.ref }),
+          el('span', { class: 'conf', text: d.tool || '' }),
+        ]));
+      });
+    }
+
+    async function load() {
+      const queue = $('#queue');
+      try {
+        const data = await api('GET', '/pending');
+        const items = (data && data.pending) || [];
+        $('#count').textContent = items.length + (items.length === 1 ? ' item' : ' items');
+        queue.innerHTML = '';
+        if (!items.length) {
+          queue.appendChild(el('div', { class: 'empty', text: 'The approval queue is empty. Intake an invoice via POST /intake to see a proposal here.' }));
+        } else {
+          items.forEach((it) => queue.appendChild(card(it)));
+        }
+        renderHistory();
+      } catch (e) {
+        queue.innerHTML = '';
+        queue.appendChild(el('div', { class: 'empty', text: 'Could not load the queue: ' + e.message }));
+      }
+    }
+
+    async function loadHealth() {
+      try {
+        const h = await api('GET', '/health');
+        $('#model').textContent = 'decider ' + (h.decider || '?') + ' · ' + (h.store || '');
+      } catch (_) { $('#model').textContent = 'decider offline'; }
+    }
+
+    $('#refresh').onclick = load;
+    loadHealth();
+    load();
+  </script>
+</body>
+</html>

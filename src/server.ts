@@ -30,6 +30,7 @@ import { InMemoryWorkItemStore, PgWorkItemStore, type WorkItemStore } from "./ap
 import { defaultDecider, QwenDecider } from "./ap/decider.js";
 import { fakeSinks, type Sinks } from "./ap/sinks.js";
 import { hasDatabase } from "./db/client.js";
+import { UI_HTML } from "./ui.js";
 import {
   AutopilotAgent,
   ConflictError,
@@ -98,6 +99,15 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
   });
 
   app.get("/openapi.json", { schema: { hide: true } }, async () => app.swagger());
+
+  // The human approval UI — a single static page served by this same backend.
+  // It drives the queue (/pending) and the gate (/approve · /amend · /reject)
+  // from the browser, same-origin. Hidden from the OpenAPI spec (it is a page,
+  // not an API route). Both `/` and `/ui` serve it.
+  const serveUi = async (_req: unknown, reply: import("fastify").FastifyReply) =>
+    reply.type("text/html").send(UI_HTML);
+  app.get("/", { schema: { hide: true } }, serveUi);
+  app.get("/ui", { schema: { hide: true } }, serveUi);
 
   // Wire dependencies. Defaults: real embedder/decider auto-select Qwen vs Fakes
   // by env; the stores use pgvector when DATABASE_URL is set, else in-memory.
