@@ -156,10 +156,15 @@ Return ONLY the raw JSON object — no markdown fences, no commentary.`;
 
 export class QwenVisionExtractionClient implements ExtractionClient {
   readonly modelId: string;
-  private client = createQwenClient();
+  private client: VisionChat;
 
-  constructor(modelId: string = DEFAULT_VISION_MODEL) {
+  // The OpenAI-compatible vision client is injectable — like the chat/embeddings
+  // seams — so extract() (the clean-JSON + toRawInvoice mapping) is unit-testable
+  // offline with a fake completion, no key and no network. Defaults to the real
+  // DashScope client.
+  constructor(modelId: string = DEFAULT_VISION_MODEL, client?: VisionChat) {
     this.modelId = modelId;
+    this.client = client ?? (createQwenClient() as unknown as VisionChat);
   }
 
   async extract(doc: UploadedDocument): Promise<ExtractionResult> {
@@ -180,7 +185,7 @@ export class QwenVisionExtractionClient implements ExtractionClient {
 
     // The vision surface is the SAME OpenAI-compatible chat-completions API; the
     // multi-part user content (image_url + text) is what qwen-vl-max expects.
-    const res = await (this.client as unknown as VisionChat).chat.completions.create({
+    const res = await this.client.chat.completions.create({
       model: this.modelId,
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
@@ -364,8 +369,9 @@ function toRawInvoice(data: Record<string, unknown>): RawInvoice {
 }
 
 // Minimal shape of the OpenAI-compatible vision chat call we use — the real
-// `openai` client satisfies it. Kept local so this module owns its own seam.
-interface VisionChat {
+// `openai` client satisfies it. Exported so a test can inject a fake completion
+// and exercise extract() offline.
+export interface VisionChat {
   chat: {
     completions: {
       create(args: {

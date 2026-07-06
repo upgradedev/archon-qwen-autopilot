@@ -25,6 +25,7 @@ import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { hasDatabase } from "./db/client.js";
@@ -153,6 +154,15 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
   // auto-selection as the loop + embedder, so CI runs the upload path with no key.
   const extractor = deps.extractor ?? defaultExtractionClient();
 
+  // Single-use "process tickets" for the two-step review flow. POST /extract/document
+  // consumes ONE daily slot (it runs the expensive vision extraction) and mints a
+  // ticket; the follow-up POST /intake/stream may then present that ticket to run the
+  // decision loop on the reviewed invoice WITHOUT consuming a second slot. The set is
+  // instance-scoped (never a module singleton, exactly like the rate limiter) so
+  // tickets never bleed across tests, and each ticket is deleted on first use — so it
+  // can never multiply into a free-processing bypass of the open-demo budget guard.
+  const processTickets = new Set<string>();
+
   app.get(
     "/health",
     {
@@ -242,7 +252,7 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
   // (`event: proposal`) and a close (`event: done`). This backs the UI's "watch the
   // agent work" upload view. The human gate is unchanged — the loop only proposes;
   // nothing executes here.
-  app.post<{ Body: { invoice?: Record<string, unknown> } }>(
+  app.post<{ Body: { invoice?: Record<string, unknown>; ticket?: string } }>(
     "/intake/stream",
     {
       schema: {
@@ -250,12 +260,18 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
         description:
           "Same as POST /intake, but streams each autonomous read/analyze step as a Server-Sent " +
           "Event (`event: step`) as it happens, then `event: proposal` (the full PENDING work item) " +
-          "and `event: done`. Nothing executes — it only proposes. Rate-limited like /intake.",
+          "and `event: done`. Nothing executes — it only proposes. Rate-limited like /intake, EXCEPT " +
+          "when a valid single-use `ticket` (minted by POST /extract/document) is supplied — the " +
+          "extraction already consumed the daily slot, so the reviewed-invoice loop does not consume " +
+          "a second one.",
         tags: ["workflow"],
         body: {
           type: "object",
           additionalProperties: true,
-          properties: { invoice: { type: "object", additionalProperties: true } },
+          properties: {
+            invoice: { type: "object", additionalProperties: true },
+            ticket: { type: "string", description: "A single-use process ticket from POST /extract/document (skips the daily limiter)." },
+          },
         },
         produces: ["text/event-stream"],
       },
@@ -263,8 +279,17 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
     async (req, reply) => {
       const raw = extractInvoice(req.body);
       if (!raw) return reply.code(400).send({ error: "an invoice payload is required (send { invoice: {...} })" });
-      const rl = rateLimiter.consume();
-      if (!rl.allowed) return reply.code(429).send(rateLimitError(rl));
+      // A valid single-use ticket (from /extract/document) skips the limiter — the
+      // extraction already paid the slot. Consume the ticket exactly once. Absent (or
+      // unknown) ticket → the normal paste-JSON path consumes the daily budget.
+      const ticket = typeof req.body?.ticket === "string" ? req.body.ticket : "";
+      const ticketed = ticket !== "" && processTickets.delete(ticket);
+      let remaining = -1;
+      if (!ticketed) {
+        const rl = rateLimiter.consume();
+        if (!rl.allowed) return reply.code(429).send(rateLimitError(rl));
+        remaining = rl.remaining;
+      }
 
       // Take over the raw socket and speak text/event-stream by hand.
       reply.hijack();
@@ -277,7 +302,7 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
       const send = (event: string, data: unknown) =>
         res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
       try {
-        send("start", { message: "processing invoice", remaining: rl.remaining });
+        send("start", { message: "processing invoice", remaining });
         const item = await agent.intake(raw, { onStep: (step: TraceStep) => send("step", step) });
         send("proposal", item);
         send("done", { id: item.id });
@@ -374,6 +399,81 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
         send("error", { error: err instanceof Error ? err.message : "document extraction failed" });
       } finally {
         res.end();
+      }
+    }
+  );
+
+  // EXTRACT-ONLY — the first half of the two-step review flow. Upload a REAL document
+  // (PDF/PNG/JPG) → validate → consume ONE daily slot → Qwen-VL vision extraction →
+  // return the extracted invoice JSON for the human to REVIEW. It runs NO decision
+  // loop and proposes nothing. It mints a single-use `ticket`; the UI then posts the
+  // reviewed invoice to POST /intake/stream WITH that ticket, which runs the loop
+  // without consuming a second slot. Same strict order as /intake/document — parse +
+  // validate the file, THEN consume budget, THEN extract — so a bad file is a clean
+  // 400/413 that never costs a slot and never reaches the vision model.
+  app.post(
+    "/extract/document",
+    {
+      schema: {
+        summary: "Upload a real invoice document (PDF/PNG/JPG) and extract it with Qwen-VL for human review (no loop)",
+        description:
+          "Accepts a multipart/form-data upload with one `file` field — a PDF, PNG, or JPG vendor " +
+          "invoice — validates it, consumes one daily slot, runs Qwen-VL (qwen-vl-max) vision " +
+          "extraction, and returns the structured invoice for review PLUS a single-use `ticket`. It " +
+          "runs NO decision loop and executes nothing; the reviewed invoice is then processed via " +
+          "POST /intake/stream (presenting the ticket, so it does not consume a second slot).",
+        tags: ["workflow"],
+        consumes: ["multipart/form-data"],
+        response: { 200: looseObject, 400: errorResponse, 413: errorResponse, 429: errorResponse, 502: errorResponse },
+      },
+    },
+    async (req, reply) => {
+      // 1) Parse the multipart file (a non-multipart request / missing part → 400).
+      let filename = "";
+      let mimetype = "";
+      let buffer: Buffer;
+      try {
+        const part = await (req as unknown as { file: () => Promise<MultipartFile | undefined> }).file();
+        if (!part) return reply.code(400).send({ error: "no file uploaded — attach one PDF, PNG, or JPG in the `file` field" });
+        filename = part.filename ?? "";
+        mimetype = part.mimetype ?? "";
+        buffer = await part.toBuffer();
+        if (part.file?.truncated) {
+          return reply.code(413).send({ error: `document too large — the limit is ${MAX_DOCUMENT_BYTES} bytes` });
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (/file too large|reached size limit|FST_REQ_FILE_TOO_LARGE|maxFileSize/i.test(msg)) {
+          return reply.code(413).send({ error: `document too large — the limit is ${MAX_DOCUMENT_BYTES} bytes` });
+        }
+        return reply.code(400).send({ error: `could not read the upload as multipart/form-data: ${msg}` });
+      }
+
+      // 2) Validate type + size BEFORE consuming budget (a bad file must not cost a slot).
+      const v = validateDocument({ filename, mimetype, size: buffer.length });
+      if (!v.ok) return reply.code(v.status).send({ error: v.error });
+
+      // 3) Consume the daily budget (429 when the cap is reached).
+      const rl = rateLimiter.consume();
+      if (!rl.allowed) return reply.code(429).send(rateLimitError(rl));
+
+      // 4) Extract with Qwen-VL (or the offline fake). NO decision loop runs here.
+      try {
+        const extracted = await extractor.extract({ buffer, filename, mimetype });
+        // Mint a single-use ticket so the follow-up /intake/stream skips the limiter.
+        const ticket = randomUUID();
+        processTickets.add(ticket);
+        return {
+          filename,
+          model: extracted.model,
+          pages: extracted.pages,
+          sourceType: extracted.sourceType,
+          invoice: extracted.invoice,
+          ticket,
+          remaining: rl.remaining,
+        };
+      } catch (err) {
+        return reply.code(502).send({ error: err instanceof Error ? err.message : "document extraction failed" });
       }
     }
   );
