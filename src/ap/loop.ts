@@ -125,7 +125,13 @@ export class AutopilotLoop {
         temperature: 0.1,
         max_tokens: 512,
         tools: allDefs,
-        tool_choice: "required",
+        // "auto" (not "required"): DashScope's OpenAI-compatible endpoint does not
+        // document "required", and an unsupported value would 500 every live call —
+        // breaking the whole loop invisibly (the offline Fake ignores tool_choice,
+        // so CI can't catch it). "auto" is safe: the system prompt instructs one tool
+        // per step, and if the model ever answers without a tool call the no-progress
+        // guard below counts it and falls back to a safe flag_for_review.
+        tool_choice: "auto",
       });
 
       const call = res.choices?.[0]?.message?.tool_calls?.[0];

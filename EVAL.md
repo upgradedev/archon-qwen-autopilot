@@ -158,6 +158,11 @@ cp .env.example .env    # set DASHSCOPE_API_KEY
 DASHSCOPE_API_KEY=sk-... npm run eval   # header self-labels ONLINE; grades real qwen-plus
 ```
 
+> **Live-run cost note.** Each scenario now runs the multi-step loop (several
+> qwen-plus calls — one per step — plus any seed intakes), so a live eval makes
+> ~3× the API calls the old single-shot path did. Still cents overall, but budget
+> for it. The offline gate is free (zero credentials, zero spend).
+
 **Scope, owned:** 22 scenarios on a frozen labelled set — a small, honest eval,
 exactly like the Track-1 retrieval benchmark's 15 queries. It measures *this*
 decider on *these* situations; it is not a general decision-quality claim. The
