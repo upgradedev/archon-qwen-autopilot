@@ -1,0 +1,136 @@
+name: Generate Demo Video
+
+# ~3-minute NARRATED demo video for the Global AI Hackathon (Qwen Cloud) —
+# Archon Autopilot (Track 4). No local recording needed:
+#   1. The multi-step-loop scene is driven by REAL captured live traces
+#      (demo/video/assets/live_intake_*.json) taken from the deployed Alibaba Cloud
+#      box over HTTPS, and the human-gate scene embeds real screenshots of the live
+#      approval UI (demo/video/assets/ui_*.png). Both are committed, so the build is
+#      fully reproducible and needs no live box or browser at render time.
+#   2. The voiceover is synthesized from demo/video/narration.txt: ElevenLabs when
+#      the ELEVEN_LABS_KEY secret is set, otherwise (or on any ElevenLabs error) the
+#      free edge-tts Neural voice — so the demo is ALWAYS narrated.
+#   3. scripts/make_frames.py renders the per-scene slideshow (PIL frames, burned
+#      auto-fit captions, NO black lead-in), scaled to the voiceover length.
+#   4. ffmpeg muxes the voiceover from t=0 -> archon-autopilot-demo.mp4 (artifact).
+#
+# Run: Actions -> "Generate Demo Video" -> Run workflow  (or gh workflow run demo-video.yml).
+on:
+  workflow_dispatch:
+    inputs:
+      voice_id:
+        description: "ElevenLabs voice ID."
+        required: false
+        default: "pNInz6obpgDQGcFmaJgB"
+      model_id:
+        description: "ElevenLabs model ID."
+        required: false
+        default: "eleven_multilingual_v2"
+
+permissions:
+  contents: read
+
+jobs:
+  video:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Ensure ffmpeg + fonts + Pillow + edge-tts
+        run: |
+          set -euo pipefail
+          command -v ffmpeg >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+          dpkg -s fonts-dejavu-core >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y fonts-dejavu-core)
+          test -f /usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf
+          test -f /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf
+          command -v jq >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y jq)
+          python -m pip install --upgrade pip
+          python -m pip install "pillow>=10" "edge-tts>=7"
+
+      - name: Verify committed video assets exist
+        run: |
+          set -euo pipefail
+          for f in demo/video/narration.txt \
+                   demo/video/assets/live_intake_journal.json \
+                   demo/video/assets/live_intake_duplicate.json \
+                   demo/video/assets/ui_overview.png \
+                   demo/video/assets/ui_card.png; do
+            test -s "$f" || { echo "::error::missing asset $f"; exit 1; }
+          done
+
+      - name: Synthesize voiceover (ElevenLabs -> edge-tts fallback)
+        env:
+          XI_API_KEY: ${{ secrets.ELEVEN_LABS_KEY }}
+          VOICE_ID: ${{ github.event.inputs.voice_id }}
+          MODEL_ID: ${{ github.event.inputs.model_id }}
+        run: |
+          set -euo pipefail
+          # The video MUST be narrated. ElevenLabs is the preferred TTS; edge-tts
+          # (free, no key) is the guaranteed fallback so a missing/expired key or an
+          # ElevenLabs error can NEVER leave the demo silent. Both failing is fatal.
+          have=false
+          if [ -n "${XI_API_KEY:-}" ]; then
+            jq -Rs --arg m "$MODEL_ID" \
+              '{text: ., model_id: $m, voice_settings: {stability: 0.45, similarity_boost: 0.8, use_speaker_boost: true}}' \
+              demo/video/narration.txt > body.json
+            HTTP=$(curl -sS -w "%{http_code}" -X POST \
+              "https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}?output_format=mp3_44100_128" \
+              -H "xi-api-key: ${XI_API_KEY}" -H "Content-Type: application/json" -H "Accept: audio/mpeg" \
+              --data @body.json -o voiceover.mp3 || echo "000")
+            if [ "$HTTP" = "200" ] && [ -f voiceover.mp3 ] && [ "$(wc -c < voiceover.mp3)" -gt 10000 ]; then
+              echo "ElevenLabs voiceover OK ($(wc -c < voiceover.mp3) bytes)"
+              have=true
+            else
+              echo "::warning::ElevenLabs synthesis failed (HTTP ${HTTP}) — falling back to edge-tts."
+              rm -f voiceover.mp3
+            fi
+          else
+            echo "::warning::ELEVEN_LABS_KEY not set — using the free edge-tts voice."
+          fi
+          if [ "$have" != "true" ]; then
+            python -m edge_tts --voice en-US-GuyNeural --file demo/video/narration.txt --write-media voiceover.mp3
+            [ -f voiceover.mp3 ] && [ "$(wc -c < voiceover.mp3)" -gt 10000 ] \
+              || { echo "::error::edge-tts produced no usable audio — cannot ship a silent video."; exit 1; }
+            echo "edge-tts voiceover OK ($(wc -c < voiceover.mp3) bytes)"
+          fi
+
+      - name: Render per-scene slideshow (scaled to the voiceover)
+        env:
+          FONT_SANS: /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+          FONT_SANS_BOLD: /usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf
+          FONT_MONO: /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf
+          OUTPUT: scenes.mp4
+        run: |
+          set -euo pipefail
+          AUDIO=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 voiceover.mp3)
+          TARGET=$(python3 -c "print(round(float('${AUDIO}')+1.5,2))")
+          echo "voiceover=${AUDIO}s -> target=${TARGET}s"
+          TARGET_SECONDS="${TARGET}" python scripts/make_frames.py
+          test -f scenes.mp4
+
+      - name: Mux voiceover from t=0 (no black lead-in)
+        run: |
+          set -euo pipefail
+          mkdir -p demo/video/final
+          ffmpeg -y -i scenes.mp4 -i voiceover.mp3 \
+            -filter_complex "[1:a]apad[a]" -map 0:v:0 -map "[a]" \
+            -c:v copy -c:a aac -b:a 192k -shortest demo/video/final/archon-autopilot-demo.mp4
+          DUR=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 demo/video/final/archon-autopilot-demo.mp4)
+          echo "final duration: ${DUR}s"
+          # Gate: must be a real, narrated video and under the 3-minute ceiling.
+          python3 -c "d=float('${DUR}'); assert 30 < d <= 180, f'duration {d}s out of range'; print(f'duration OK: {d}s')"
+
+      - name: Upload demo video
+        uses: actions/upload-artifact@v4
+        with:
+          name: archon-autopilot-demo-video
+          path: |
+            demo/video/final/archon-autopilot-demo.mp4
+            voiceover.mp3
+            scenes.mp4
+          if-no-files-found: error
+          retention-days: 14
