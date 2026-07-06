@@ -163,6 +163,34 @@ DASHSCOPE_API_KEY=sk-... npm run eval   # header self-labels ONLINE; grades real
 > ~3× the API calls the old single-shot path did. Still cents overall, but budget
 > for it. The offline gate is free (zero credentials, zero spend).
 
+## MCP integration & custom skills — the same graded agent, a second surface
+
+The number above grades the **agent**, not a transport. The agent is now reachable
+two ways — the HTTP routes and an **MCP server** (`src/mcp/server.ts`,
+`@modelcontextprotocol/sdk`) — both wired from the same `resolveDeps()` helper to the
+**same injectable `AutopilotAgent`**. So `intake_invoice` over MCP runs the *identical*
+multi-step loop this eval measures; there is no second decision path to grade.
+
+What the eval's discipline is complemented by, on the MCP side, is a **behavioural**
+guarantee proven by tests rather than a scored number:
+
+- **Round-trip through the real MCP surface** — `tests/integration/mcp-transport.test.ts`
+  stands up a real MCP `Client ↔ Server` over an in-memory transport and drives
+  `intake_invoice → list_pending → approve`, fully offline.
+- **The human-in-the-loop gate is preserved — and observable — over MCP.** `intake`
+  executes nothing (sinks empty, status `pending`); `approve` needs an explicit call
+  naming the id; a decided item can never re-execute — a second `approve`/`amend`/`reject`
+  returns an MCP `isError` result, asserted in `tests/unit/mcp.test.ts`.
+- **Custom-skills catalog is faithful** — `tests/unit/skills.test.ts` proves the
+  `GET /skills` / `list_skills` catalog is derived from the live function schemas
+  (every skill once, correct tier/gate/rule, parameters equal to what Qwen sees), so
+  it cannot drift from the tools the graded loop actually uses.
+
+These run in the offline suite (`npm test`) with no key and no DB — same zero-spend
+discipline as the gated eval. Connection + config details: the
+[MCP integration & custom skills](README.md#mcp-integration--custom-skills) section
+of the README.
+
 **Scope, owned:** 22 scenarios on a frozen labelled set — a small, honest eval,
 exactly like the Track-1 retrieval benchmark's 15 queries. It measures *this*
 decider on *these* situations; it is not a general decision-quality claim. The
