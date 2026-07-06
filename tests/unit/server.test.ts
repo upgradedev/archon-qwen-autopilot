@@ -130,6 +130,30 @@ test("GET / includes the guided tour + one-click demo (self-explanatory for a fi
   assert.match(res.body, /No invoices in the queue/);
 });
 
+test("GET / ships the enriched UI: upload + live process view, collapsible trace, decided tab, charts", async () => {
+  const res = await app.inject({ method: "GET", url: "/" });
+  assert.equal(res.statusCode, 200);
+  // Document/invoice upload + real-time process view (streamed over SSE).
+  assert.match(res.body, /Upload an invoice/i);
+  assert.match(res.body, /id="fileInput"/);
+  assert.match(res.body, /id="processBtn"/);
+  assert.match(res.body, /\/intake\/stream/); // the UI consumes the SSE stream
+  assert.match(res.body, /getReader|text\/event-stream|Processing invoice/);
+  // The 10/day limit is surfaced to the visitor in the upload panel.
+  assert.match(res.body, /10\/day/);
+  // Collapsible "How the agent decided" trace (chevron toggle).
+  assert.match(res.body, /How the agent decided/);
+  assert.match(res.body, /class: 'collapsible'|collapsible/);
+  assert.match(res.body, /chevron/);
+  // Decided view fed by the real /decided endpoint + a decided tab.
+  assert.match(res.body, /\/decided/);
+  assert.match(res.body, /data-tab="decided"/);
+  // Charts (inline SVG, no CDN / no build step) — pending clean-vs-flagged + decided.
+  assert.match(res.body, /createElementNS\('http:\/\/www\.w3\.org\/2000\/svg'/);
+  assert.match(res.body, /Clean/);
+  assert.match(res.body, /Amended/);
+});
+
 test("GET /ui serves the same approval UI (alias)", async () => {
   const res = await app.inject({ method: "GET", url: "/ui" });
   assert.equal(res.statusCode, 200);

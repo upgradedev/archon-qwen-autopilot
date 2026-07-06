@@ -18,6 +18,7 @@
       --amber: #d29922;
       --red: #da3633;
       --red-hi: #f85149;
+      --purple: #a371f7;
       --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
     }
     * { box-sizing: border-box; }
@@ -138,11 +139,6 @@
     button.reject { border-color: rgba(218,54,51,.5); color: var(--red-hi); }
     button.reject:hover { background: rgba(218,54,51,.12); border-color: var(--red-hi); }
     .empty { text-align: center; color: var(--muted); padding: 60px 20px; border: 1px dashed var(--border); border-radius: 10px; }
-    .history { margin-top: 40px; }
-    .history .row { display: flex; gap: 10px; align-items: baseline; font-size: 12.5px; padding: 7px 0; border-bottom: 1px solid var(--border); }
-    .history .badge { font-family: var(--mono); font-size: 11px; padding: 1px 8px; border-radius: 999px; }
-    .badge.approved { color: var(--green-hi); border: 1px solid rgba(46,160,67,.4); }
-    .badge.rejected { color: var(--red-hi); border: 1px solid rgba(218,54,51,.4); }
     #toast {
       position: fixed;
       bottom: 24px;
@@ -172,6 +168,83 @@
     /* Empty state helper button */
     .empty .empty-msg { max-width: 520px; margin: 0 auto; }
     .empty button { margin-top: 18px; }
+
+    /* ── Upload + real-time process view ─────────────────────────────────────── */
+    .upload {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+      padding: 16px 18px; margin-bottom: 22px;
+    }
+    .upload .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+    .upload input[type=file] { font-size: 12.5px; color: var(--muted); }
+    .hint { color: var(--muted); font-size: 12px; }
+    #processView { display: none; margin-top: 14px; border-top: 1px dashed var(--border); padding-top: 14px; }
+    .proc-head { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text); margin-bottom: 10px; }
+    .proc-head .done-check { color: var(--green-hi); font-weight: 700; }
+    .proc-steps { display: grid; gap: 8px; }
+    .proc-step { display: grid; grid-template-columns: 22px 1fr; gap: 8px; align-items: baseline; }
+    .proc-step .num { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+    .proc-step .tool { font-family: var(--mono); font-size: 12.5px; color: var(--accent); }
+    .proc-step .obs { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+    /* Each streamed step fades in as it arrives — the real-time "appearing one by one" feel. */
+    .reveal { animation: fadein .35s ease both; }
+    @keyframes fadein { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+    .spin {
+      width: 14px; height: 14px; border-radius: 50%;
+      border: 2px solid var(--border); border-top-color: var(--accent);
+      display: inline-block; animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Collapsible "How the agent decided" trace ───────────────────────────── */
+    .collapsible > .toggle {
+      display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;
+      background: transparent; border: none; padding: 0; color: var(--muted);
+      font-size: 11px; text-transform: uppercase; letter-spacing: .8px; margin-bottom: 6px;
+    }
+    .collapsible > .toggle:hover { color: var(--accent); }
+    .collapsible > .toggle .chevron { transition: transform .15s ease; display: inline-block; }
+    .collapsible.collapsed > .toggle .chevron { transform: rotate(-90deg); } /* ▸ when collapsed */
+    .collapsible.collapsed > .toggle .chevron::before { content: "▾"; }
+    .collapsible > .toggle .chevron::before { content: "▾"; }
+    .collapsible.collapsed > .body { display: none; }
+
+    /* ── Tabs (Pending / Decided) ────────────────────────────────────────────── */
+    .tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+    .tab {
+      background: transparent; border: none; border-bottom: 2px solid transparent;
+      color: var(--muted); padding: 8px 12px; cursor: pointer; font-size: 13px; border-radius: 0;
+    }
+    .tab:hover { color: var(--text); border-color: transparent; }
+    .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .tabpane { display: none; }
+    .tabpane.active { display: block; }
+
+    /* ── Charts (inline SVG, no CDN, no build step) ──────────────────────────── */
+    .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+    @media (max-width: 640px) { .charts { grid-template-columns: 1fr; } }
+    .chart { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+    .chart h3 { margin: 0 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); font-weight: 600; }
+    .chart .legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 8px; font-size: 12px; color: var(--muted); }
+    .chart .legend .dot { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+    .chart .zero { color: var(--muted); font-size: 12.5px; padding: 14px 0; }
+
+    /* ── Decided view ────────────────────────────────────────────────────────── */
+    .decided-item {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+      padding: 14px 16px; margin-bottom: 12px;
+    }
+    .decided-item .head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+    .badge { font-family: var(--mono); font-size: 11px; padding: 1px 9px; border-radius: 999px; }
+    .badge.approved { color: var(--green-hi); border: 1px solid rgba(46,160,67,.4); }
+    .badge.amended { color: var(--amber); border: 1px solid rgba(210,153,34,.45); }
+    .badge.rejected { color: var(--red-hi); border: 1px solid rgba(218,54,51,.4); }
+    .decided-item .when { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-left: auto; }
+    .decided-item .outcome { color: var(--muted); font-size: 12.5px; margin-top: 6px; }
+    .diff { display: grid; gap: 3px; margin-top: 8px; font-family: var(--mono); font-size: 12px; }
+    .diff .prev { color: var(--red-hi); }
+    .diff .next { color: var(--green-hi); }
+    .diff .k { color: var(--muted); }
+
     /* Guided tour overlay (inline, no external dependency, no build step). */
     #tourOverlay { position: fixed; inset: 0; z-index: 60; display: none; }
     #tourOverlay.show { display: block; }
@@ -206,16 +279,55 @@
   </header>
 
   <main>
-    <div class="bar">
-      <h2>Pending approvals</h2>
-      <span class="count" id="count"></span>
-    </div>
-    <div id="queue"></div>
+    <!-- Document/invoice upload + real-time process view. Upload a .json invoice (or
+         paste it), then watch the agent reason step-by-step as it streams (SSE). -->
+    <section class="upload" id="uploadPanel" data-tour="upload">
+      <div class="section-label">Upload an invoice — watch the agent work in real time</div>
+      <div class="hint">Upload a <code>.json</code> vendor invoice or paste one below, then Process. The agent streams each reasoning step live, then proposes one action for your approval. <b>Uploads are limited to 10/day</b> (open demo — the cap protects the Qwen API budget).</div>
+      <div class="row">
+        <input type="file" id="fileInput" accept=".json,application/json" title="Load a .json invoice" />
+        <button class="ghost" id="fillSample" title="Fill the box with a sample invoice">Use sample JSON</button>
+      </div>
+      <textarea id="invoiceInput" spellcheck="false" aria-label="Invoice JSON"></textarea>
+      <div class="row">
+        <button class="primary" id="processBtn" title="Run the multi-step loop, streaming each step">Process invoice</button>
+        <span class="hint">Nothing executes here — the agent only proposes.</span>
+      </div>
+      <div id="processView"></div>
+    </section>
 
-    <div class="history" id="historyWrap" style="display:none">
-      <div class="bar"><h2>Decided this session</h2></div>
-      <div id="history"></div>
+    <!-- At-a-glance charts (inline SVG). Pending: clean vs flagged. Decided: approved / amended / rejected. -->
+    <div class="charts" id="charts">
+      <div class="chart" id="chartPending">
+        <h3>Pending — clean vs flagged</h3>
+        <div class="zero">Loading…</div>
+      </div>
+      <div class="chart" id="chartDecided">
+        <h3>Decided — approved / amended / rejected</h3>
+        <div class="zero">Loading…</div>
+      </div>
     </div>
+
+    <div class="tabs">
+      <button class="tab active" id="tabPending" data-tab="pending">Pending approvals</button>
+      <button class="tab" id="tabDecided" data-tab="decided">Decided</button>
+    </div>
+
+    <section class="tabpane active" id="pane-pending">
+      <div class="bar">
+        <h2>Pending approvals</h2>
+        <span class="count" id="count"></span>
+      </div>
+      <div id="queue"></div>
+    </section>
+
+    <section class="tabpane" id="pane-decided">
+      <div class="bar">
+        <h2>Decided this workspace</h2>
+        <span class="count" id="decidedCount"></span>
+      </div>
+      <div id="decided"></div>
+    </section>
   </main>
 
   <div id="toast"></div>
@@ -241,7 +353,6 @@
       (kids || []).forEach((c) => n.appendChild(typeof c === 'string' ? document.createTextNode(c) : c));
       return n;
     };
-    const decided = []; // session-local record; the API exposes only the pending queue
 
     let toastTimer;
     function toast(msg, kind) {
@@ -249,13 +360,19 @@
       t.textContent = msg;
       t.className = 'show ' + (kind || '');
       clearTimeout(toastTimer);
-      toastTimer = setTimeout(() => { t.className = ''; }, 3200);
+      toastTimer = setTimeout(() => { t.className = ''; }, 3600);
     }
 
     function money(inv) {
-      if (inv.total == null) return (inv.currency || '') + ' —';
+      if (!inv || inv.total == null) return ((inv && inv.currency) || '') + ' —';
       const n = Number(inv.total).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       return (inv.currency || '') + ' ' + n;
+    }
+
+    // A proposal is "clean" iff every validation finding passed (no flags). Used by
+    // the pending chart. Defined once so the chart number is unambiguous.
+    function isClean(item) {
+      return (item.findings || []).every((f) => f.passed);
     }
 
     async function api(method, path, body) {
@@ -300,6 +417,22 @@
       return wrap;
     }
 
+    // A collapsible section — a clickable header (chevron) that shows/hides its body.
+    // Default collapsed, so the queue stays compact; a click expands the trace.
+    function collapsible(label, bodyNode, opts) {
+      const startCollapsed = !opts || opts.collapsed !== false;
+      const wrap = el('div', { class: 'collapsible' + (startCollapsed ? ' collapsed' : '') });
+      const toggle = el('button', { class: 'toggle', type: 'button' }, [
+        el('span', { class: 'chevron' }),
+        el('span', { text: label }),
+      ]);
+      const body = el('div', { class: 'body' }, [bodyNode]);
+      toggle.onclick = () => wrap.classList.toggle('collapsed');
+      wrap.appendChild(toggle);
+      wrap.appendChild(body);
+      return wrap;
+    }
+
     function renderRecalled(recalled) {
       const wrap = el('div', { class: 'recalled' });
       (recalled || []).forEach((r) => {
@@ -340,14 +473,13 @@
       ]);
 
       const body = el('div', { class: 'card-body' }, [proposed, argsBlock]);
-      // The agent's multi-step reasoning trace — HOW it reached this proposal (the
-      // autonomous read/analyze steps it took, each with no side-effect).
+      // The agent's multi-step reasoning trace — HOW it reached this proposal. Now a
+      // COLLAPSIBLE section (default collapsed) so the queue stays compact; click the
+      // chevron to expand "How the agent decided".
       if ((item.trace || []).length) {
         const n = item.trace.length;
-        body.appendChild(el('div', { 'data-tour': 'trace' }, [
-          el('div', { class: 'section-label', text: 'How the agent decided — ' + n + (n === 1 ? ' step' : ' steps') + ' (no side-effect)' }),
-          renderTrace(item.trace),
-        ]));
+        const label = 'How the agent decided — ' + n + (n === 1 ? ' step' : ' steps') + ' (no side-effect)';
+        body.appendChild(el('div', { 'data-tour': 'trace' }, [ collapsible(label, renderTrace(item.trace)) ]));
       }
       if ((item.findings || []).length) {
         body.appendChild(el('div', {}, [ el('div', { class: 'section-label', text: 'Validation findings' }), renderFindings(item.findings) ]));
@@ -366,15 +498,13 @@
       const actions = el('div', { class: 'actions', 'data-tour': 'actions' }, [gateNote, approveBtn, amendBtn, rejectBtn]);
 
       const setBusy = (b) => { approveBtn.disabled = amendBtn.disabled = rejectBtn.disabled = b; };
-      const remember = (status) => decided.unshift({ vendor: inv.vendor || 'vendor', ref: inv.vendor_ref || inv.invoice_id || '', tool: p.tool, status });
 
       approveBtn.onclick = async () => {
         setBusy(true);
         try {
           const r = await api('POST', '/approve/' + item.id);
           toast('Approved · ' + ((r.execution && r.execution.summary) || p.tool), 'ok');
-          remember('approved');
-          await load();
+          await refreshAll();
         } catch (e) { toast(e.message, 'err'); setBusy(false); }
       };
 
@@ -386,8 +516,7 @@
         try {
           const r = await api('POST', '/amend/' + item.id, { args, reason: 'Amended in the approval UI' });
           toast('Amended & approved · ' + ((r.execution && r.execution.summary) || p.tool), 'ok');
-          remember('approved');
-          await load();
+          await refreshAll();
         } catch (e) { toast(e.message, 'err'); setBusy(false); }
       };
 
@@ -396,8 +525,7 @@
         try {
           await api('POST', '/reject/' + item.id, { reason: 'Rejected in the approval UI' });
           toast('Rejected — nothing executed', 'ok');
-          remember('rejected');
-          await load();
+          await refreshAll();
         } catch (e) { toast(e.message, 'err'); setBusy(false); }
       };
 
@@ -407,22 +535,129 @@
       return c;
     }
 
-    function renderHistory() {
-      const wrap = $('#historyWrap');
-      const list = $('#history');
-      list.innerHTML = '';
-      if (!decided.length) { wrap.style.display = 'none'; return; }
-      wrap.style.display = '';
-      decided.slice(0, 12).forEach((d) => {
-        list.appendChild(el('div', { class: 'row' }, [
-          el('span', { class: 'badge ' + d.status, text: d.status }),
-          el('span', { text: d.vendor + ' ' }),
-          el('span', { class: 'ref', text: d.ref }),
-          el('span', { class: 'conf', text: d.tool || '' }),
-        ]));
-      });
+    // ---- Decided view (backed by GET /decided — survives reloads) ----------------
+    function decisionLabel(item) {
+      if (item.status === 'approved') return item.amended ? 'amended' : 'approved';
+      return item.status; // rejected
     }
 
+    function renderDiff(amendment) {
+      // Show the prev → new args diff (the amend audit trail).
+      const prev = amendment.proposedArgs || {};
+      const next = amendment.amendedArgs || {};
+      const keys = [...new Set([...Object.keys(prev), ...Object.keys(next)])];
+      const wrap = el('div', { class: 'diff' });
+      keys.forEach((k) => {
+        const a = JSON.stringify(prev[k]);
+        const b = JSON.stringify(next[k]);
+        if (a === b) return; // unchanged — only show what the human actually edited
+        wrap.appendChild(el('div', {}, [
+          el('span', { class: 'k', text: k + ': ' }),
+          el('span', { class: 'prev', text: (a === undefined ? '∅' : a) }),
+          document.createTextNode('  →  '),
+          el('span', { class: 'next', text: (b === undefined ? '∅' : b) }),
+        ]));
+      });
+      if (!wrap.childNodes.length) wrap.appendChild(el('span', { class: 'k', text: '(args unchanged)' }));
+      return wrap;
+    }
+
+    function decidedRow(item) {
+      const inv = item.invoice || {};
+      const p = item.proposed || {};
+      const label = decisionLabel(item);
+      const row = el('div', { class: 'decided-item' });
+      const head = el('div', { class: 'head' }, [
+        el('span', { class: 'badge ' + label, text: label }),
+        el('span', { class: 'vendor', text: inv.vendor || 'Unknown vendor' }),
+        el('span', { class: 'amount', text: money(inv) }),
+        el('span', { class: 'ref', text: (inv.vendor_ref || inv.invoice_id || '') }),
+        el('span', { class: 'when', text: item.decidedAt ? new Date(item.decidedAt).toLocaleString() : '' }),
+      ]);
+      row.appendChild(head);
+      const outcome = item.execution && item.execution.summary
+        ? item.execution.summary
+        : (item.status === 'rejected' ? ('Rejected — nothing executed' + (item.decisionReason ? ' · ' + item.decisionReason : '')) : (p.tool || ''));
+      row.appendChild(el('div', { class: 'outcome' }, [ el('span', { class: 'tool', text: p.tool || '' }), document.createTextNode('  ' + outcome) ]));
+      // The amend audit trail — prev → new — so a reviewer sees exactly what changed.
+      if (item.amended && item.amendment) {
+        row.appendChild(el('div', { class: 'section-label', text: 'Amended (prev → new)' }));
+        row.appendChild(renderDiff(item.amendment));
+      }
+      return row;
+    }
+
+    // ---- Charts (inline SVG horizontal bars — no CDN, no build step) -------------
+    function svgBars(segments) {
+      const total = segments.reduce((s, x) => s + x.value, 0);
+      if (!total) return el('div', { class: 'zero', text: 'Nothing yet — process an invoice to populate this chart.' });
+      const W = 300, rowH = 26, gap = 10, labelW = 96, barW = W - labelW - 44;
+      const H = segments.length * (rowH + gap);
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+      svg.setAttribute('width', '100%');
+      svg.setAttribute('height', H);
+      segments.forEach((seg, i) => {
+        const y = i * (rowH + gap);
+        const w = Math.round((seg.value / total) * barW);
+        const mk = (tag) => document.createElementNS('http://www.w3.org/2000/svg', tag);
+        const label = mk('text'); label.setAttribute('x', 0); label.setAttribute('y', y + rowH / 2 + 4);
+        label.setAttribute('fill', '#8b949e'); label.setAttribute('font-size', '12'); label.textContent = seg.label;
+        svg.appendChild(label);
+        const bg = mk('rect'); bg.setAttribute('x', labelW); bg.setAttribute('y', y); bg.setAttribute('width', barW);
+        bg.setAttribute('height', rowH); bg.setAttribute('rx', 4); bg.setAttribute('fill', '#1c2330'); svg.appendChild(bg);
+        const bar = mk('rect'); bar.setAttribute('x', labelW); bar.setAttribute('y', y); bar.setAttribute('width', Math.max(seg.value ? 3 : 0, w));
+        bar.setAttribute('height', rowH); bar.setAttribute('rx', 4); bar.setAttribute('fill', seg.color); svg.appendChild(bar);
+        const val = mk('text'); val.setAttribute('x', labelW + barW + 8); val.setAttribute('y', y + rowH / 2 + 4);
+        val.setAttribute('fill', '#e6edf3'); val.setAttribute('font-size', '12'); val.setAttribute('font-family', 'monospace'); val.textContent = seg.value;
+        svg.appendChild(val);
+      });
+      return svg;
+    }
+
+    function legend(segments) {
+      const wrap = el('div', { class: 'legend' });
+      segments.forEach((s) => {
+        const item = el('span', {});
+        const dot = el('span', { class: 'dot' }); dot.style.background = s.color;
+        item.appendChild(dot); item.appendChild(document.createTextNode(s.label));
+        wrap.appendChild(item);
+      });
+      return wrap;
+    }
+
+    function renderChart(hostId, title, segments) {
+      const host = $('#' + hostId);
+      host.innerHTML = '';
+      host.appendChild(el('h3', { text: title }));
+      host.appendChild(svgBars(segments));
+      if (segments.reduce((s, x) => s + x.value, 0)) host.appendChild(legend(segments));
+    }
+
+    function renderPendingChart(items) {
+      let clean = 0, flagged = 0;
+      items.forEach((it) => { if (isClean(it)) clean++; else flagged++; });
+      renderChart('chartPending', 'Pending — clean vs flagged', [
+        { label: 'Clean', value: clean, color: '#3fb950' },
+        { label: 'Flagged', value: flagged, color: '#d29922' },
+      ]);
+    }
+
+    function renderDecidedChart(items) {
+      let approved = 0, amended = 0, rejected = 0;
+      items.forEach((it) => {
+        if (it.status === 'rejected') rejected++;
+        else if (it.amended) amended++;
+        else approved++;
+      });
+      renderChart('chartDecided', 'Decided — approved / amended / rejected', [
+        { label: 'Approved', value: approved, color: '#3fb950' },
+        { label: 'Amended', value: amended, color: '#d29922' },
+        { label: 'Rejected', value: rejected, color: '#f85149' },
+      ]);
+    }
+
+    // ---- Loaders ----------------------------------------------------------------
     async function load() {
       const queue = $('#queue');
       try {
@@ -434,17 +669,40 @@
           const emptyBtn = el('button', { class: 'primary', text: 'Load sample invoice' });
           emptyBtn.onclick = () => loadSample();
           queue.appendChild(el('div', { class: 'empty' }, [
-            el('div', { class: 'empty-msg', text: 'No invoices in the queue — click "Load sample invoice" to watch the agent recall history, run its checks, and propose an action for your approval.' }),
+            el('div', { class: 'empty-msg', text: 'No invoices in the queue — click "Load sample invoice" (or upload one above) to watch the agent recall history, run its checks, and propose an action for your approval.' }),
             emptyBtn,
           ]));
         } else {
           items.forEach((it) => queue.appendChild(card(it)));
         }
-        renderHistory();
+        renderPendingChart(items);
       } catch (e) {
         queue.innerHTML = '';
         queue.appendChild(el('div', { class: 'empty', text: 'Could not load the queue: ' + e.message }));
       }
+    }
+
+    async function loadDecided() {
+      const host = $('#decided');
+      try {
+        const data = await api('GET', '/decided');
+        const items = (data && data.decided) || [];
+        $('#decidedCount').textContent = items.length + (items.length === 1 ? ' item' : ' items');
+        host.innerHTML = '';
+        if (!items.length) {
+          host.appendChild(el('div', { class: 'empty', text: 'Nothing decided yet. Approve, amend, or reject a pending proposal and it will appear here with its outcome.' }));
+        } else {
+          items.forEach((it) => host.appendChild(decidedRow(it)));
+        }
+        renderDecidedChart(items);
+      } catch (e) {
+        host.innerHTML = '';
+        host.appendChild(el('div', { class: 'empty', text: 'Could not load the decided list: ' + e.message }));
+      }
+    }
+
+    async function refreshAll() {
+      await Promise.all([load(), loadDecided()]);
     }
 
     async function loadHealth() {
@@ -455,9 +713,6 @@
     }
 
     // ---- One-click demo: queue a realistic sample vendor invoice ----------------
-    // Universal accounts-payable framing: a vendor bill with subtotal + tax + total
-    // and one line item. Posting it runs the full intake → recall → validate →
-    // Qwen-decide pipeline so a first-time visitor immediately sees a proposal.
     const SAMPLE_INVOICE = {
       vendor: 'Meridian Logistics',
       invoice_number: 'ML-2026-0417',
@@ -479,7 +734,8 @@
       try {
         await api('POST', '/intake', { invoice: SAMPLE_INVOICE });
         toast('Sample invoice queued — the agent proposed an action for your approval', 'ok');
-        await load();
+        setActiveTab('pending');
+        await refreshAll();
       } catch (e) {
         toast(e.message, 'err');
       } finally {
@@ -487,19 +743,112 @@
       }
     }
 
+    // ---- Upload + STREAM the reasoning live (SSE over fetch) ---------------------
+    // EventSource only supports GET, so we POST the invoice and read the
+    // text/event-stream body via a ReadableStream reader, parsing SSE frames by
+    // hand. Each `step` event renders as it ARRIVES (a CSS fade-in gives the
+    // "appearing one by one" feel); `proposal` closes the processing state.
+    async function streamIntake(invoice, onEvent) {
+      const res = await fetch('/intake/stream', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ invoice }),
+      });
+      if (!res.ok || !res.body) {
+        let msg = 'HTTP ' + res.status;
+        try { const j = await res.json(); msg = j.error || msg; } catch (_) {}
+        throw new Error(msg);
+      }
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let idx;
+        while ((idx = buf.indexOf('\n\n')) >= 0) {
+          const frame = buf.slice(0, idx); buf = buf.slice(idx + 2);
+          const ev = parseSSE(frame);
+          if (ev) onEvent(ev.event, ev.data);
+        }
+      }
+    }
+
+    function parseSSE(frame) {
+      let event = 'message', data = '';
+      frame.split('\n').forEach((line) => {
+        if (line.indexOf('event:') === 0) event = line.slice(6).trim();
+        else if (line.indexOf('data:') === 0) data += line.slice(5).trim();
+      });
+      if (!data) return null;
+      try { return { event: event, data: JSON.parse(data) }; } catch (_) { return { event: event, data: {} }; }
+    }
+
+    async function processInvoice() {
+      let invoice;
+      try { invoice = JSON.parse($('#invoiceInput').value); }
+      catch (_) { toast('The invoice box is not valid JSON — fix it or click "Use sample JSON".', 'err'); return; }
+
+      const pv = $('#processView');
+      pv.style.display = '';
+      pv.innerHTML = '';
+      const head = el('div', { class: 'proc-head' }, [ el('span', { class: 'spin' }), el('span', { text: 'Processing invoice — the agent is reasoning…' }) ]);
+      const stepsWrap = el('div', { class: 'proc-steps' });
+      pv.appendChild(head); pv.appendChild(stepsWrap);
+      const btn = $('#processBtn'); btn.disabled = true;
+
+      try {
+        await streamIntake(invoice, (event, data) => {
+          if (event === 'step') {
+            stepsWrap.appendChild(el('div', { class: 'proc-step reveal' }, [
+              el('span', { class: 'num', text: (data.step != null ? data.step + '.' : '·') }),
+              el('div', {}, [
+                el('div', { class: 'tool', text: data.tool || '' }),
+                (data.observation ? el('div', { class: 'obs', text: '→ ' + data.observation }) : document.createTextNode('')),
+              ]),
+            ]));
+          } else if (event === 'proposal') {
+            const p = (data && data.proposed) || {};
+            head.innerHTML = '';
+            head.appendChild(el('span', { class: 'done-check', text: '✓' }));
+            head.appendChild(el('span', { text: 'Proposed: ' + (p.tool || '—') + ' — awaiting your approval in the queue below.' }));
+          } else if (event === 'error') {
+            toast((data && data.error) || 'processing failed', 'err');
+          }
+        });
+        toast('Invoice processed — see the proposal in the pending queue', 'ok');
+        setActiveTab('pending');
+        await refreshAll();
+      } catch (e) {
+        toast(e.message, 'err');
+        head.innerHTML = '';
+        head.appendChild(el('span', { text: 'Could not process: ' + e.message }));
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    // ---- Tabs -------------------------------------------------------------------
+    function setActiveTab(name) {
+      document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.getAttribute('data-tab') === name));
+      $('#pane-pending').classList.toggle('active', name === 'pending');
+      $('#pane-decided').classList.toggle('active', name === 'decided');
+    }
+
     // ---- Guided tour (inline; no CDN, no build step) ----------------------------
-    // Steps adapt to the DOM: the queue intro always shows; if a proposal card is
-    // present its invoice / proposal / reasoning-trace / gate steps are added, else
-    // the tour points the visitor at "Load sample invoice". Any step whose target
-    // is missing is skipped so the spotlight never points at nothing.
     const TOUR_KEY = 'archon_autopilot_tour_v1';
     const tour = { steps: [], i: 0 };
 
     function tourSteps() {
       const steps = [{
+        el: () => $('#uploadPanel'),
+        title: 'Upload an invoice — watch it work',
+        body: 'Upload or paste a vendor invoice and click Process. The agent streams every reasoning step LIVE — recall history, validate, check for a duplicate, test the amount — then proposes one action. Nothing is paid or posted until you approve it.',
+      }, {
         el: () => $('#queue'),
         title: 'The approval queue',
-        body: 'This is Archon Autopilot — a human-gated accounts-payable agent on Qwen. Every incoming vendor invoice arrives here as a proposal. Nothing is paid or posted until you approve it.',
+        body: 'This is Archon Autopilot — a human-gated accounts-payable agent on Qwen. Every incoming vendor invoice arrives here as a proposal. Nothing executes until you approve it.',
       }];
       const firstCard = $('#queue .card');
       if (!firstCard) {
@@ -524,13 +873,13 @@
         steps.push({
           el: () => firstCard.querySelector('[data-tour="trace"]'),
           title: 'How the agent decided',
-          body: 'The multi-step reasoning trace: the agent recalls vendor history, validates the invoice, checks for a duplicate, tests the amount variance, then reaches a terminal proposal. Every step is read-only — no side effects.',
+          body: 'The multi-step reasoning trace — click to expand it. The agent recalls vendor history, validates the invoice, checks for a duplicate, tests the amount variance, then reaches a terminal proposal. Every step is read-only — no side effects.',
         });
       }
       steps.push({
         el: () => firstCard.querySelector('[data-tour="actions"]'),
         title: 'You hold the gate',
-        body: 'Approve to execute the exact proposed action, Amend to edit the arguments first, or Reject to discard it. Nothing executes until you approve — this is the human gate.',
+        body: 'Approve to execute the exact proposed action, Amend to edit the arguments first, or Reject to discard it. Nothing executes until you approve — this is the human gate. Decided items move to the Decided tab.',
       });
       return steps;
     }
@@ -610,17 +959,31 @@
       if (!seen) startTour();
     }
 
-    $('#refresh').onclick = load;
+    // ---- Wiring -----------------------------------------------------------------
+    $('#refresh').onclick = refreshAll;
     $('#loadSample').onclick = () => loadSample();
     $('#tourBtn').onclick = startTour;
+    $('#processBtn').onclick = processInvoice;
+    $('#fillSample').onclick = () => { $('#invoiceInput').value = JSON.stringify(SAMPLE_INVOICE, null, 2); };
+    $('#fileInput').onchange = (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      const rd = new FileReader();
+      rd.onload = () => { $('#invoiceInput').value = String(rd.result || ''); toast('Loaded ' + file.name + ' — click Process', 'ok'); };
+      rd.readAsText(file);
+    };
+    document.querySelectorAll('.tab').forEach((t) => { t.onclick = () => setActiveTab(t.getAttribute('data-tab')); });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && $('#tourOverlay').classList.contains('show')) endTour();
     });
     window.addEventListener('resize', () => {
       if ($('#tourOverlay').classList.contains('show')) placeTour(tour.steps[tour.i]);
     });
+
+    // Prefill the upload box with the sample so a first-time visitor can Process immediately.
+    $('#invoiceInput').value = JSON.stringify(SAMPLE_INVOICE, null, 2);
     loadHealth();
-    load().then(maybeAutoTour);
+    refreshAll().then(maybeAutoTour);
   </script>
 </body>
 </html>
