@@ -2,3 +2,10 @@
 # on CRLF: `\r` becomes part of args/paths). Force LF in the working tree too, so a
 # Windows checkout that gets rsync'd to the box never carries CRLF.
 *.sh text eol=lf
+
+# Binary demo assets — NEVER apply text/CRLF normalization (it corrupts the byte
+# stream, and poppler / an image decoder would then reject the file).
+*.png binary
+*.pdf binary
+*.jpg binary
+*.jpeg binary
