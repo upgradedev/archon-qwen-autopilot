@@ -104,6 +104,28 @@ test("GET / serves the approval UI as HTML (200, text/html)", async () => {
   assert.match(res.body, /\/approve\//);
 });
 
+test("GET / includes the guided tour + one-click demo (self-explanatory for a first-time visitor)", async () => {
+  const res = await app.inject({ method: "GET", url: "/" });
+  assert.equal(res.statusCode, 200);
+  // One-line header explaining what the app is.
+  assert.match(res.body, /it proposes, you approve/i);
+  // One-click "Load sample invoice" demo button + its realistic payload.
+  assert.match(res.body, /Load sample invoice/);
+  assert.match(res.body, /id="loadSample"/);
+  assert.match(res.body, /Meridian Logistics/);
+  // First-visit guided tour: trigger button, engine, and localStorage first-visit flag.
+  assert.match(res.body, /Take the tour/);
+  assert.match(res.body, /id="tourBtn"/);
+  assert.match(res.body, /id="tourOverlay"/);
+  assert.match(res.body, /function startTour/);
+  assert.match(res.body, /localStorage/);
+  // Tour highlights the multi-step trace + the human gate.
+  assert.match(res.body, /How the agent decided/);
+  assert.match(res.body, /Nothing executes until you approve/);
+  // Clear empty-state guidance instead of a blank list.
+  assert.match(res.body, /No invoices in the queue/);
+});
+
 test("GET /ui serves the same approval UI (alias)", async () => {
   const res = await app.inject({ method: "GET", url: "/ui" });
   assert.equal(res.statusCode, 200);
