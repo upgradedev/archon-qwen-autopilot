@@ -18,7 +18,9 @@
     "build": "tsc",
     "test:unit": "node --import tsx --test tests/unit/embeddings.test.ts tests/unit/memory.test.ts tests/unit/normalize.test.ts tests/unit/validate.test.ts tests/unit/tools.test.ts tests/unit/analysis-tools.test.ts tests/unit/loop.test.ts tests/unit/workflow.test.ts tests/unit/rate-limit.test.ts tests/unit/vision.test.ts tests/unit/server.test.ts tests/unit/skills.test.ts tests/unit/mcp.test.ts",
     "test:integration": "node --import tsx --test --test-concurrency=1 tests/integration/workflow-http.test.ts tests/integration/pgvector-store.test.ts tests/integration/mcp-transport.test.ts",
-    "test": "node --import tsx --test --test-concurrency=1 tests/unit/embeddings.test.ts tests/unit/memory.test.ts tests/unit/normalize.test.ts tests/unit/validate.test.ts tests/unit/tools.test.ts tests/unit/analysis-tools.test.ts tests/unit/loop.test.ts tests/unit/workflow.test.ts tests/unit/rate-limit.test.ts tests/unit/vision.test.ts tests/unit/server.test.ts tests/unit/skills.test.ts tests/unit/mcp.test.ts tests/integration/workflow-http.test.ts tests/integration/pgvector-store.test.ts tests/integration/mcp-transport.test.ts"
+    "test": "node --import tsx --test --test-concurrency=1 tests/unit/embeddings.test.ts tests/unit/memory.test.ts tests/unit/normalize.test.ts tests/unit/validate.test.ts tests/unit/tools.test.ts tests/unit/analysis-tools.test.ts tests/unit/loop.test.ts tests/unit/workflow.test.ts tests/unit/rate-limit.test.ts tests/unit/vision.test.ts tests/unit/server.test.ts tests/unit/skills.test.ts tests/unit/mcp.test.ts tests/integration/workflow-http.test.ts tests/integration/pgvector-store.test.ts tests/integration/mcp-transport.test.ts",
+    "test:e2e": "playwright test",
+    "coverage": "c8 --check-coverage --statements=80 --branches=80 --functions=80 --lines=80 node --import tsx --test --test-concurrency=1 tests/unit/embeddings.test.ts tests/unit/memory.test.ts tests/unit/normalize.test.ts tests/unit/validate.test.ts tests/unit/tools.test.ts tests/unit/analysis-tools.test.ts tests/unit/loop.test.ts tests/unit/workflow.test.ts tests/unit/rate-limit.test.ts tests/unit/vision.test.ts tests/unit/server.test.ts tests/unit/skills.test.ts tests/unit/mcp.test.ts tests/integration/workflow-http.test.ts tests/integration/pgvector-store.test.ts tests/integration/mcp-transport.test.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.1.0",
@@ -32,8 +34,10 @@
     "tsx": "^4.19.2"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@types/node": "^20.14.10",
     "@types/pg": "^8.11.10",
+    "c8": "^10.1.3",
     "typescript": "^5.5.3"
   }
 }

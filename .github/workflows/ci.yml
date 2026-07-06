@@ -95,3 +95,77 @@ jobs:
 
       - name: Decision-quality eval (offline policy/regression gate — no key)
         run: npm run eval -- --gate
+
+  # Stage 2c — code-coverage measurement + gate. Runs the FULL node:test pyramid
+  # (unit + integration) under c8 against a real pgvector service container, so the
+  # DB seams (db/client.ts + the Pg stores) and the MCP stdio transport are measured
+  # for real, not just the in-memory doubles. Fails the build if src/ coverage drops
+  # below the 80% floor on statements/branches/functions/lines. Fully OFFLINE (no key).
+  # (The Playwright e2e is NOT run under c8 — it drives a browser against a separate
+  # server process, which c8 cannot instrument across that boundary; it is its own job.)
+  coverage:
+    needs: secret-scan
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+    services:
+      pgvector:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install deps
+        run: npm ci
+      - name: Apply schema (agent_memory vector(1024) + ap_workitems)
+        run: npm run db:schema
+      - name: Coverage gate (full pyramid under c8; fails below the 80% src/ floor)
+        run: npm run coverage
+      - name: Upload lcov coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lcov
+          path: coverage/lcov.info
+          if-no-files-found: warn
+
+  # Stage 2d — browser e2e. Drives the REAL served approval UI (src/ui.html) in a
+  # headless Chromium against a locally-started server with the offline Fakes (no
+  # DASHSCOPE key, no DATABASE_URL → in-memory stores). These catch the browser-only
+  # upload-UX regressions (dead file handler, missing filename, hidden step stream)
+  # that the node:test pyramid cannot see. No live Qwen, no database.
+  e2e:
+    needs: secret-scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install deps
+        run: npm ci
+      - name: Install Playwright Chromium (+ OS deps)
+        run: npx playwright install --with-deps chromium
+      - name: Browser e2e (offline Fakes — no key, no DB)
+        run: npm run test:e2e
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          if-no-files-found: warn
