@@ -33,8 +33,13 @@ import type { RawInvoice } from "../types.js";
 // extraction; VISION_MODEL overrides it (parity with the memory pipeline's env).
 export const DEFAULT_VISION_MODEL = process.env.VISION_MODEL || "qwen-vl-max";
 
-// poppler binary (overridable so a non-standard install path still works).
-const PDFTOPPM_BIN = process.env.POPPLER_PDFTOPPM || "pdftoppm";
+// poppler binary (overridable so a non-standard install path still works). Read at
+// call time (not module load) so it stays overridable per-invocation — which also
+// lets a test point it at a bogus path to exercise the "poppler not installed" path
+// deterministically, offline.
+function pdftoppmBin(): string {
+  return process.env.POPPLER_PDFTOPPM || "pdftoppm";
+}
 
 // Upload guardrails. 10 MB is generous for a single invoice while bounding memory
 // and the vision spend; only the first few PDF pages are ever rasterized.
@@ -279,7 +284,7 @@ function runPdftoppm(args: string[]): Promise<void> {
     let stderr = "";
     let proc: ReturnType<typeof spawn>;
     try {
-      proc = spawn(PDFTOPPM_BIN, args, { stdio: ["ignore", "ignore", "pipe"] });
+      proc = spawn(pdftoppmBin(), args, { stdio: ["ignore", "ignore", "pipe"] });
     } catch (err) {
       return reject(wrapPopplerError(err));
     }
