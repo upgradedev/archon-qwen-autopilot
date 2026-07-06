@@ -164,14 +164,44 @@
     #toast.err { border-color: var(--red); }
     #toast.ok { border-color: var(--green); }
     a { color: var(--accent); }
+    button.primary { border-color: var(--accent); color: var(--accent); }
+    button.primary:hover { background: rgba(88,166,255,.12); }
+    /* Human-gate reminder shown on every proposal (reinforces: nothing runs until you approve). */
+    .gate-note { flex-basis: 100%; font-size: 12px; color: var(--muted); margin-bottom: 2px; }
+    .gate-note b { color: var(--green-hi); font-weight: 600; }
+    /* Empty state helper button */
+    .empty .empty-msg { max-width: 520px; margin: 0 auto; }
+    .empty button { margin-top: 18px; }
+    /* Guided tour overlay (inline, no external dependency, no build step). */
+    #tourOverlay { position: fixed; inset: 0; z-index: 60; display: none; }
+    #tourOverlay.show { display: block; }
+    #tourBackdrop { position: absolute; inset: 0; background: rgba(1,4,9,.72); }
+    #tourHighlight {
+      position: absolute; display: none; border-radius: 10px;
+      border: 2px solid var(--accent);
+      box-shadow: 0 0 0 4px rgba(88,166,255,.25), 0 0 0 9999px rgba(1,4,9,.72);
+      transition: top .18s ease, left .18s ease, width .18s ease, height .18s ease;
+      pointer-events: none;
+    }
+    #tourPop {
+      position: absolute; max-width: 340px; z-index: 62;
+      background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+      padding: 16px 18px; box-shadow: 0 12px 40px rgba(0,0,0,.55);
+    }
+    #tourPop h3 { margin: 0 0 6px; font-size: 14px; font-weight: 600; }
+    #tourPop p { margin: 0 0 14px; font-size: 13px; color: var(--muted); line-height: 1.55; }
+    #tourPop .nav { display: flex; align-items: center; gap: 8px; }
+    #tourPop .step-count { flex: 1; font-family: var(--mono); font-size: 11px; color: var(--muted); }
   </style>
 </head>
 <body>
   <header>
     <h1>Archon Autopilot</h1>
-    <span class="sub">Human-gated accounts-payable approval queue</span>
+    <span class="sub">Human-gated accounts-payable agent on Qwen — it proposes, you approve.</span>
     <span class="spacer"></span>
     <span class="pill" id="model">decider …</span>
+    <button class="primary" id="loadSample" title="Queue a realistic sample vendor invoice">Load sample invoice</button>
+    <button class="ghost" id="tourBtn" title="Replay the guided tour">Take the tour</button>
     <button class="ghost" id="refresh" title="Reload the queue">Refresh</button>
   </header>
 
@@ -189,6 +219,13 @@
   </main>
 
   <div id="toast"></div>
+
+  <!-- Guided tour overlay (populated by JS). Inline spotlight + popover; no CDN, no build step. -->
+  <div id="tourOverlay">
+    <div id="tourBackdrop"></div>
+    <div id="tourHighlight"></div>
+    <div id="tourPop"></div>
+  </div>
 
   <script>
     // Vanilla JS approval client. Same-origin: the page is served by the same
@@ -286,7 +323,7 @@
       ]);
 
       const conf = typeof p.confidence === 'number' ? ' · confidence ' + Math.round(p.confidence * 100) + '%' : '';
-      const proposed = el('div', {}, [
+      const proposed = el('div', { 'data-tour': 'proposed' }, [
         el('div', { class: 'section-label', text: 'Proposed action (Qwen)' }),
         el('span', { class: 'tool', text: p.tool || 'flag_for_review' }),
         el('span', { class: 'conf', text: (p.modelId ? p.modelId : '') + conf }),
@@ -307,7 +344,7 @@
       // autonomous read/analyze steps it took, each with no side-effect).
       if ((item.trace || []).length) {
         const n = item.trace.length;
-        body.appendChild(el('div', {}, [
+        body.appendChild(el('div', { 'data-tour': 'trace' }, [
           el('div', { class: 'section-label', text: 'How the agent decided — ' + n + (n === 1 ? ' step' : ' steps') + ' (no side-effect)' }),
           renderTrace(item.trace),
         ]));
@@ -322,7 +359,11 @@
       const approveBtn = el('button', { class: 'approve', text: 'Approve' });
       const amendBtn = el('button', { class: 'amend', text: 'Amend & approve' });
       const rejectBtn = el('button', { class: 'reject', text: 'Reject' });
-      const actions = el('div', { class: 'actions' }, [approveBtn, amendBtn, rejectBtn]);
+      const gateNote = el('div', { class: 'gate-note' }, [
+        el('b', { text: 'Nothing executes until you approve.' }),
+        document.createTextNode(' You hold the gate — approve, amend, or reject.'),
+      ]);
+      const actions = el('div', { class: 'actions', 'data-tour': 'actions' }, [gateNote, approveBtn, amendBtn, rejectBtn]);
 
       const setBusy = (b) => { approveBtn.disabled = amendBtn.disabled = rejectBtn.disabled = b; };
       const remember = (status) => decided.unshift({ vendor: inv.vendor || 'vendor', ref: inv.vendor_ref || inv.invoice_id || '', tool: p.tool, status });
@@ -390,7 +431,12 @@
         $('#count').textContent = items.length + (items.length === 1 ? ' item' : ' items');
         queue.innerHTML = '';
         if (!items.length) {
-          queue.appendChild(el('div', { class: 'empty', text: 'The approval queue is empty. Intake an invoice via POST /intake to see a proposal here.' }));
+          const emptyBtn = el('button', { class: 'primary', text: 'Load sample invoice' });
+          emptyBtn.onclick = () => loadSample();
+          queue.appendChild(el('div', { class: 'empty' }, [
+            el('div', { class: 'empty-msg', text: 'No invoices in the queue — click "Load sample invoice" to watch the agent recall history, run its checks, and propose an action for your approval.' }),
+            emptyBtn,
+          ]));
         } else {
           items.forEach((it) => queue.appendChild(card(it)));
         }
@@ -408,9 +454,173 @@
       } catch (_) { $('#model').textContent = 'decider offline'; }
     }
 
+    // ---- One-click demo: queue a realistic sample vendor invoice ----------------
+    // Universal accounts-payable framing: a vendor bill with subtotal + tax + total
+    // and one line item. Posting it runs the full intake → recall → validate →
+    // Qwen-decide pipeline so a first-time visitor immediately sees a proposal.
+    const SAMPLE_INVOICE = {
+      vendor: 'Meridian Logistics',
+      invoice_number: 'ML-2026-0417',
+      invoice_date: '2026-06-30',
+      currency: 'EUR',
+      tax_id: 'TAX-ML-88231',
+      subtotal: 5200,
+      tax: 1248,
+      total: 6448,
+      line_items: [
+        { description: 'Freight and warehousing — June', quantity: 1, unit_price: 5200, amount: 5200 },
+      ],
+    };
+
+    async function loadSample() {
+      const b = $('#loadSample');
+      const prev = b.textContent;
+      b.disabled = true; b.textContent = 'Loading…';
+      try {
+        await api('POST', '/intake', { invoice: SAMPLE_INVOICE });
+        toast('Sample invoice queued — the agent proposed an action for your approval', 'ok');
+        await load();
+      } catch (e) {
+        toast(e.message, 'err');
+      } finally {
+        b.disabled = false; b.textContent = prev;
+      }
+    }
+
+    // ---- Guided tour (inline; no CDN, no build step) ----------------------------
+    // Steps adapt to the DOM: the queue intro always shows; if a proposal card is
+    // present its invoice / proposal / reasoning-trace / gate steps are added, else
+    // the tour points the visitor at "Load sample invoice". Any step whose target
+    // is missing is skipped so the spotlight never points at nothing.
+    const TOUR_KEY = 'archon_autopilot_tour_v1';
+    const tour = { steps: [], i: 0 };
+
+    function tourSteps() {
+      const steps = [{
+        el: () => $('#queue'),
+        title: 'The approval queue',
+        body: 'This is Archon Autopilot — a human-gated accounts-payable agent on Qwen. Every incoming vendor invoice arrives here as a proposal. Nothing is paid or posted until you approve it.',
+      }];
+      const firstCard = $('#queue .card');
+      if (!firstCard) {
+        steps.push({
+          el: () => $('#loadSample'),
+          title: 'Load a sample invoice',
+          body: 'The queue is empty. Click "Load sample invoice" to drop in a realistic vendor bill — the agent will recall the vendor’s history, run its checks, and propose an action for your approval.',
+        });
+        return steps;
+      }
+      steps.push({
+        el: () => firstCard.querySelector('.card-head'),
+        title: 'The vendor invoice',
+        body: 'Each card is one invoice — vendor, amount, and reference. Messy or missing fields are normalized on intake and noted, never silently rejected.',
+      });
+      steps.push({
+        el: () => firstCard.querySelector('[data-tour="proposed"]'),
+        title: 'Qwen’s proposed action',
+        body: 'The agent proposes exactly one accounts-payable action, with a confidence score and a plain-language reason. It is a proposal only — it has not run.',
+      });
+      if (firstCard.querySelector('[data-tour="trace"]')) {
+        steps.push({
+          el: () => firstCard.querySelector('[data-tour="trace"]'),
+          title: 'How the agent decided',
+          body: 'The multi-step reasoning trace: the agent recalls vendor history, validates the invoice, checks for a duplicate, tests the amount variance, then reaches a terminal proposal. Every step is read-only — no side effects.',
+        });
+      }
+      steps.push({
+        el: () => firstCard.querySelector('[data-tour="actions"]'),
+        title: 'You hold the gate',
+        body: 'Approve to execute the exact proposed action, Amend to edit the arguments first, or Reject to discard it. Nothing executes until you approve — this is the human gate.',
+      });
+      return steps;
+    }
+
+    function placeTour(step) {
+      const hl = $('#tourHighlight'), pop = $('#tourPop'), bd = $('#tourBackdrop');
+      const target = step && step.el ? step.el() : null;
+      if (target && target.getBoundingClientRect) {
+        target.scrollIntoView({ block: 'center' });
+        const r = target.getBoundingClientRect();
+        hl.style.display = 'block';
+        hl.style.top = (r.top - 6) + 'px';
+        hl.style.left = (r.left - 6) + 'px';
+        hl.style.width = (r.width + 12) + 'px';
+        hl.style.height = (r.height + 12) + 'px';
+        bd.style.background = 'transparent';
+        const pw = pop.offsetWidth || 340, ph = pop.offsetHeight || 170;
+        let top = r.bottom + 14;
+        if (top + ph > window.innerHeight - 12) top = Math.max(12, r.top - ph - 14);
+        let left = r.left;
+        if (left + pw > window.innerWidth - 12) left = window.innerWidth - pw - 12;
+        if (left < 12) left = 12;
+        pop.style.top = top + 'px';
+        pop.style.left = left + 'px';
+        pop.style.transform = 'none';
+      } else {
+        hl.style.display = 'none';
+        bd.style.background = '';
+        pop.style.top = '50%';
+        pop.style.left = '50%';
+        pop.style.transform = 'translate(-50%, -50%)';
+      }
+    }
+
+    function renderTourStep() {
+      const step = tour.steps[tour.i];
+      if (!step) { endTour(); return; }
+      const pop = $('#tourPop');
+      pop.innerHTML = '';
+      pop.appendChild(el('h3', { text: step.title }));
+      pop.appendChild(el('p', { text: step.body }));
+      const nav = el('div', { class: 'nav' });
+      nav.appendChild(el('span', { class: 'step-count', text: (tour.i + 1) + ' / ' + tour.steps.length }));
+      if (tour.i > 0) {
+        const back = el('button', { class: 'ghost', text: 'Back' });
+        back.onclick = () => { tour.i -= 1; renderTourStep(); };
+        nav.appendChild(back);
+      }
+      const last = tour.i === tour.steps.length - 1;
+      const next = el('button', { class: 'primary', text: last ? 'Done' : 'Next' });
+      next.onclick = () => { if (last) { endTour(); } else { tour.i += 1; renderTourStep(); } };
+      nav.appendChild(next);
+      if (!last) {
+        const skip = el('button', { class: 'ghost', text: 'Skip' });
+        skip.onclick = endTour;
+        nav.appendChild(skip);
+      }
+      pop.appendChild(nav);
+      placeTour(step);
+    }
+
+    function startTour() {
+      tour.steps = tourSteps();
+      tour.i = 0;
+      $('#tourOverlay').classList.add('show');
+      renderTourStep();
+    }
+
+    function endTour() {
+      $('#tourOverlay').classList.remove('show');
+      try { localStorage.setItem(TOUR_KEY, '1'); } catch (_) {}
+    }
+
+    function maybeAutoTour() {
+      let seen = false;
+      try { seen = localStorage.getItem(TOUR_KEY) === '1'; } catch (_) {}
+      if (!seen) startTour();
+    }
+
     $('#refresh').onclick = load;
+    $('#loadSample').onclick = () => loadSample();
+    $('#tourBtn').onclick = startTour;
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && $('#tourOverlay').classList.contains('show')) endTour();
+    });
+    window.addEventListener('resize', () => {
+      if ($('#tourOverlay').classList.contains('show')) placeTour(tour.steps[tour.i]);
+    });
     loadHealth();
-    load();
+    load().then(maybeAutoTour);
   </script>
 </body>
 </html>
