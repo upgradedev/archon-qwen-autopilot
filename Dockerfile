@@ -9,6 +9,13 @@ FROM node:20-slim
 
 WORKDIR /app
 
+# poppler-utils provides `pdftoppm`, used to rasterize an uploaded PDF invoice to
+# page images before Qwen-VL vision extraction (POST /intake/document). PNG/JPG
+# uploads and the offline test path need no system deps; this is only for PDFs.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends poppler-utils \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install dependencies first for layer caching. tsx is a runtime dependency so
 # the container runs the TypeScript entrypoint directly (no separate build step).
 COPY package.json package-lock.json* ./
@@ -19,6 +26,9 @@ COPY src ./src
 # scripts/apply-schema.ts is the entrypoint for `npm run db:schema`
 # (it reads ../src/db/schema.sql, already copied above).
 COPY scripts ./scripts
+# The bundled sample invoice document, served by GET /sample-document so the UI's
+# "Use sample document" button can exercise the real Qwen-VL vision path.
+COPY demo ./demo
 
 ENV NODE_ENV=production
 ENV PORT=9000

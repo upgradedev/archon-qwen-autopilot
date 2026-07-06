@@ -12,6 +12,7 @@ import { InMemoryWorkItemStore } from "../../src/ap/workitem-store.js";
 import { defaultLoop } from "../../src/ap/loop.js";
 import { fakeSinks } from "../../src/ap/sinks.js";
 import { DailyRateLimiter } from "../../src/ap/rate-limit.js";
+import { FakeExtractionClient } from "../../src/qwen/vision.js";
 
 let app: FastifyInstance;
 
@@ -22,11 +23,25 @@ function deps(extra: Partial<ServerDeps> = {}): ServerDeps {
     workitems: new InMemoryWorkItemStore(),
     loop: defaultLoop(),
     sinks: fakeSinks(),
+    extractor: new FakeExtractionClient(), // offline vision — no key, no poppler
     ...extra,
   };
 }
 
 const sampleInvoice = { vendor: "Acme", invoice_number: "A-1", tax_id: "T", subtotal: 100, tax: 20, total: 120 };
+
+// Build a multipart/form-data body with ONE file part. Multipart parts REQUIRE
+// CRLF line endings, so a bare-\n body would not parse — hence the explicit \r\n.
+function multipartFile(field: string, filename: string, contentType: string, content: Buffer | string): { payload: Buffer; headers: Record<string, string> } {
+  const boundary = "----archontest" + Math.random().toString(16).slice(2);
+  const head =
+    `--${boundary}\r\n` +
+    `content-disposition: form-data; name="${field}"; filename="${filename}"\r\n` +
+    `content-type: ${contentType}\r\n\r\n`;
+  const tail = `\r\n--${boundary}--\r\n`;
+  const body = Buffer.concat([Buffer.from(head, "utf8"), Buffer.isBuffer(content) ? content : Buffer.from(content), Buffer.from(tail, "utf8")]);
+  return { payload: body, headers: { "content-type": `multipart/form-data; boundary=${boundary}` } };
+}
 
 before(async () => {
   delete process.env.DASHSCOPE_API_KEY; // guarantee the offline Fakes
@@ -137,6 +152,11 @@ test("GET / ships the enriched UI: upload + live process view, collapsible trace
   assert.match(res.body, /Upload an invoice/i);
   assert.match(res.body, /id="fileInput"/);
   assert.match(res.body, /id="processBtn"/);
+  // The file picker accepts REAL documents (PDF/PNG/JPG), read by Qwen-VL.
+  assert.match(res.body, /accept="\.pdf,\.png,\.jpg,\.jpeg/);
+  assert.match(res.body, /Qwen-VL/);
+  assert.match(res.body, /id="sampleDoc"/); // "Use sample document" button
+  assert.match(res.body, /\/intake\/document/); // the UI posts the multipart upload
   assert.match(res.body, /\/intake\/stream/); // the UI consumes the SSE stream
   assert.match(res.body, /getReader|text\/event-stream|Processing invoice/);
   // The 10/day limit is surfaced to the visitor in the upload panel.
@@ -223,6 +243,80 @@ test("rate limit: an invalid payload is a 400 and does NOT consume budget", asyn
   } finally {
     await local.close();
   }
+});
+
+test("POST /intake/document: a real PNG upload → Qwen-VL extraction → the loop → a PENDING proposal (SSE), executing nothing", async () => {
+  const local = await buildServer(deps());
+  await local.ready();
+  try {
+    const { payload, headers } = multipartFile("file", "sample-invoice.png", "image/png", Buffer.from("\x89PNG\r\n\x1a\n fake png bytes"));
+    const res = await local.inject({ method: "POST", url: "/intake/document", payload, headers });
+    assert.equal(res.statusCode, 200);
+    assert.match(String(res.headers["content-type"]), /text\/event-stream/);
+    // The stream shows extraction, then the live loop steps, then the proposal.
+    assert.match(res.body, /event: extracting/);
+    assert.match(res.body, /event: extracted/);
+    assert.match(res.body, /Meridian Logistics/); // the fake-extracted invoice fields
+    assert.match(res.body, /event: step/);
+    assert.match(res.body, /recall_vendor_history/);
+    assert.match(res.body, /event: proposal/);
+    assert.match(res.body, /event: done/);
+    // The human gate held: exactly one PENDING item, nothing executed, /decided empty.
+    const pending = (await local.inject({ method: "GET", url: "/pending" })).json().pending;
+    assert.equal(pending.length, 1);
+    assert.equal(pending[0].status, "pending");
+    assert.equal(pending[0].execution, undefined);
+    assert.equal(pending[0].invoice.vendor, "Meridian Logistics");
+    const decided = (await local.inject({ method: "GET", url: "/decided" })).json().decided;
+    assert.equal(decided.length, 0);
+  } finally {
+    await local.close();
+  }
+});
+
+test("POST /intake/document rejects an unsupported type (400) WITHOUT burning the daily budget", async () => {
+  const local = await buildServer(deps({ rateLimiter: new DailyRateLimiter(1) }));
+  await local.ready();
+  try {
+    // A .txt is rejected with 400 …
+    const bad = multipartFile("file", "notes.txt", "text/plain", "hello");
+    const badRes = await local.inject({ method: "POST", url: "/intake/document", payload: bad.payload, headers: bad.headers });
+    assert.equal(badRes.statusCode, 400);
+    // … and did NOT consume the budget-of-1, so a valid PNG still succeeds.
+    const ok = multipartFile("file", "invoice.png", "image/png", Buffer.from("png-bytes"));
+    const okRes = await local.inject({ method: "POST", url: "/intake/document", payload: ok.payload, headers: ok.headers });
+    assert.equal(okRes.statusCode, 200);
+  } finally {
+    await local.close();
+  }
+});
+
+test("POST /intake/document shares the daily budget — the 2nd upload → 429 (open-demo guard)", async () => {
+  const local = await buildServer(deps({ rateLimiter: new DailyRateLimiter(1) }));
+  await local.ready();
+  try {
+    const one = multipartFile("file", "invoice.png", "image/png", Buffer.from("png-1"));
+    const first = await local.inject({ method: "POST", url: "/intake/document", payload: one.payload, headers: one.headers });
+    assert.equal(first.statusCode, 200);
+    const two = multipartFile("file", "invoice.png", "image/png", Buffer.from("png-2"));
+    const over = await local.inject({ method: "POST", url: "/intake/document", payload: two.payload, headers: two.headers });
+    assert.equal(over.statusCode, 429);
+    assert.match(over.json().error, /daily upload limit/i);
+    // The JSON intake shares the SAME exhausted budget.
+    const overJson = await local.inject({ method: "POST", url: "/intake", payload: { invoice: sampleInvoice } });
+    assert.equal(overJson.statusCode, 429);
+  } finally {
+    await local.close();
+  }
+});
+
+test("GET /sample-document serves the committed sample invoice PNG", async () => {
+  const res = await app.inject({ method: "GET", url: "/sample-document" });
+  assert.equal(res.statusCode, 200);
+  assert.match(String(res.headers["content-type"]), /image\/png/);
+  // PNG magic bytes — a real, uncorrupted image (not text-normalized).
+  assert.equal(res.rawPayload.subarray(0, 4).toString("latin1"), "\x89PNG");
+  assert.ok(res.rawPayload.length > 1000);
 });
 
 test("POST /intake/stream streams the reasoning live (SSE) then the proposal, executing nothing", async () => {

@@ -297,6 +297,8 @@ needs no configuration.
 | `GET /health` | Liveness + the live embedder / decision-model ids. No DB, no key. |
 | `POST /intake` | Ingest a vendor invoice → normalize → run the multi-step ReAct loop (recall → validate → check duplicate / compute variance) → a **PENDING** proposed action + its full step trace. Nothing executes. **Rate-limited (see below).** |
 | `POST /intake/stream` | Same pipeline as `/intake`, but **streams each reasoning step live** as Server-Sent Events (`event: step` as it happens, then `event: proposal` + `event: done`). Backs the UI's real-time "watch the agent work" upload view. Nothing executes. **Rate-limited.** |
+| `POST /intake/document` | Upload a **REAL invoice document** (PDF / PNG / JPG, `multipart/form-data`, field `file`) → **Qwen-VL vision extraction** (`qwen-vl-max`) → the same multi-step loop, **streamed** (`event: extracting` → `event: extracted` → `event: step` → `event: proposal` → `event: done`). A PDF is rasterized to page images with poppler (`pdftoppm`); a PNG/JPG passes through. Nothing executes. **Rate-limited** (shares the same daily budget). |
+| `GET /sample-document` | The bundled sample invoice ([`demo/sample-invoice.png`](demo/sample-invoice.png)) — a real image the UI's **"Use sample document"** button uploads so the whole vision path is one-click reproducible. |
 | `GET /pending` | The human approval queue (proposals awaiting a decision), each including its reasoning trace. |
 | `GET /decided` | The **decided history** — every approved / amended / rejected item, newest first, with its outcome, decision timestamp, and (for an amended item) the prev → new amend audit trail. Read-only: decided items never re-execute. |
 | `POST /approve/:id` | A human approves → the chosen tool executes for real; the outcome is written back to memory. |
@@ -317,13 +319,40 @@ is no sign-in wall by design.
 
 To keep an open, unauthenticated endpoint from running up the model bill, **invoice
 uploads are rate-limited to 10/day** (per UTC day, resetting at 00:00 UTC) across
-both `POST /intake` and `POST /intake/stream`. **Upload is rate-limited to 10/day to
+`POST /intake`, `POST /intake/stream`, **and `POST /intake/document`** (the three
+share one budget). **Upload is rate-limited to 10/day to
 protect the Qwen API budget.** The limiter lives in
 [`src/ap/rate-limit.ts`](src/ap/rate-limit.ts) (`DailyRateLimiter`, cap configurable
-via `UPLOAD_DAILY_LIMIT`); it is checked **after** payload validation, so an invalid
-request never burns budget, and an over-limit upload returns `429` with a clear
-message. Validation, the approval gate, and every read endpoint (`/pending`,
+via `UPLOAD_DAILY_LIMIT`); it is checked **after** payload/file validation, so an
+invalid request or an unsupported/oversize document never burns budget, and an
+over-limit upload returns `429` with a clear message. Validation, the approval gate, and every read endpoint (`/pending`,
 `/decided`, `/skills`, `/health`) are **not** limited.
+
+### Real document upload → Qwen-VL vision extraction
+
+A judge (or a real user) uploads an **actual invoice file**, not JSON. The pipeline
+lives in [`src/qwen/vision.ts`](src/qwen/vision.ts) and slots in **before** the
+existing normalizer + loop — nothing about the decision path changes, only the input
+source is new:
+
+1. **PDF → page images.** A PDF is rasterized to PNG(s) with **poppler's `pdftoppm`**
+   (150 dpi, first `MAX_PDF_PAGES` pages). poppler is a rock-solid, self-contained
+   system binary — chosen over a native-canvas npm dependency so `npm ci` / `npm
+   audit` stay clean and the build is reproducible; it is installed in the Docker
+   image via `apt-get install poppler-utils`. A PNG/JPG upload passes through directly.
+2. **Qwen-VL extraction.** The page image(s) go to **`qwen-vl-max`** (override with
+   `VISION_MODEL`) over the same OpenAI-compatible DashScope surface the rest of the
+   app uses, with an **injection-hardened** prompt (any imperative text inside the
+   document is treated as data, never an instruction) → a canonical raw-invoice object.
+3. **Same loop.** That object is handed to the existing `normalizeInvoice` + the
+   multi-step ReAct loop and **streamed** so the UI shows *extracting… → the live loop
+   steps → the proposal*. The human approval gate is unchanged.
+
+**Offline / CI:** a deterministic `FakeExtractionClient` returns a fixed invoice (the
+one printed on the bundled `demo/sample-invoice.png`) with **no key, no network, and
+no poppler**, so `npm test` exercises the whole *document → loop* slice. Real
+`qwen-vl-max` is used only when `DASHSCOPE_API_KEY` is set — the same env-based
+auto-selection as the decider and embedder.
 
 ---
 

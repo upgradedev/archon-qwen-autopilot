@@ -22,14 +22,23 @@ import Fastify from "fastify";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import cors from "@fastify/cors";
-import { pathToFileURL } from "node:url";
+import multipart from "@fastify/multipart";
+import { pathToFileURL, fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { hasDatabase } from "./db/client.js";
 import { UI_HTML } from "./ui.js";
 import { buildAgent, type AutopilotDeps } from "./deps.js";
 import { skillCatalog } from "./skills/catalog.js";
 import { ConflictError, NotFoundError } from "./agents/autopilot-agent.js";
 import { DailyRateLimiter } from "./ap/rate-limit.js";
+import {
+  defaultExtractionClient,
+  validateDocument,
+  MAX_DOCUMENT_BYTES,
+  type ExtractionClient,
+} from "./qwen/vision.js";
 import type { TraceStep } from "./types.js";
 
 const pkg = createRequire(import.meta.url)("../package.json") as { version: string };
@@ -38,12 +47,27 @@ const pkg = createRequire(import.meta.url)("../package.json") as { version: stri
 // so the two surfaces can never drift. It adds one HTTP-only concern the agent does
 // not have: the daily upload rate limiter (the open demo's budget guardrail). It is
 // injectable so a test can supply a limiter with a low cap + a fake clock.
-export type ServerDeps = AutopilotDeps & { rateLimiter?: DailyRateLimiter };
+export type ServerDeps = AutopilotDeps & {
+  rateLimiter?: DailyRateLimiter;
+  // The document vision-extractor (PDF/PNG/JPG → raw invoice). HTTP-only, like the
+  // rate limiter, and injectable so tests supply the offline FakeExtractionClient.
+  extractor?: ExtractionClient;
+};
 
 // Response bodies are intentionally permissive (`additionalProperties: true`).
 // Fastify serializes responses against their schema and STRIPS undeclared fields,
 // so a tight schema would silently drop parts of a work item. These stay open so
 // nothing is stripped, while still documenting a 200 in /docs.
+// The minimal shape of a @fastify/multipart file part we consume. Kept local so the
+// route body does not depend on the plugin's exported types (which require the
+// FastifyRequest augmentation to be in scope).
+interface MultipartFile {
+  filename?: string;
+  mimetype?: string;
+  file?: { truncated?: boolean };
+  toBuffer(): Promise<Buffer>;
+}
+
 const looseObject = { type: "object", additionalProperties: true } as const;
 const errorResponse = {
   type: "object",
@@ -59,6 +83,12 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
       ? process.env.CORS_ORIGIN.split(",").map((s) => s.trim())
       : true,
   });
+
+  // Real document uploads (POST /intake/document) arrive as multipart/form-data.
+  // The fileSize limit is a hard cap enforced by the parser itself — a stream over
+  // the limit is truncated and flagged, so an oversized file can never buffer fully
+  // into memory (and, checked before the rate limiter, never burns the daily budget).
+  await app.register(multipart, { limits: { fileSize: MAX_DOCUMENT_BYTES, files: 1 } });
 
   await app.register(swagger, {
     openapi: {
@@ -117,6 +147,11 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
   // per server instance (never a module singleton, so counts never bleed across
   // tests). See src/ap/rate-limit.ts for the 10/day rationale.
   const rateLimiter = deps.rateLimiter ?? new DailyRateLimiter();
+
+  // The document vision-extractor: real Qwen (qwen-vl-max) when a DASHSCOPE key is
+  // set, else the deterministic offline FakeExtractionClient — same env-based
+  // auto-selection as the loop + embedder, so CI runs the upload path with no key.
+  const extractor = deps.extractor ?? defaultExtractionClient();
 
   app.get(
     "/health",
@@ -253,6 +288,111 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
       }
     }
   );
+
+  // Upload a REAL document (PDF / PNG / JPG) → Qwen-VL vision extraction → the SAME
+  // multi-step loop, streamed live (SSE). This is the "a judge uploads an actual
+  // invoice file, not JSON" path. The order is strict — parse+validate the file, then
+  // consume the daily budget, then extract, then loop — so a bad file returns a clean
+  // 400/413 and an over-limit upload a 429, and NEITHER ever reaches the vision model
+  // or burns the budget. Nothing executes: the loop only proposes (the human gate is
+  // unchanged; the extracted invoice runs the identical agent.intake path as /intake).
+  app.post(
+    "/intake/document",
+    {
+      schema: {
+        summary: "Upload a real invoice document (PDF/PNG/JPG), extract it with Qwen-VL, stream the loop (SSE)",
+        description:
+          "Accepts a multipart/form-data upload with one `file` field — a PDF, PNG, or JPG vendor " +
+          "invoice. A PDF is rasterized (poppler) and the page image(s) plus any image upload are " +
+          "read by a Qwen vision model (qwen-vl-max) into a structured invoice, which then runs the " +
+          "same multi-step ReAct loop as /intake. Streams `event: extracting` → `event: extracted` " +
+          "(the parsed invoice) → `event: step` (each live reasoning step) → `event: proposal` → " +
+          "`event: done`. Rate-limited like /intake. Nothing executes — it only proposes.",
+        tags: ["workflow"],
+        consumes: ["multipart/form-data"],
+        produces: ["text/event-stream"],
+        response: { 400: errorResponse, 413: errorResponse, 429: errorResponse },
+      },
+    },
+    async (req, reply) => {
+      // 1) Parse the multipart file. A non-multipart request or a missing file part
+      //    is a 400 — before anything is consumed.
+      let filename = "";
+      let mimetype = "";
+      let buffer: Buffer;
+      try {
+        const part = await (req as unknown as { file: () => Promise<MultipartFile | undefined> }).file();
+        if (!part) return reply.code(400).send({ error: "no file uploaded — attach one PDF, PNG, or JPG in the `file` field" });
+        filename = part.filename ?? "";
+        mimetype = part.mimetype ?? "";
+        buffer = await part.toBuffer();
+        // The parser truncates a stream past the fileSize cap; treat that as 413.
+        if (part.file?.truncated) {
+          return reply.code(413).send({ error: `document too large — the limit is ${MAX_DOCUMENT_BYTES} bytes` });
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (/file too large|reached size limit|FST_REQ_FILE_TOO_LARGE|maxFileSize/i.test(msg)) {
+          return reply.code(413).send({ error: `document too large — the limit is ${MAX_DOCUMENT_BYTES} bytes` });
+        }
+        return reply.code(400).send({ error: `could not read the upload as multipart/form-data: ${msg}` });
+      }
+
+      // 2) Validate type + size BEFORE consuming budget (a bad file must not cost a slot).
+      const v = validateDocument({ filename, mimetype, size: buffer.length });
+      if (!v.ok) return reply.code(v.status).send({ error: v.error });
+
+      // 3) Consume the daily budget (429 when the cap is reached).
+      const rl = rateLimiter.consume();
+      if (!rl.allowed) return reply.code(429).send(rateLimitError(rl));
+
+      // 4) Take over the socket and stream: extract → the live loop → the proposal.
+      reply.hijack();
+      const res = reply.raw;
+      res.writeHead(200, {
+        "content-type": "text/event-stream",
+        "cache-control": "no-cache",
+        connection: "keep-alive",
+      });
+      const send = (event: string, data: unknown) =>
+        res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      try {
+        send("start", { message: "document received", filename, remaining: rl.remaining });
+        send("extracting", { message: `Extracting document with Qwen-VL (${extractor.modelId})…`, model: extractor.modelId });
+        const extracted = await extractor.extract({ buffer, filename, mimetype });
+        send("extracted", {
+          message: "Document extracted — running the decision loop.",
+          model: extracted.model,
+          pages: extracted.pages,
+          sourceType: extracted.sourceType,
+          invoice: extracted.invoice,
+        });
+        const item = await agent.intake(extracted.invoice, { onStep: (step: TraceStep) => send("step", step) });
+        send("proposal", item);
+        send("done", { id: item.id });
+      } catch (err) {
+        send("error", { error: err instanceof Error ? err.message : "document extraction failed" });
+      } finally {
+        res.end();
+      }
+    }
+  );
+
+  // Serve the committed demo document so the UI's "Use sample document" button can
+  // upload a REAL invoice file through the exact vision path a judge would use.
+  // Read from disk once per request (small file); hidden from the OpenAPI spec.
+  app.get("/sample-document", { schema: { hide: true } }, async (_req, reply) => {
+    try {
+      const here = dirname(fileURLToPath(import.meta.url));
+      const png = await readFile(join(here, "..", "demo", "sample-invoice.png"));
+      return reply
+        .type("image/png")
+        .header("content-disposition", 'inline; filename="sample-invoice.png"')
+        .send(png);
+    } catch {
+      return reply.code(404).send({ error: "sample document not found" });
+    }
+  });
 
   app.get(
     "/pending",

@@ -279,18 +279,22 @@
   </header>
 
   <main>
-    <!-- Document/invoice upload + real-time process view. Upload a .json invoice (or
-         paste it), then watch the agent reason step-by-step as it streams (SSE). -->
+    <!-- Document/invoice upload + real-time process view. Upload a REAL PDF/PNG/JPG
+         invoice (read by Qwen-VL vision extraction) OR paste invoice JSON, then watch
+         the agent reason step-by-step as it streams (SSE). -->
     <section class="upload" id="uploadPanel" data-tour="upload">
       <div class="section-label">Upload an invoice — watch the agent work in real time</div>
-      <div class="hint">Upload a <code>.json</code> vendor invoice or paste one below, then Process. The agent streams each reasoning step live, then proposes one action for your approval. <b>Uploads are limited to 10/day</b> (open demo — the cap protects the Qwen API budget).</div>
+      <div class="hint">Upload a real <code>PDF</code>, <code>PNG</code>, or <code>JPG</code> invoice — it is read by <b>Qwen-VL</b> vision extraction — or paste invoice JSON below. The agent then streams each reasoning step live and proposes one action for your approval. <b>Uploads are limited to 10/day</b> (open demo — the cap protects the Qwen API budget).</div>
       <div class="row">
-        <input type="file" id="fileInput" accept=".json,application/json" title="Load a .json invoice" />
-        <button class="ghost" id="fillSample" title="Fill the box with a sample invoice">Use sample JSON</button>
+        <input type="file" id="fileInput" accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg" title="Upload a PDF, PNG, or JPG invoice" />
+        <button class="ghost" id="sampleDoc" title="Upload the bundled sample invoice document">Use sample document</button>
+        <span class="hint">PDF / PNG / JPG — extracted by Qwen-VL.</span>
       </div>
+      <div class="row"><span class="hint">— or paste invoice JSON —</span></div>
       <textarea id="invoiceInput" spellcheck="false" aria-label="Invoice JSON"></textarea>
       <div class="row">
         <button class="primary" id="processBtn" title="Run the multi-step loop, streaming each step">Process invoice</button>
+        <button class="ghost" id="fillSample" title="Fill the box with a sample invoice">Use sample JSON</button>
         <span class="hint">Nothing executes here — the agent only proposes.</span>
       </div>
       <div id="processView"></div>
@@ -744,16 +748,12 @@
     }
 
     // ---- Upload + STREAM the reasoning live (SSE over fetch) ---------------------
-    // EventSource only supports GET, so we POST the invoice and read the
-    // text/event-stream body via a ReadableStream reader, parsing SSE frames by
-    // hand. Each `step` event renders as it ARRIVES (a CSS fade-in gives the
-    // "appearing one by one" feel); `proposal` closes the processing state.
-    async function streamIntake(invoice, onEvent) {
-      const res = await fetch('/intake/stream', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ invoice }),
-      });
+    // EventSource only supports GET, so we POST and read the text/event-stream body
+    // via a ReadableStream reader, parsing SSE frames by hand. Each `step` event
+    // renders as it ARRIVES (a CSS fade-in gives the "appearing one by one" feel);
+    // `proposal` closes the processing state. Both the JSON path (/intake/stream) and
+    // the real-document path (/intake/document) speak the SAME event stream.
+    async function readSSE(res, onEvent) {
       if (!res.ok || !res.body) {
         let msg = 'HTTP ' + res.status;
         try { const j = await res.json(); msg = j.error || msg; } catch (_) {}
@@ -775,6 +775,25 @@
       }
     }
 
+    // Paste-JSON path: POST the invoice object and stream the loop.
+    async function streamIntake(invoice, onEvent) {
+      const res = await fetch('/intake/stream', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ invoice }),
+      });
+      await readSSE(res, onEvent);
+    }
+
+    // Real-document path: POST the file as multipart/form-data → Qwen-VL vision
+    // extraction → the same streamed loop.
+    async function streamDocument(file, onEvent) {
+      const fd = new FormData();
+      fd.append('file', file, file.name || 'invoice');
+      const res = await fetch('/intake/document', { method: 'POST', body: fd });
+      await readSSE(res, onEvent);
+    }
+
     function parseSSE(frame) {
       let event = 'message', data = '';
       frame.split('\n').forEach((line) => {
@@ -785,22 +804,35 @@
       try { return { event: event, data: JSON.parse(data) }; } catch (_) { return { event: event, data: {} }; }
     }
 
-    async function processInvoice() {
-      let invoice;
-      try { invoice = JSON.parse($('#invoiceInput').value); }
-      catch (_) { toast('The invoice box is not valid JSON — fix it or click "Use sample JSON".', 'err'); return; }
-
+    // Shared process-view runner. `headLabel` seeds the spinner line; `kickoff` is a
+    // function (onEvent) => Promise that starts the right SSE stream (JSON or
+    // document). Renders every step/extraction event as it arrives; both paths end in
+    // the pending queue. `busyBtns` are disabled for the duration.
+    async function runProcess(headLabel, kickoff, busyBtns) {
       const pv = $('#processView');
       pv.style.display = '';
       pv.innerHTML = '';
-      const head = el('div', { class: 'proc-head' }, [ el('span', { class: 'spin' }), el('span', { text: 'Processing invoice — the agent is reasoning…' }) ]);
+      const head = el('div', { class: 'proc-head' }, [ el('span', { class: 'spin' }), el('span', { text: headLabel }) ]);
       const stepsWrap = el('div', { class: 'proc-steps' });
       pv.appendChild(head); pv.appendChild(stepsWrap);
-      const btn = $('#processBtn'); btn.disabled = true;
+      const setHead = (txt) => { head.innerHTML = ''; head.appendChild(el('span', { class: 'spin' })); head.appendChild(el('span', { text: txt })); };
+      (busyBtns || []).forEach((b) => { if (b) b.disabled = true; });
 
       try {
-        await streamIntake(invoice, (event, data) => {
-          if (event === 'step') {
+        await kickoff((event, data) => {
+          if (event === 'extracting') {
+            setHead((data && data.message) || 'Extracting document with Qwen-VL…');
+          } else if (event === 'extracted') {
+            const inv = (data && data.invoice) || {};
+            stepsWrap.appendChild(el('div', { class: 'proc-step reveal' }, [
+              el('span', { class: 'num', text: '◆' }),
+              el('div', {}, [
+                el('div', { class: 'tool', text: 'qwen-vl extraction' + (data && data.model ? ' (' + data.model + ')' : '') }),
+                el('div', { class: 'obs', text: '→ ' + [inv.vendor, inv.invoice_number, (inv.currency || '') + ' ' + (inv.total != null ? inv.total : '?')].filter(Boolean).join(' · ') }),
+              ]),
+            ]));
+            setHead('Document extracted — the agent is reasoning…');
+          } else if (event === 'step') {
             stepsWrap.appendChild(el('div', { class: 'proc-step reveal' }, [
               el('span', { class: 'num', text: (data.step != null ? data.step + '.' : '·') }),
               el('div', {}, [
@@ -815,6 +847,8 @@
             head.appendChild(el('span', { text: 'Proposed: ' + (p.tool || '—') + ' — awaiting your approval in the queue below.' }));
           } else if (event === 'error') {
             toast((data && data.error) || 'processing failed', 'err');
+            head.innerHTML = '';
+            head.appendChild(el('span', { text: 'Could not process: ' + ((data && data.error) || 'processing failed') }));
           }
         });
         toast('Invoice processed — see the proposal in the pending queue', 'ok');
@@ -825,8 +859,21 @@
         head.innerHTML = '';
         head.appendChild(el('span', { text: 'Could not process: ' + e.message }));
       } finally {
-        btn.disabled = false;
+        (busyBtns || []).forEach((b) => { if (b) b.disabled = false; });
       }
+    }
+
+    function processInvoice() {
+      let invoice;
+      try { invoice = JSON.parse($('#invoiceInput').value); }
+      catch (_) { toast('The invoice box is not valid JSON — fix it or click "Use sample JSON".', 'err'); return; }
+      return runProcess('Processing invoice — the agent is reasoning…', (onEvent) => streamIntake(invoice, onEvent), [$('#processBtn')]);
+    }
+
+    // Upload a REAL document (PDF/PNG/JPG) → Qwen-VL extraction → the streamed loop.
+    function processDocument(file) {
+      if (!file) return;
+      return runProcess('Uploading ' + (file.name || 'document') + ' — extracting with Qwen-VL…', (onEvent) => streamDocument(file, onEvent), [$('#processBtn'), $('#sampleDoc'), $('#fileInput')]);
     }
 
     // ---- Tabs -------------------------------------------------------------------
@@ -965,12 +1012,22 @@
     $('#tourBtn').onclick = startTour;
     $('#processBtn').onclick = processInvoice;
     $('#fillSample').onclick = () => { $('#invoiceInput').value = JSON.stringify(SAMPLE_INVOICE, null, 2); };
+    // Real-document upload: on pick, POST the file to /intake/document and stream the
+    // Qwen-VL extraction + the loop. (JSON is pasted in the box below, not uploaded.)
     $('#fileInput').onchange = (e) => {
       const file = e.target.files && e.target.files[0];
-      if (!file) return;
-      const rd = new FileReader();
-      rd.onload = () => { $('#invoiceInput').value = String(rd.result || ''); toast('Loaded ' + file.name + ' — click Process', 'ok'); };
-      rd.readAsText(file);
+      if (file) processDocument(file);
+      e.target.value = ''; // allow re-picking the same file
+    };
+    // "Use sample document" — fetch the bundled real invoice PNG and run it through
+    // the exact vision path a judge would use.
+    $('#sampleDoc').onclick = async () => {
+      try {
+        const res = await fetch('/sample-document');
+        if (!res.ok) throw new Error('sample document unavailable');
+        const blob = await res.blob();
+        await processDocument(new File([blob], 'sample-invoice.png', { type: blob.type || 'image/png' }));
+      } catch (e) { toast(e.message || 'could not load the sample document', 'err'); }
     };
     document.querySelectorAll('.tab').forEach((t) => { t.onclick = () => setActiveTab(t.getAttribute('data-tab')); });
     document.addEventListener('keydown', (e) => {
