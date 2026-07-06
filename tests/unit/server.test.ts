@@ -93,6 +93,23 @@ test("GET /pending lists proposals awaiting a decision", async () => {
   assert.ok(Array.isArray(res.json().pending));
 });
 
+test("GET / serves the approval UI as HTML (200, text/html)", async () => {
+  const res = await app.inject({ method: "GET", url: "/" });
+  assert.equal(res.statusCode, 200);
+  assert.match(String(res.headers["content-type"]), /text\/html/);
+  assert.match(res.body, /<!doctype html>/i);
+  assert.match(res.body, /Archon Autopilot/);
+  // The page wires the real approval endpoints (not a placeholder).
+  assert.match(res.body, /\/pending/);
+  assert.match(res.body, /\/approve\//);
+});
+
+test("GET /ui serves the same approval UI (alias)", async () => {
+  const res = await app.inject({ method: "GET", url: "/ui" });
+  assert.equal(res.statusCode, 200);
+  assert.match(String(res.headers["content-type"]), /text\/html/);
+});
+
 test("GET /openapi.json documents every workflow + approval route", async () => {
   const res = await app.inject({ method: "GET", url: "/openapi.json" });
   assert.equal(res.statusCode, 200);

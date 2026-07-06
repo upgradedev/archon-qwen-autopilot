@@ -177,10 +177,55 @@ curl -s -X POST localhost:9000/approve/<id>    # execute for real
 
 ---
 
+## Live
+
+The Autopilot deploys onto the **same Alibaba Cloud ECS box** as the Track-1
+MemoryAgent, **reusing that box's pgvector** (its own `autopilot` database), served
+on host port **9100** (the MemoryAgent holds 9000):
+
+- **Approval UI:** http://43.106.13.19:9100/ — the browser approval queue (review
+  each Qwen-proposed action + its reasoning + arguments, then approve / amend /
+  reject). Also at `/ui`.
+- **Health:** http://43.106.13.19:9100/health
+- **API docs:** http://43.106.13.19:9100/docs
+
+Reproduce it with one command on the box (idempotent, schema-first, fail-closed,
+health + intake/pending smoke):
+
+```bash
+ssh -i <key.pem> root@43.106.13.19
+cd /root/autopilot && git pull
+bash deploy/redeploy.sh
+```
+
+It joins the MemoryAgent's docker network, reuses its pgvector container in a
+separate `autopilot` database, builds + serves the backend on 9100, and proves the
+round-trip. Full runbook, the reuse-pgvector decision, and the one security-group
+rule to open (port 9100) are in [`deploy/DEPLOY_STATE.md`](deploy/DEPLOY_STATE.md).
+
+> The public URL depends on a human opening port 9100 on the box's security group
+> and running `deploy/redeploy.sh` — see the deploy state doc.
+
+---
+
+## The approval UI
+
+`GET /` (and `/ui`) serves a single, dependency-free static HTML+JS page from the
+**same Fastify backend** — no framework, no build step. It loads `GET /pending` and,
+for each proposal, shows the vendor, amount, the Qwen-proposed tool + reasoning +
+confidence, the editable action arguments, the validation findings, and the recalled
+vendor history. Each item wires **Approve** (`POST /approve/:id`), **Amend & approve**
+(edit the arguments inline → `POST /amend/:id`), and **Reject** (`POST /reject/:id`)
+to the real endpoints, with a success toast and an automatic queue refresh after each
+action. It is same-origin, so it needs no configuration.
+
+---
+
 ## Endpoints
 
 | Method + path | Purpose |
 |---|---|
+| `GET /` · `GET /ui` | The human approval UI (static page served by this backend). |
 | `GET /health` | Liveness + the live embedder / decision-model ids. No DB, no key. |
 | `POST /intake` | Ingest a vendor invoice → normalize + validate + recall + Qwen-decide → a **PENDING** proposed action. Nothing executes. |
 | `GET /pending` | The human approval queue (proposals awaiting a decision). |

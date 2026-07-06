@@ -7,6 +7,13 @@
 #
 # Without a DASHSCOPE_API_KEY the backend runs the deterministic offline Fakes,
 # so the whole intake → decide → approve → execute loop works with no key.
+#
+# SCOPE: this compose file is the self-contained LOCAL-DEV stack (its own throwaway
+# pgvector on 5432, backend on 9000). The PRODUCTION deploy is DIFFERENT: on the
+# shared Alibaba Cloud box the Autopilot REUSES the MemoryAgent's running pgvector
+# (its own `autopilot` database) and is served on host port 9100 — done with
+# `docker run` joined to the MemoryAgent's docker network, NOT this compose file, so
+# this file stays clean for local dev. See deploy/redeploy.sh + deploy/DEPLOY_STATE.md.
 
 services:
   db:
