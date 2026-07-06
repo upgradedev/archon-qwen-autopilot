@@ -26,7 +26,7 @@
 // invoice (see fake-chat.ts omitting `amount` for draft_payment on purpose).
 
 import { AutopilotAgent } from "../src/agents/autopilot-agent.js";
-import { defaultDecider } from "../src/ap/decider.js";
+import { defaultLoop } from "../src/ap/loop.js";
 import { hasQwenCreds } from "../src/qwen/client.js";
 import { defaultEmbedder } from "../src/memory/embeddings.js";
 import { InMemoryStore } from "../src/memory/store.js";
@@ -49,6 +49,7 @@ interface Row {
   correct: boolean;
   argSane: boolean;
   argNote: string;
+  steps: number; // autonomous read/analyze steps the loop took before the terminal action
 }
 
 // Run ONE scenario end to end through a fresh, hermetic agent. Seeds are intaken
@@ -59,7 +60,7 @@ async function runScenario(s: EvalScenario): Promise<Row> {
     defaultEmbedder(), // real text-embedding-v4 with a key; FakeEmbedder without
     new InMemoryStore(), // hermetic per scenario — no cross-scenario leakage, no DB
     new InMemoryWorkItemStore(),
-    defaultDecider(), // real qwen-plus with a key; FakeQwenChatClient without
+    defaultLoop(), // real qwen-plus with a key; FakeQwenChatClient without
     fakeSinks()
   );
 
@@ -69,7 +70,9 @@ async function runScenario(s: EvalScenario): Promise<Row> {
   const proposed = item.proposed.tool;
   const correct = proposed === s.expected;
   const { argSane, argNote } = checkArgSanity(item);
-  return { scenario: s, proposed, correct, argSane, argNote };
+  // How many autonomous read/analyze steps the loop took before the terminal action.
+  const steps = item.trace.length;
+  return { scenario: s, proposed, correct, argSane, argNote, steps };
 }
 
 // Arg-sanity (reported, NOT gated): would the proposed action actually execute?
@@ -92,7 +95,7 @@ async function main() {
   const gate = process.argv.slice(2).includes("--gate");
 
   const embedder = defaultEmbedder();
-  const decider = defaultDecider();
+  const decider = defaultLoop();
   // Online iff a real DashScope key is configured. NOTE: decider.modelId is the
   // "qwen-plus" schema id in BOTH modes (the Fake sits at the qwen-plus tool-call
   // seam), so the key — not the model id — is the honest online/offline signal.
@@ -126,9 +129,17 @@ async function main() {
   const argSane = rows.filter((r) => r.argSane).length;
   const acc = correct / n;
 
+  // Multi-step depth: every scenario now runs the bounded ReAct loop, so it takes
+  // ≥1 autonomous read/analyze step before any (human-gated) terminal action.
+  const stepsArr = rows.map((r) => r.steps);
+  const minSteps = Math.min(...stepsArr);
+  const avgSteps = (stepsArr.reduce((s, x) => s + x, 0) / n).toFixed(1);
+  const multiStep = rows.filter((r) => r.steps >= 2).length;
+
   console.log("-".repeat(94));
   console.log(`Tool-choice accuracy : ${correct}/${n}  (${(acc * 100).toFixed(1)}%)   ← the graded, gated number`);
   console.log(`Arg-sanity (executes): ${argSane}/${n}  (${((argSane / n) * 100).toFixed(1)}%)   (reported, not gated)`);
+  console.log(`Loop autonomy        : ${multiStep}/${n} scenarios took ≥2 autonomous steps (avg ${avgSteps}, min ${minSteps}) before a terminal action`);
 
   // Per-category breakdown — where the decisions are strong / weak.
   const cats = [...new Set(EVAL_SET.map((s) => s.category))];

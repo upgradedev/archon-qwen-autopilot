@@ -10,7 +10,7 @@ import { buildServer, type ServerDeps } from "../../src/server.js";
 import { FakeEmbedder } from "../../src/memory/embeddings.js";
 import { InMemoryStore } from "../../src/memory/store.js";
 import { InMemoryWorkItemStore } from "../../src/ap/workitem-store.js";
-import { defaultDecider } from "../../src/ap/decider.js";
+import { defaultLoop } from "../../src/ap/loop.js";
 import { fakeSinks, type Sinks } from "../../src/ap/sinks.js";
 
 let app: FastifyInstance;
@@ -23,7 +23,7 @@ before(async () => {
     embedder: new FakeEmbedder(),
     memory: new InMemoryStore(),
     workitems: new InMemoryWorkItemStore(),
-    decider: defaultDecider(),
+    loop: defaultLoop(),
     sinks,
   };
   app = await buildServer(deps);
@@ -46,11 +46,24 @@ test("intake → pending → approve → executed, end to end over HTTP", async 
   assert.equal(item.status, "pending");
   assert.equal(item.proposed.tool, "draft_journal_entry");
   assert.equal(item.execution, undefined); // nothing executed at intake
+  // The multi-step loop ran: ≥2 autonomous read/analyze steps before the terminal
+  // action, and the ordered trace is persisted on the work item.
+  assert.ok(item.trace.length >= 2, `expected ≥2 autonomous steps, got ${item.trace.length}`);
+  assert.equal(item.trace[0].tool, "recall_vendor_history");
+  assert.equal(item.stopReason, "terminal_action");
+  // No side-effect fired during the loop (the autonomous tools never touch a sink).
+  assert.equal(sinks.ledger.entries().length, 0);
+  assert.equal(sinks.payments.payments().length, 0);
+  assert.equal(sinks.email.outbox().length, 0);
+  assert.equal(sinks.reviews.escalations().length, 0);
 
-  // 2. It appears in the approval queue.
+  // 2. It appears in the approval queue — WITH its full step trace (so a human can
+  //    see HOW the agent decided, not just the final action).
   const pending = await app.inject({ method: "GET", url: "/pending" });
   assert.equal(pending.json().pending.length, 1);
   assert.equal(pending.json().pending[0].id, item.id);
+  assert.ok(Array.isArray(pending.json().pending[0].trace));
+  assert.equal(pending.json().pending[0].trace.length, item.trace.length);
 
   // 3. A human approves → the tool executes for real.
   const approve = await app.inject({ method: "POST", url: `/approve/${item.id}` });

@@ -10,13 +10,15 @@ output, gated in CI.
 ## TL;DR
 
 On a labelled set of **22 AP scenarios** (`eval/dataset.ts`), the eval drives the
-**real decider path** — normalize the (possibly messy) invoice → validate R1–R6 →
-recall the vendor's history from persistent memory → **Qwen function-calling** — and
-grades the **proposed tool** against the business-correct label.
+**real multi-step ReAct loop** — normalize the (possibly messy) invoice → recall the
+vendor's history from persistent memory → validate R1–R4 → confirm a duplicate (R5) /
+compute the amount variance (R6) as the evidence warrants → **Qwen function-calling**
+picks the next tool each step — and grades the **proposed terminal tool** against the
+business-correct label.
 
 | Mode | Model seam | Tool-choice accuracy | What the number means |
 |---|---|---:|---|
-| **Offline** (CI, gated) | deterministic Fakes | **21 / 22 (95.5%)** | policy / regression guard over the real intake pipeline |
+| **Offline** (CI, gated) | deterministic Fakes | **21 / 22 (95.5%)** | policy / regression guard over the real multi-step pipeline |
 | **Online** (with a key) | real `qwen-plus` | *captured live* | the actual decision quality of the model choosing freely |
 
 ```bash
@@ -24,7 +26,10 @@ npm run eval            # drive every scenario, print the table + accuracy N/M
 npm run eval -- --gate  # CI gate: fail if tool-choice accuracy < 90%
 ```
 
-Arg-sanity (does the proposed action execute cleanly against the stub sinks) is
+Because every scenario now runs the loop, the eval also reports **loop autonomy**:
+**all 22 scenarios take ≥2 autonomous read/analyze steps** (avg 2.3) before any
+terminal, human-gated action — the multi-step reasoning is measured, not asserted.
+Arg-sanity (does the proposed action execute cleanly against the simulated sinks) is
 reported alongside — **22 / 22** — but **not gated**, because the model may
 legitimately omit an argument the tool's `execute()` back-fills from the invoice.
 
@@ -38,28 +43,32 @@ The pipeline under test is **real, non-trivial logic**:
 
 ```
 raw invoice → normalize (alias keys, "€ 2.500,00", EU decimals, inferred totals)
-            → validate  (R1 amount sanity · R2 required fields · R3 tax reconcile · R4 line items)
-            → recall    (embed + cosine ANN over persistent memory, filtered by vendor)
-            → detect    (R5 duplicate · R6 amount anomaly — memory-grounded)
-            → computeSignals → Qwen function-calling → one tool
+            → LOOP, one tool per step (Qwen function-calling):
+                recall_vendor_history        (embed + cosine ANN over memory, filtered by vendor; surfaces facts)
+                validate_invoice             (R1 amount sanity · R2 required fields · R3 tax reconcile · R4 line items)
+                check_duplicate              (R5 duplicate — memory-grounded)
+                compute_variance_vs_history  (R6 amount anomaly — memory-grounded)
+              → one TERMINAL action
 ```
 
-Everything up to `computeSignals` is genuine work, and the eval grades that whole
-path against a **semantic label**. When scenario `s10` (`{ amount: "€ 2.500,00",
-… }`, no vendor, no reference) must resolve to `draft_vendor_reply`, we are
-verifying that messy-input normalization + structural validation actually produce
-`missing_fields=true` and route correctly — a chain that can regress.
+Every step up to the terminal action is genuine work, and the eval grades that whole
+multi-step path against a **semantic label**. When scenario `s10` (`{ amount:
+"€ 2.500,00", … }`, no vendor, no reference) must resolve to `draft_vendor_reply`, we
+are verifying that messy-input normalization + the `validate_invoice` step actually
+produce `missing_fields=true` and route correctly — a chain that can regress.
 
-Only the **final `signals → tool` link** is deterministic under the offline Fake
-(`fake-chat.ts` mirrors the decision precedence). So:
+Only the **final `evidence → next tool` choice** is deterministic under the offline
+Fake (`fake-chat.ts` reads the accumulated `EVIDENCE:` snapshot and mirrors the
+decision precedence). So:
 
 - **Offline is a policy / regression guard**, not a decision-quality claim. It
-  proves the real pipeline still turns each situation into the intended signals and
-  the intended safe action. It is deterministic, so it never flakes.
+  proves the real loop still gathers the intended evidence and takes the intended
+  safe action. It is deterministic, so it never flakes.
 - **Online is the decision-quality number.** With a key, `qwen-plus` reads the full
-  invoice + findings + recalled history and **chooses freely** — no signal-to-tool
-  lookup. Grading *that* against the same labels measures whether the model makes the
-  call a human would. That is the number the live run captures.
+  invoice + accumulated observations + recalled history and **chooses freely** — no
+  fixed evidence-to-tool lookup. Grading *that* against the same labels measures
+  whether the model makes the call a human would. That is the number the live run
+  captures.
 
 **The labelling discipline that makes this legitimate:** every `expected` is set by
 asking *"what should an AP clerk do here?"* — the business ground truth — and is
@@ -104,20 +113,22 @@ against regression, and the one a naive re-implementation gets wrong:
 Offline accuracy is **21 / 22**, not a suspicious 22 / 22, and the miss is
 instructive. `s22` is an invoice whose amount cannot be parsed (`amount: "see
 attached"`, no subtotal/tax) — **no payable total** (validation rule R1 fails). A
-human clerk would query the vendor (`draft_vendor_reply`). The deterministic policy
-misses it: `computeSignals` only branches on missing-required-fields, reconcile,
-duplicate, and anomaly — it has **no signal for R1** — so the invoice falls through
-to `draft_journal_entry`.
+human clerk would query the vendor (`draft_vendor_reply`). The `validate_invoice`
+step now **surfaces the R1 FAIL in the trace**, but the deterministic offline policy
+has **no routing branch for it** — the Fake acts only on missing-required-fields,
+reconcile, duplicate, and anomaly — so the invoice falls through to
+`draft_journal_entry`.
 
 We keep this scenario, labelled with the business-correct action, and **let it
 fail** offline, because:
 
 1. It proves the eval has teeth — it *can* fail, so a green run means something.
 2. It is a concrete, honest limitation of the deterministic floor and a clear
-   candidate improvement (add an R1 signal).
+   candidate improvement (add an R1 routing branch to the Fake).
 3. It is exactly the kind of context-reading judgement we expect **live `qwen-plus`
-   to get right** where the fixed policy does not — a case where the LLM should beat
-   the deterministic floor. The live run will show whether it does.
+   to get right** — it sees the same R1 FAIL observation the offline policy ignores —
+   a case where the LLM should beat the deterministic floor. The live run will show
+   whether it does.
 
 This mirrors the Track-1 benchmark's honesty about its single grounding miss: we
 report the number that falls out, not the one we'd like.
@@ -131,7 +142,7 @@ aspiration:
 > **tool-choice accuracy ≥ 90%** (measured: 95.5%).
 
 The floor sits at the measured value less the one documented known-limitation, so CI
-catches a *real* regression in the intake→signals→tool pipeline without pretending
+catches a *real* regression in the multi-step recall→validate→check→act loop without pretending
 the deterministic policy is perfect. We deliberately **do not gate arg-sanity** (the
 Fake omits some args by design) and **do not gate the online number** (it needs a
 key and costs spend; it is captured and reported, not enforced).

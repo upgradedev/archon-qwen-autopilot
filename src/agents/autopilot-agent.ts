@@ -4,10 +4,13 @@
 // incoming invoice all the way to an executed action, with a HUMAN APPROVAL GATE
 // in the middle. It recommends; it never auto-executes.
 //
-//   intake()   Extract + validate the invoice, RECALL the vendor's history from
-//              persistent memory (the MemoryAgent foundation), then ask Qwen (via
-//              function-calling) to CHOOSE one action. The proposal is persisted
-//              as a PENDING work item — nothing executes yet.
+//   intake()   Normalize the invoice, then run a bounded multi-step ReAct loop
+//              (AutopilotLoop): the agent recalls the vendor's history from
+//              persistent memory, validates, checks for a duplicate, and computes
+//              the amount variance — each an autonomous read/analyze step with NO
+//              side-effect — before Qwen chooses ONE terminal action. That proposal
+//              plus the full step trace is persisted as a PENDING work item —
+//              nothing executes yet.
 //   pending()  The human approval queue.
 //   approve()  A human approves → the chosen tool runs for real → the outcome is
 //              written BACK to memory so the agent gets smarter next time.
@@ -15,32 +18,20 @@
 //              amended args are what execute (the HITL integrity guarantee).
 //   reject()   A human discards the proposal → nothing executes.
 //
-// Everything is injected (embedder, memory store, work-item store, decider,
-// sinks) so the whole loop runs offline with Fakes in tests and against real Qwen
-// + a pgvector database (local, CI, Alibaba Cloud) in production, unchanged.
+// Everything is injected (embedder, memory store, work-item store, loop, sinks) so
+// the whole loop runs offline with Fakes in tests and against real Qwen + a
+// pgvector database (local, CI, Alibaba Cloud) in production, unchanged.
 
 import { randomUUID } from "node:crypto";
 import type { Embedder } from "../memory/embeddings.js";
-import { recall, remember } from "../memory/memory.js";
+import { remember } from "../memory/memory.js";
 import type { MemoryStore } from "../memory/store.js";
-import { QwenDecider } from "../ap/decider.js";
+import { AutopilotLoop } from "../ap/loop.js";
 import { normalizeInvoice } from "../ap/normalize.js";
-import {
-  detectAmountAnomaly,
-  detectDuplicate,
-  priorInvoicesFromRecall,
-  toRecalledFact,
-  validateInvoice,
-} from "../ap/validate.js";
 import { toolByName } from "../ap/tools.js";
 import type { Sinks } from "../ap/sinks.js";
 import type { WorkItemStore } from "../ap/workitem-store.js";
-import type {
-  ProposedAction,
-  RawInvoice,
-  RecalledFact,
-  WorkItem,
-} from "../types.js";
+import type { RawInvoice, WorkItem } from "../types.js";
 
 // Raised when a work item id does not exist → HTTP 404.
 export class NotFoundError extends Error {}
@@ -58,38 +49,24 @@ export class AutopilotAgent {
     private embedder: Embedder,
     private memory: MemoryStore,
     private workitems: WorkItemStore,
-    private decider: QwenDecider,
+    private loop: AutopilotLoop,
     private sinks: Sinks
   ) {}
 
-  // ── 1..5: intake → decide → PENDING (no execution) ─────────────────────────
+  // ── intake → multi-step ReAct loop → PENDING (no execution) ────────────────
   async intake(raw: RawInvoice): Promise<WorkItem> {
     const invoice = normalizeInvoice(raw);
 
-    // Structural validation (R1..R4).
-    const findings = validateInvoice(invoice);
-
-    // Recall the vendor's history from persistent memory (the foundation).
-    const recallQuery =
-      `${invoice.vendor ?? "vendor"} invoice ${invoice.vendor_ref ?? ""} ` +
-      `${invoice.total ?? ""} ${invoice.currency}`.trim();
-    const hits = invoice.vendor
-      ? await recall(this.embedder, this.memory, recallQuery, { vendor: invoice.vendor, limit: 8 })
-      : [];
-    const knownVendor = hits.length > 0;
-    const priors = priorInvoicesFromRecall(hits);
-    const recalled: RecalledFact[] = hits.map(toRecalledFact);
-
-    // Memory-grounded checks (R5 duplicate, R6 amount anomaly).
-    findings.push(detectDuplicate(invoice, priors));
-    findings.push(detectAmountAnomaly(invoice, priors));
-
-    // Decide via Qwen function-calling — one tool + args + reasoning + confidence.
-    const proposed: ProposedAction = await this.decider.decide({
+    // Run the bounded observe→decide→act loop. Inside it the agent recalls the
+    // vendor's history (the MemoryAgent foundation), validates (R1..R4), and — when
+    // the recalled facts warrant it — confirms a duplicate (R5) or an amount anomaly
+    // (R6), each an autonomous read/analyze step with NO side-effect, before Qwen
+    // chooses ONE terminal action. The loop returns the proposal, the accumulated
+    // findings + recalled facts, and the full ordered step trace.
+    const { proposed, findings, recalled, trace, stopReason } = await this.loop.run({
       invoice,
-      findings,
-      recalled,
-      knownVendor,
+      embedder: this.embedder,
+      memory: this.memory,
     });
 
     const item: WorkItem = {
@@ -99,6 +76,8 @@ export class AutopilotAgent {
       findings,
       recalled,
       proposed,
+      trace,
+      stopReason,
       createdAt: new Date().toISOString(),
     };
     await this.workitems.create(item);

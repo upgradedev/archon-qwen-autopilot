@@ -58,11 +58,13 @@ The headline is the loop between steps 3 and 6: the agent **recalls** to decide,
 next month, recognised as recurring and proposed for straight-through payment. It
 gets better at *your* vendors over time.
 
-**What it is, stated honestly:** the decider is **single-shot** (one tool call per
-invoice, not a multi-step plan/act/observe loop). The execution **sinks are
-in-memory stubs** — they record what *would* post to a ledger / payment rail / SMTP,
-with the interfaces in place for real adapters; no ERP or bank is contacted. Live
-Qwen is wired; the whole loop is verified offline via deterministic Fakes.
+**What it is, stated honestly:** the decision engine is a **genuine bounded ReAct
+loop** (observe → decide → act → observe) — the agent chains autonomous read/analyze
+tools (recall → validate → check_duplicate / compute_variance) before proposing one
+terminal action, and the loop + memory grounding are real. The terminal execution
+**sinks are simulated in-memory adapters** — they record what *would* post to a
+ledger / payment rail / SMTP, behind real interfaces; no ERP or bank is contacted.
+Live Qwen is wired; the whole loop is verified offline via deterministic Fakes.
 
 ## How we built it
 
@@ -154,9 +156,9 @@ AP scenarios, each carrying the tool a human clerk would pick, graded against th
 - **Offline-first, reproducible with zero credentials.** The whole loop, the test
   pyramid, and the eval gate run in CI with no key and no spend, via deterministic
   Fakes — while the identical code runs live against Qwen + pgvector.
-- **Honest scope.** Single-shot decider, stub sinks, small labelled eval — all stated
-  plainly in the README, this story, and EVAL.md, so every claim that *is* strong is
-  believable.
+- **Honest scope.** A real multi-step loop with **simulated** terminal sinks and a
+  small labelled eval — all stated plainly in the README, this story, and EVAL.md, so
+  every claim that *is* strong is believable.
 
 ## What we learned
 
@@ -171,8 +173,8 @@ AP scenarios, each carrying the tool a human clerk would pick, graded against th
 - **If you don't measure the decisions, you don't have an agent — you have a demo.**
   Building the eval changed the project: it forced business-truth labels, surfaced a
   real policy gap, and gave us a number to defend instead of a vibe.
-- **Honesty is a feature.** Reporting 21/22 (not 22/22), naming the single-shot scope
-  and the stub sinks, and separating the offline regression number from the online
+- **Honesty is a feature.** Reporting 21/22 (not 22/22), naming the simulated
+  terminal sinks, and separating the offline regression number from the online
   decision-quality number makes the whole submission more credible, not less.
 
 ## What's next for Archon Autopilot
@@ -180,8 +182,9 @@ AP scenarios, each carrying the tool a human clerk would pick, graded against th
 - **Real sink adapters.** Swap the in-memory stubs for a ledger client, a payment
   rail, and an SMTP transport behind the existing `Sinks` interfaces — no workflow
   change.
-- **A multi-step decider.** Move from single-shot to a bounded plan/act/observe loop
-  (e.g. fetch a missing PO, then re-decide) while keeping the same approval gate.
+- **Richer autonomous tools.** The bounded plan/act/observe loop now ships (recall →
+  validate → check_duplicate / compute_variance → terminal action, human-gated); next
+  is adding tools that fetch external context (e.g. a missing PO) mid-loop.
 - **Close the R1 gap the eval found.** Add a no-payable-total signal so a garbled
   invoice routes to a vendor query deterministically — then re-measure.
 - **A web approval UI.** A queue over `/pending` + `/approve` + `/amend` + `/reject`

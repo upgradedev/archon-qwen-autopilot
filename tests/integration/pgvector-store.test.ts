@@ -46,6 +46,8 @@ test("PgWorkItemStore: create → listPending → update round-trips the JSONB i
     findings: [],
     recalled: [],
     proposed: { tool: "draft_journal_entry", args: { amount: 1000 }, reasoning: "r", confidence: 0.8, modelId: "test" },
+    trace: [{ step: 1, tool: "recall_vendor_history", args: {}, observation: "new vendor", reasoning: "establish history" }],
+    stopReason: "terminal_action",
     createdAt: new Date().toISOString(),
   };
   await store.create(item);
@@ -60,6 +62,9 @@ test("PgWorkItemStore: create → listPending → update round-trips the JSONB i
   const fetched = await store.get(item.id);
   assert.equal(fetched?.status, "approved");
   assert.equal(fetched?.execution?.ok, true);
+  // The loop trace survives the JSONB round-trip (no new column needed).
+  assert.equal(fetched?.trace.length, 1);
+  assert.equal(fetched?.trace[0]?.tool, "recall_vendor_history");
   // No longer in the pending queue.
   assert.equal((await store.listPending()).some((p) => p.id === item.id), false);
 });

@@ -27,7 +27,7 @@ import { createRequire } from "node:module";
 import { defaultEmbedder, type Embedder } from "./memory/embeddings.js";
 import { InMemoryStore, PgVectorStore, type MemoryStore } from "./memory/store.js";
 import { InMemoryWorkItemStore, PgWorkItemStore, type WorkItemStore } from "./ap/workitem-store.js";
-import { defaultDecider, QwenDecider } from "./ap/decider.js";
+import { defaultLoop, AutopilotLoop } from "./ap/loop.js";
 import { fakeSinks, type Sinks } from "./ap/sinks.js";
 import { hasDatabase } from "./db/client.js";
 import { UI_HTML } from "./ui.js";
@@ -43,7 +43,7 @@ export interface ServerDeps {
   embedder: Embedder;
   memory: MemoryStore;
   workitems: WorkItemStore;
-  decider: QwenDecider;
+  loop: AutopilotLoop;
   sinks: Sinks;
 }
 
@@ -73,16 +73,19 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
         title: "Archon Autopilot API",
         description:
           "HTTP API for Archon Autopilot — a human-gated accounts-payable agent. It " +
-          "ingests a messy vendor invoice, validates it, recalls the vendor's history " +
-          "from a persistent pgvector memory (the Track-1 MemoryAgent foundation), and " +
-          "uses Qwen function-calling to PROPOSE one AP action per invoice. Nothing " +
-          "executes until a human approves: every proposal waits behind a human approval " +
-          "gate — approve to execute the exact proposed args for real, amend to edit " +
-          "then execute, or reject to discard. On approval the outcome is written back " +
-          "to memory so the next decision for that vendor is better grounded. The " +
-          "decider is single-shot (one tool call per invoice, not a multi-step loop); " +
-          "the execution sinks are in-memory stubs (interfaces ready for real ledger / " +
-          "SMTP / payment adapters).",
+          "ingests a messy vendor invoice and runs a bounded MULTI-STEP ReAct loop " +
+          "(Qwen function-calling): the agent autonomously recalls the vendor's history " +
+          "from a persistent pgvector memory (the Track-1 MemoryAgent foundation), " +
+          "validates, checks for a duplicate, and computes the amount variance — each a " +
+          "read/analyze step with no side-effect — before proposing ONE terminal AP " +
+          "action. Nothing executes until a human approves: every terminal action waits " +
+          "behind a human approval gate — approve to execute the exact proposed args for " +
+          "real, amend to edit then execute, or reject to discard. The full step trace is " +
+          "persisted so a human can see HOW the agent decided. On approval the outcome is " +
+          "written back to memory so the next decision for that vendor is better grounded. " +
+          "The execution sinks are simulated in-memory adapters (interfaces ready for real " +
+          "ledger / SMTP / payment adapters); the loop and the read/analyze tools + memory " +
+          "grounding are real.",
         version: pkg.version,
       },
       tags: [
@@ -109,14 +112,14 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
   app.get("/", { schema: { hide: true } }, serveUi);
   app.get("/ui", { schema: { hide: true } }, serveUi);
 
-  // Wire dependencies. Defaults: real embedder/decider auto-select Qwen vs Fakes
+  // Wire dependencies. Defaults: real embedder/loop auto-select Qwen vs Fakes
   // by env; the stores use pgvector when DATABASE_URL is set, else in-memory.
   const embedder = deps.embedder ?? defaultEmbedder();
   const memory = deps.memory ?? (hasDatabase() ? new PgVectorStore() : new InMemoryStore());
   const workitems = deps.workitems ?? (hasDatabase() ? new PgWorkItemStore() : new InMemoryWorkItemStore());
-  const decider = deps.decider ?? defaultDecider();
+  const loop = deps.loop ?? defaultLoop();
   const sinks = deps.sinks ?? fakeSinks();
-  const agent = new AutopilotAgent(embedder, memory, workitems, decider, sinks);
+  const agent = new AutopilotAgent(embedder, memory, workitems, loop, sinks);
 
   app.get(
     "/health",
@@ -142,7 +145,7 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
     async () => ({
       status: "ok",
       embedder: embedder.modelId,
-      decider: decider.modelId,
+      decider: loop.modelId,
       store: hasDatabase() ? "pgvector" : "in-memory",
     })
   );
@@ -157,8 +160,9 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
         summary: "Intake a vendor invoice",
         description:
           "Accepts an incoming vendor invoice (structured JSON, fields may be missing/ambiguous). " +
-          "Normalizes + validates it, recalls the vendor's history from memory, then uses Qwen " +
-          "function-calling to propose ONE action. Returns the PENDING work item — nothing executes yet.",
+          "Normalizes it, then runs the multi-step ReAct loop (recall history → validate → check " +
+          "duplicate → compute variance, as needed) before Qwen proposes ONE terminal action. " +
+          "Returns the PENDING work item — including the full step trace — and nothing executes yet.",
         tags: ["workflow"],
         body: {
           type: "object",

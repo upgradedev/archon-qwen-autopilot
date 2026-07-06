@@ -190,7 +190,19 @@ export function toolByName(name: string): ToolSpec | undefined {
   return BY_NAME.get(name as ToolName);
 }
 
-// The `tools[]` array handed to Qwen for function-calling.
+// These are the TERMINAL, side-effecting actions. When the multi-step loop's model
+// chooses one of these it STOPS: the proposal is persisted as PENDING and NOTHING
+// executes until a human approves it. The autonomous read/analyze tools (see
+// analysis-tools.ts) run inside the loop with no side-effect and never end it.
+export const TERMINAL_TOOL_NAMES: readonly ToolName[] = TOOLS.map((t) => t.name);
+
+export function isTerminalTool(name: string): boolean {
+  return BY_NAME.has(name as ToolName);
+}
+
+// The terminal-action `tools[]` schemas handed to Qwen for function-calling. The
+// loop concatenates these with the autonomous analysis-tool defs (analysis-tools.ts)
+// so the model can pick either a read/analyze step or a terminal action each turn.
 export function toolDefs(): ToolDef[] {
   return TOOLS.map((t) => t.def);
 }

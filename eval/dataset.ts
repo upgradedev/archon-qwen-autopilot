@@ -241,10 +241,10 @@ export const EVAL_SET: EvalScenario[] = [
     invoice: { vendor: "Duff Beer Co", invoice_number: "DB-9", date: "2026-02-25", amount: "see attached", tax_id: "TX-2626", currency: "EUR" },
     expected: "draft_vendor_reply",
     knownLimitation:
-      "The deterministic offline policy has no signal for R1 (no payable total): computeSignals only branches on " +
-      "missing-required-fields, reconcile, duplicate and anomaly, so a no-total invoice falls through to draft_journal_entry. " +
-      "A human clerk (and, we expect, live qwen-plus reading the full context) would instead query the vendor. This is a " +
-      "genuine gap the eval SURFACES rather than hides — a candidate improvement for the signal set / a case where the LLM " +
-      "should beat the deterministic floor.",
+      "validate_invoice now SURFACES R1 (no payable total) as an observation in the trace, but the deterministic offline " +
+      "policy has no routing branch for it: the Fake only acts on missing-required-fields, reconcile, duplicate and anomaly, " +
+      "so a no-total invoice falls through to draft_journal_entry. A human clerk (and, we expect, live qwen-plus reading the " +
+      "R1 FAIL observation) would instead query the vendor. This is a genuine gap the eval SURFACES rather than hides — a " +
+      "candidate improvement for the offline policy / a case where the LLM should beat the deterministic floor.",
   },
 ];
