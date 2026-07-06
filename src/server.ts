@@ -24,28 +24,17 @@ import swaggerUi from "@fastify/swagger-ui";
 import cors from "@fastify/cors";
 import { pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
-import { defaultEmbedder, type Embedder } from "./memory/embeddings.js";
-import { InMemoryStore, PgVectorStore, type MemoryStore } from "./memory/store.js";
-import { InMemoryWorkItemStore, PgWorkItemStore, type WorkItemStore } from "./ap/workitem-store.js";
-import { defaultLoop, AutopilotLoop } from "./ap/loop.js";
-import { fakeSinks, type Sinks } from "./ap/sinks.js";
 import { hasDatabase } from "./db/client.js";
 import { UI_HTML } from "./ui.js";
-import {
-  AutopilotAgent,
-  ConflictError,
-  NotFoundError,
-} from "./agents/autopilot-agent.js";
+import { buildAgent, type AutopilotDeps } from "./deps.js";
+import { skillCatalog } from "./skills/catalog.js";
+import { ConflictError, NotFoundError } from "./agents/autopilot-agent.js";
 
 const pkg = createRequire(import.meta.url)("../package.json") as { version: string };
 
-export interface ServerDeps {
-  embedder: Embedder;
-  memory: MemoryStore;
-  workitems: WorkItemStore;
-  loop: AutopilotLoop;
-  sinks: Sinks;
-}
+// The HTTP server shares the exact dependency wiring the MCP server uses (deps.ts),
+// so the two surfaces can never drift.
+export type ServerDeps = AutopilotDeps;
 
 // Response bodies are intentionally permissive (`additionalProperties: true`).
 // Fastify serializes responses against their schema and STRIPS undeclared fields,
@@ -92,6 +81,7 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
         { name: "health", description: "Liveness probe" },
         { name: "workflow", description: "Intake an invoice and run the decision loop" },
         { name: "approval", description: "The human-in-the-loop approval gate" },
+        { name: "skills", description: "Introspect the custom Qwen skill catalog" },
       ],
     },
   });
@@ -112,14 +102,12 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
   app.get("/", { schema: { hide: true } }, serveUi);
   app.get("/ui", { schema: { hide: true } }, serveUi);
 
-  // Wire dependencies. Defaults: real embedder/loop auto-select Qwen vs Fakes
-  // by env; the stores use pgvector when DATABASE_URL is set, else in-memory.
-  const embedder = deps.embedder ?? defaultEmbedder();
-  const memory = deps.memory ?? (hasDatabase() ? new PgVectorStore() : new InMemoryStore());
-  const workitems = deps.workitems ?? (hasDatabase() ? new PgWorkItemStore() : new InMemoryWorkItemStore());
-  const loop = deps.loop ?? defaultLoop();
-  const sinks = deps.sinks ?? fakeSinks();
-  const agent = new AutopilotAgent(embedder, memory, workitems, loop, sinks);
+  // Wire dependencies via the SHARED resolver (deps.ts) — the same one the MCP
+  // server uses, so both surfaces drive an identically-wired AutopilotAgent.
+  // Defaults: real embedder/loop auto-select Qwen vs Fakes by env; the stores use
+  // pgvector when DATABASE_URL is set, else in-memory.
+  const { agent, deps: resolved } = buildAgent(deps);
+  const { embedder, loop } = resolved;
 
   app.get(
     "/health",
@@ -148,6 +136,26 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
       decider: loop.modelId,
       store: hasDatabase() ? "pgvector" : "in-memory",
     })
+  );
+
+  // Introspect the custom Qwen skill catalog — the SAME function schemas the
+  // qwen-plus decider chooses from, annotated with tier / gate / rule. Mirrors the
+  // MCP list_skills tool, so the skill set is introspectable over HTTP too.
+  app.get(
+    "/skills",
+    {
+      schema: {
+        summary: "The custom Qwen skill catalog",
+        description:
+          "Lists every custom Qwen skill (OpenAI-compatible function schema) the decider can " +
+          "choose from — autonomous read/analyze skills (side-effect-free, run inside the loop) " +
+          "and terminal skills (human-gated) — each annotated with tier, gate, the R1–R6 rule it " +
+          "owns, and its parameters. Read-only.",
+        tags: ["skills"],
+        response: { 200: looseObject },
+      },
+    },
+    async () => skillCatalog()
   );
 
   // 1..5 — intake → validate → recall → Qwen-decide → PENDING (no execution).

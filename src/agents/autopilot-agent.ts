@@ -24,14 +24,15 @@
 
 import { randomUUID } from "node:crypto";
 import type { Embedder } from "../memory/embeddings.js";
-import { remember } from "../memory/memory.js";
+import { remember, recall } from "../memory/memory.js";
 import type { MemoryStore } from "../memory/store.js";
 import { AutopilotLoop } from "../ap/loop.js";
 import { normalizeInvoice } from "../ap/normalize.js";
 import { toolByName } from "../ap/tools.js";
+import { toRecalledFact } from "../ap/validate.js";
 import type { Sinks } from "../ap/sinks.js";
 import type { WorkItemStore } from "../ap/workitem-store.js";
-import type { RawInvoice, WorkItem } from "../types.js";
+import type { RawInvoice, RecalledFact, WorkItem } from "../types.js";
 
 // Raised when a work item id does not exist → HTTP 404.
 export class NotFoundError extends Error {}
@@ -112,6 +113,21 @@ export class AutopilotAgent {
     const item = await this.workitems.get(id);
     if (!item) throw new NotFoundError(`work item ${id} not found`);
     return item;
+  }
+
+  // Recall a vendor's prior facts from persistent memory — the same
+  // memory-grounding the loop's recall_vendor_history skill uses, exposed on its
+  // own so an operator (or an MCP client) can inspect what the agent knows about a
+  // vendor WITHOUT running an intake. Read-only: it touches no sink and decides
+  // nothing; it surfaces the recalled facts (prior invoices, actions, insights).
+  async recallVendor(vendor: string, limit = 8): Promise<RecalledFact[]> {
+    const name = vendor.trim();
+    if (!name) return [];
+    const hits = await recall(this.embedder, this.memory, `history for vendor ${name}`, {
+      vendor: name,
+      limit,
+    });
+    return hits.map(toRecalledFact);
   }
 
   // ── 6: approve → EXECUTE the tool for real → remember the outcome ───────────
