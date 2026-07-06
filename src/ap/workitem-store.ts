@@ -17,6 +17,11 @@ export interface WorkItemStore {
   create(item: WorkItem): Promise<void>;
   get(id: string): Promise<WorkItem | null>;
   listPending(): Promise<WorkItem[]>;
+  // The DECIDED history — every item a human has approved / amended / rejected,
+  // most-recently-decided first. Answers "I approved one, where did it go?" and
+  // backs the decided view + its charts. Decided items are terminal: they are
+  // never re-executed (the approval gate), so this is a read-only audit list.
+  listDecided(): Promise<WorkItem[]>;
   update(item: WorkItem): Promise<void>;
   clear(): Promise<void>;
 }
@@ -36,6 +41,12 @@ export class InMemoryWorkItemStore implements WorkItemStore {
     return [...this.rows.values()]
       .filter((r) => r.status === "pending")
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .map(clone);
+  }
+  async listDecided(): Promise<WorkItem[]> {
+    return [...this.rows.values()]
+      .filter((r) => r.status !== "pending")
+      .sort((a, b) => (b.decidedAt ?? "").localeCompare(a.decidedAt ?? "")) // newest decision first
       .map(clone);
   }
   async update(item: WorkItem): Promise<void> {
@@ -62,6 +73,12 @@ export class PgWorkItemStore implements WorkItemStore {
   async listPending(): Promise<WorkItem[]> {
     const rows = await query<{ item: WorkItem }>(
       `SELECT item FROM ap_workitems WHERE status = 'pending' ORDER BY created_at ASC`
+    );
+    return rows.map((r) => r.item);
+  }
+  async listDecided(): Promise<WorkItem[]> {
+    const rows = await query<{ item: WorkItem }>(
+      `SELECT item FROM ap_workitems WHERE status <> 'pending' ORDER BY decided_at DESC NULLS LAST`
     );
     return rows.map((r) => r.item);
   }

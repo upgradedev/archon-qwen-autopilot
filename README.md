@@ -264,15 +264,28 @@ rule to open (port 9100) are in [`deploy/DEPLOY_STATE.md`](deploy/DEPLOY_STATE.m
 ## The approval UI
 
 `GET /` (and `/ui`) serves a single, dependency-free static HTML+JS page from the
-**same Fastify backend** — no framework, no build step. It loads `GET /pending` and,
-for each proposal, shows the vendor, amount, the Qwen-proposed tool + reasoning +
-confidence, the **agent's step-by-step reasoning trace** ("How the agent decided" —
-each autonomous read/analyze step and what it observed, so a human sees *how* the
-proposal was reached), the editable action arguments, the validation findings, and
-the recalled vendor history. Each item wires **Approve** (`POST /approve/:id`), **Amend & approve**
-(edit the arguments inline → `POST /amend/:id`), and **Reject** (`POST /reject/:id`)
-to the real endpoints, with a success toast and an automatic queue refresh after each
-action. It is same-origin, so it needs no configuration.
+**same Fastify backend** — no framework, no build step, no CDN. It offers:
+
+- **Upload + real-time process view** — upload a `.json` invoice (or paste one) and
+  click **Process**. The page opens `POST /intake/stream` and renders **each reasoning
+  step live as it arrives** (recall → validate → check duplicate → variance), each
+  fading in, under a "processing…" header — then shows the proposed action. The
+  agent's work is visible *as it happens*, not just the final answer.
+- **Pending queue** — for each proposal: the vendor, amount, the Qwen-proposed tool +
+  reasoning + confidence, a **collapsible** "How the agent decided" reasoning trace
+  (click the chevron to expand — the queue stays compact by default), the editable
+  action arguments, the validation findings, and the recalled vendor history. Each
+  item wires **Approve** (`POST /approve/:id`), **Amend & approve** (edit the
+  arguments inline → `POST /amend/:id`), and **Reject** (`POST /reject/:id`).
+- **Decided tab** — answers "I approved one, where did it go?": a list from
+  `GET /decided` of every approved / amended / rejected item with its outcome and
+  timestamp. An amended item shows the **prev → new args diff** (the amend audit
+  trail).
+- **Charts** — two inline-SVG bar charts: pending **clean vs flagged** (clean = every
+  validation rule passed), and decided **approved / amended / rejected**.
+
+A success toast and an automatic refresh follow each action. It is same-origin, so it
+needs no configuration.
 
 ---
 
@@ -280,10 +293,12 @@ action. It is same-origin, so it needs no configuration.
 
 | Method + path | Purpose |
 |---|---|
-| `GET /` · `GET /ui` | The human approval UI (static page served by this backend). |
+| `GET /` · `GET /ui` | The human approval UI (static page served by this backend): upload/paste an invoice, watch it process live, work the queue, and review the decided history + charts. |
 | `GET /health` | Liveness + the live embedder / decision-model ids. No DB, no key. |
-| `POST /intake` | Ingest a vendor invoice → normalize → run the multi-step ReAct loop (recall → validate → check duplicate / compute variance) → a **PENDING** proposed action + its full step trace. Nothing executes. |
+| `POST /intake` | Ingest a vendor invoice → normalize → run the multi-step ReAct loop (recall → validate → check duplicate / compute variance) → a **PENDING** proposed action + its full step trace. Nothing executes. **Rate-limited (see below).** |
+| `POST /intake/stream` | Same pipeline as `/intake`, but **streams each reasoning step live** as Server-Sent Events (`event: step` as it happens, then `event: proposal` + `event: done`). Backs the UI's real-time "watch the agent work" upload view. Nothing executes. **Rate-limited.** |
 | `GET /pending` | The human approval queue (proposals awaiting a decision), each including its reasoning trace. |
+| `GET /decided` | The **decided history** — every approved / amended / rejected item, newest first, with its outcome, decision timestamp, and (for an amended item) the prev → new amend audit trail. Read-only: decided items never re-execute. |
 | `POST /approve/:id` | A human approves → the chosen tool executes for real; the outcome is written back to memory. |
 | `POST /amend/:id` | A human edits the proposed domain args, then approves → the **amended** args are exactly what execute. Body: `{ args, reason? }`. |
 | `POST /reject/:id` | A human discards the proposal → nothing executes. The rejection is remembered. Body: `{ reason? }`. |
@@ -292,6 +307,23 @@ action. It is same-origin, so it needs no configuration.
 
 **Approval-gate semantics:** an unknown work-item id → `404`; an already-decided
 item (approved/rejected) → `409` (it can never be re-executed).
+
+### Open demo + upload rate limit
+
+The live demo is **intentionally open — no login, no auth**, so a judge can test it
+freely (upload an invoice, watch it process, approve/amend/reject). This is a
+deliberate, rules-compliant choice: the app must be judge-testable end to end. There
+is no sign-in wall by design.
+
+To keep an open, unauthenticated endpoint from running up the model bill, **invoice
+uploads are rate-limited to 10/day** (per UTC day, resetting at 00:00 UTC) across
+both `POST /intake` and `POST /intake/stream`. **Upload is rate-limited to 10/day to
+protect the Qwen API budget.** The limiter lives in
+[`src/ap/rate-limit.ts`](src/ap/rate-limit.ts) (`DailyRateLimiter`, cap configurable
+via `UPLOAD_DAILY_LIMIT`); it is checked **after** payload validation, so an invalid
+request never burns budget, and an over-limit upload returns `429` with a clear
+message. Validation, the approval gate, and every read endpoint (`/pending`,
+`/decided`, `/skills`, `/health`) are **not** limited.
 
 ---
 

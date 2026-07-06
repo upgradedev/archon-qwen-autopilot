@@ -116,6 +116,18 @@ export interface ExecutionResult {
   output: Record<string, unknown>;
 }
 
+// The amend audit trail — when a human edits a proposal before approving, we keep
+// BOTH the args the agent originally proposed AND the args the human approved, so
+// the decided view can show the exact prev → new diff. `amendedArgs` is what
+// actually executed (approved-args == executed-args stays true). Rides inside the
+// WorkItem JSONB — no schema migration, same as the trace.
+export interface Amendment {
+  proposedArgs: Record<string, unknown>; // what Qwen originally proposed
+  amendedArgs: Record<string, unknown>; // the merged args the human approved + ran
+  amendedBy?: string; // optional operator identity
+  reason?: string; // optional human note on why it was amended
+}
+
 export interface WorkItem {
   id: string;
   status: WorkItemStatus;
@@ -130,6 +142,7 @@ export interface WorkItem {
   stopReason: LoopStopReason; // why the loop stopped (terminal vs. a guard fallback)
   execution?: ExecutionResult; // set once approved + executed
   amended?: boolean; // true when a human edited the args before approving
+  amendment?: Amendment; // the prev → new audit trail, present iff `amended`
   decisionReason?: string; // human-supplied note on reject / amend
   createdAt: string;
   decidedAt?: string;
