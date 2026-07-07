@@ -130,6 +130,20 @@ side-effect sink fires, the proposed tool is never the attacker's payment, and
 cleanly reconciling invoice (all rules pass, so there is no math excuse): it proposed
 a routine journal entry, PENDING, never the demanded payment.
 
+We then extended that same defense to the **document-input vector** — the front door
+where a judge uploads a real file, not JSON. Three added layers: a **magic-byte sniff**
+(a `.pdf` that is really a PNG is rejected before it costs a budget slot), a **relevance
+gate** (a random image is flagged "this doesn't look like an invoice"), and — the one
+we like most — we made the neutralized attack **VISIBLE**. The fence already made
+injection inert, but it said nothing; now an advisory scanner surfaces exactly what it
+found, so the API response, the live trace, and a warning banner at the approval gate
+all show "⚠️ this document contained N suspected injected instructions — shown as data,
+never followed." Detection is strictly advisory: it never rejects, never edits the
+proposal, never touches the human gate. A second offline suite
+(`tests/security/upload-guard.test.ts`) proves both halves at once — the injection is
+detected **and** the agent's behavior is unchanged (still PENDING, never a payment,
+confidence never the injected 1.0).
+
 ### An MCP server + a custom-skills catalog
 
 The same capability is exposed two more ways. An **MCP server** (`src/mcp/server.ts`)
