@@ -98,6 +98,8 @@ Both tiers are formalized as a first-class, introspectable **custom-skills catal
 > A static render is at [`docs/architecture.png`](docs/architecture.png) (also
 > [`docs/architecture.svg`](docs/architecture.svg)) as a fallback if the live
 > mermaid does not render.
+>
+> Interactive / high-res version: [Archon Autopilot – Architecture v2 (Lucid)](https://lucid.app/lucidchart/f608a67b-b691-458a-b84c-b6e87012667a/edit?invitationId=inv_a9a06d49-9eeb-48f6-ad3c-7c4ffbe55b26)
 
 ```mermaid
 flowchart TD
@@ -346,6 +348,7 @@ needs no configuration.
 | `POST /intake` | Ingest a vendor invoice → normalize → run the multi-step ReAct loop (recall → validate → check duplicate / compute variance) → a **PENDING** proposed action + its full step trace. Nothing executes. **Rate-limited (see below).** |
 | `POST /intake/stream` | Same pipeline as `/intake`, but **streams each reasoning step live** as Server-Sent Events (`event: step` as it happens, then `event: proposal` + `event: done`). Backs the UI's real-time "watch the agent work" upload view. Nothing executes. **Rate-limited.** |
 | `POST /intake/document` | Upload a **REAL invoice document** (PDF / PNG / JPG, `multipart/form-data`, field `file`) → **Qwen-VL vision extraction** (`qwen-vl-max`) → the same multi-step loop, **streamed** (`event: extracting` → `event: extracted` → `event: step` → `event: proposal` → `event: done`). A PDF is rasterized to page images with poppler (`pdftoppm`); a PNG/JPG passes through. Nothing executes. **Rate-limited** (shares the same daily budget). |
+| `POST /extract/document` | Upload a document → **Qwen-VL vision extraction** (`qwen-vl-max`) → returns the extracted structured invoice **without** running the decision loop, plus a single-use `ticket`. The two-step review flow: a reviewer inspects/edits the extracted fields, then posts them to `/intake/stream` **with** that ticket (which skips the limiter, so this does not consume a second slot). Nothing executes. **Rate-limited** (shares the same daily budget). |
 | `GET /sample-document` | The bundled sample invoice ([`demo/sample-invoice.png`](demo/sample-invoice.png)) — a real image the UI's **"Use sample document"** button uploads so the whole vision path is one-click reproducible. |
 | `GET /pending` | The human approval queue (proposals awaiting a decision), each including its reasoning trace. |
 | `GET /decided` | The **decided history** — every approved / amended / rejected item, newest first, with its outcome, decision timestamp, and (for an amended item) the prev → new amend audit trail. Read-only: decided items never re-execute. |
@@ -367,8 +370,11 @@ is no sign-in wall by design.
 
 To keep an open, unauthenticated endpoint from running up the model bill, **invoice
 uploads are rate-limited to 10/day** (per UTC day, resetting at 00:00 UTC) across
-`POST /intake`, `POST /intake/stream`, **and `POST /intake/document`** (the three
-share one budget). **Upload is rate-limited to 10/day to
+the four budget-consuming upload routes — `POST /intake`, `POST /intake/stream`,
+`POST /intake/document`, **and `POST /extract/document`** (all four share one
+budget). A `/extract/document` upload mints a single-use ticket so the *follow-up*
+`/intake/stream` call that presents it does not consume a second slot — the pair
+costs one budget slot, not two. **Upload is rate-limited to 10/day to
 protect the Qwen API budget.** The limiter lives in
 [`src/ap/rate-limit.ts`](src/ap/rate-limit.ts) (`DailyRateLimiter`, cap configurable
 via `UPLOAD_DAILY_LIMIT`); it is checked **after** payload/file validation, so an
