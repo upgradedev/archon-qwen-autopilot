@@ -156,9 +156,23 @@
       box-shadow: 0 8px 24px rgba(0,0,0,.4);
       max-width: 80vw;
     }
-    #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); pointer-events: auto; }
     #toast.err { border-color: var(--red); }
     #toast.ok { border-color: var(--green); }
+    #toast .toast-msg { display: inline-block; vertical-align: middle; }
+    #toast .toast-close {
+      display: inline-block;
+      vertical-align: middle;
+      margin-left: 12px;
+      cursor: pointer;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1;
+      padding: 0 2px;
+    }
+    #toast .toast-close:hover { color: var(--text); }
     a { color: var(--accent); }
     button.primary { border-color: var(--accent); color: var(--accent); }
     button.primary:hover { background: rgba(88,166,255,.12); }
@@ -360,7 +374,7 @@
          the agent reason step-by-step as it streams (SSE). -->
     <section class="upload" id="uploadPanel" data-tour="upload">
       <div class="section-label">Upload an invoice — watch the agent work in real time</div>
-      <div class="hint">Upload a real <code>PDF</code>, <code>PNG</code>, or <code>JPG</code> invoice — it is read by <b>Qwen-VL</b> vision extraction — or paste invoice JSON below. The agent then streams each reasoning step live and proposes one action for your approval. <b>Uploads are limited to 10/day</b> (open demo — the cap protects the Qwen API budget).</div>
+      <div class="hint">Upload a real <code>PDF</code>, <code>PNG</code>, or <code>JPG</code> invoice — it is read by <b>Qwen-VL</b> vision extraction — or paste invoice JSON below. The agent then streams each reasoning step live and proposes one action for your approval. <b>Uploads are limited to 20/day</b> (open demo — the cap protects the Qwen API budget).</div>
       <div class="dropzone">
         <div class="row">
           <label class="filebtn" for="fileInput">Choose file</label>
@@ -447,12 +461,35 @@
     };
 
     let toastTimer;
+    function hideToast() {
+      clearTimeout(toastTimer);
+      $('#toast').className = '';
+    }
     function toast(msg, kind) {
       const t = $('#toast');
-      t.textContent = msg;
-      t.className = 'show ' + (kind || '');
       clearTimeout(toastTimer);
-      toastTimer = setTimeout(() => { t.className = ''; }, 3600);
+      // Rebuild the toast body: a message span (textContent → auto-escaped) plus a
+      // manual dismiss ✕. Error/limit messages (e.g. the rate-limit 429) stay put
+      // until dismissed so they are comfortably readable; success toasts auto-hide
+      // after a generous, readable delay but can also be dismissed early.
+      t.textContent = '';
+      const span = document.createElement('span');
+      span.className = 'toast-msg';
+      span.textContent = msg;
+      t.appendChild(span);
+      const close = document.createElement('button');
+      close.className = 'toast-close';
+      close.type = 'button';
+      close.setAttribute('aria-label', 'Dismiss');
+      close.textContent = '✕';
+      close.addEventListener('click', hideToast);
+      t.appendChild(close);
+      t.className = 'show ' + (kind || '');
+      if (kind !== 'err') {
+        // Success / info toasts auto-hide after a readable delay.
+        toastTimer = setTimeout(hideToast, 6500);
+      }
+      // Error / limit toasts do NOT auto-hide — they wait for the ✕ (manual dismiss).
     }
 
     function money(inv) {

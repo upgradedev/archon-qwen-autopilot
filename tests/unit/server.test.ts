@@ -171,8 +171,8 @@ test("GET / ships the enriched UI: upload + live process view, collapsible trace
   assert.match(res.body, /review the extracted fields, then Process/); // the demo review note
   assert.match(res.body, /pendingTicket/); // single-use ticket → process without re-consuming
   assert.match(res.body, /getReader|text\/event-stream|Processing invoice/);
-  // The 10/day limit is surfaced to the visitor in the upload panel.
-  assert.match(res.body, /10\/day/);
+  // The 20/day limit is surfaced to the visitor in the upload panel.
+  assert.match(res.body, /20\/day/);
   // Collapsible "How the agent decided" trace (chevron toggle).
   assert.match(res.body, /How the agent decided/);
   assert.match(res.body, /class: 'collapsible'|collapsible/);
@@ -218,20 +218,20 @@ test("GET /decided lists decided items (empty array on a fresh app)", async () =
   assert.ok(Array.isArray(res.json().decided));
 });
 
-test("upload rate limit: the default cap is 10/day and the 11th upload → 429 (open-demo budget guard)", async () => {
+test("upload rate limit: the default cap is 20/day and the 21st upload → 429 (open-demo budget guard)", async () => {
   // A dedicated app so the shared `before` app's usage does not affect the count,
-  // and a pinned clock so all 11 uploads land in the same UTC day.
-  const local = await buildServer(deps({ rateLimiter: new DailyRateLimiter(10, () => new Date("2026-07-06T09:00:00Z")) }));
+  // and a pinned clock so all 21 uploads land in the same UTC day.
+  const local = await buildServer(deps({ rateLimiter: new DailyRateLimiter(20, () => new Date("2026-07-06T09:00:00Z")) }));
   await local.ready();
   try {
-    for (let i = 1; i <= 10; i++) {
+    for (let i = 1; i <= 20; i++) {
       const ok = await local.inject({ method: "POST", url: "/intake", payload: { invoice: sampleInvoice } });
       assert.equal(ok.statusCode, 200, `upload #${i} should be accepted`);
     }
     const over = await local.inject({ method: "POST", url: "/intake", payload: { invoice: sampleInvoice } });
     assert.equal(over.statusCode, 429);
     assert.match(over.json().error, /daily upload limit/i);
-    assert.equal(over.json().limit, 10);
+    assert.equal(over.json().limit, 20);
     // The streaming upload shares the same budget — also 429 once over.
     const overStream = await local.inject({ method: "POST", url: "/intake/stream", payload: { invoice: sampleInvoice } });
     assert.equal(overStream.statusCode, 429);

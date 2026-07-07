@@ -169,7 +169,7 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
 
   // The open demo's budget guardrail: invoice uploads are capped per UTC day. Built
   // per server instance (never a module singleton, so counts never bleed across
-  // tests). See src/ap/rate-limit.ts for the 10/day rationale.
+  // tests). See src/ap/rate-limit.ts for the 20/day rationale.
   const rateLimiter = deps.rateLimiter ?? new DailyRateLimiter();
 
   // The document vision-extractor: real Qwen (qwen-vl-max) when a DASHSCOPE key is

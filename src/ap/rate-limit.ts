@@ -10,9 +10,9 @@
 // a multi-instance deployment would move this to a shared store (e.g. the same
 // PostgreSQL). The clock is injectable so the UTC-reset behaviour is unit-testable.
 
-// The default cap. Ten uploads/day is plenty for a judge to exercise every path
+// The default cap. Twenty uploads/day is plenty for a judge to exercise every path
 // (sample invoice, a duplicate, an anomaly, an amend) while bounding the spend.
-export const DEFAULT_DAILY_UPLOAD_LIMIT = Number(process.env.UPLOAD_DAILY_LIMIT || 10);
+export const DEFAULT_DAILY_UPLOAD_LIMIT = Number(process.env.UPLOAD_DAILY_LIMIT || 20);
 
 export interface RateLimitResult {
   allowed: boolean;

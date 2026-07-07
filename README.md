@@ -369,12 +369,12 @@ deliberate, rules-compliant choice: the app must be judge-testable end to end. T
 is no sign-in wall by design.
 
 To keep an open, unauthenticated endpoint from running up the model bill, **invoice
-uploads are rate-limited to 10/day** (per UTC day, resetting at 00:00 UTC) across
+uploads are rate-limited to 20/day** (per UTC day, resetting at 00:00 UTC) across
 the four budget-consuming upload routes — `POST /intake`, `POST /intake/stream`,
 `POST /intake/document`, **and `POST /extract/document`** (all four share one
 budget). A `/extract/document` upload mints a single-use ticket so the *follow-up*
 `/intake/stream` call that presents it does not consume a second slot — the pair
-costs one budget slot, not two. **Upload is rate-limited to 10/day to
+costs one budget slot, not two. **Upload is rate-limited to 20/day to
 protect the Qwen API budget.** The limiter lives in
 [`src/ap/rate-limit.ts`](src/ap/rate-limit.ts) (`DailyRateLimiter`, cap configurable
 via `UPLOAD_DAILY_LIMIT`); it is checked **after** payload/file validation, so an
