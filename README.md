@@ -263,6 +263,33 @@ one security-group rule are in [`deploy/DEPLOY_STATE.md`](deploy/DEPLOY_STATE.md
 
 ---
 
+## Proof of Alibaba Cloud Deployment
+
+This agent runs **live on Alibaba Cloud**, on the shared ECS box. Two halves of proof:
+
+**1. Recording** — a short terminal capture ([`demo/alibaba-proof.mp4`](./demo/alibaba-proof.mp4), ~35s, silent, 1080p) showing the ECS instance `Running` in `ap-southeast-1` and both apps answering `GET /health` with the real Qwen model ids over HTTPS:
+
+```text
+$ aliyun ecs DescribeInstances --RegionId ap-southeast-1 --InstanceIds "['i-t4ngalzjr5nwtuowbv7y']"
+  InstanceId: i-t4ngalzjr5nwtuowbv7y   Region: ap-southeast-1 (ap-southeast-1c)   Status: Running
+  PublicIP: 43.106.13.19   Type: ecs.e-c1m2.large   Image: ubuntu_22_04_x64_20G_alibase_20260615.vhd
+
+$ curl https://autopilot.43.106.13.19.sslip.io/health
+  {"status":"ok","embedder":"text-embedding-v4","decider":"qwen-plus","store":"pgvector"}
+$ curl https://memory.43.106.13.19.sslip.io/health
+  {"status":"ok","embedder":"text-embedding-v4","narrator":"qwen-plus","embedDim":1024}
+```
+
+**2. Code that uses Alibaba Cloud services & APIs** — direct links:
+
+| Alibaba Cloud service | Code file | What it does |
+|---|---|---|
+| **ECS** (live deploy) | [`deploy/redeploy.sh`](./deploy/redeploy.sh) | Idempotent redeploy on the ECS instance: joins the docker network, reuses the pgvector container, builds + serves the backend over HTTPS. |
+| **ECS container topology** | [`docker-compose.yml`](./docker-compose.yml) | Container definition the ECS box runs (backend + shared pgvector memory store). |
+| **Model Studio / DashScope** (Qwen inference) | [`src/qwen/client.ts`](./src/qwen/client.ts) | OpenAI-compatible client to Alibaba Cloud Model Studio; calls `text-embedding-v4` (embeddings) and `qwen-plus` (function-calling decisions). |
+
+---
+
 ## The approval UI
 
 `GET /` (and `/ui`) serves a single, dependency-free static HTML+JS page from the
@@ -586,7 +613,8 @@ Stated plainly (see also the Scope note up top):
 - **Live on Alibaba Cloud.** The app is deployed on an Alibaba Cloud **ECS** box over
   HTTPS at **https://autopilot.43.106.13.19.sslip.io** — real Qwen (`qwen-plus` +
   `text-embedding-v4`) on Alibaba Cloud Model Studio, backed by pgvector on the box.
-  One-command reproduce/redeploy via [`deploy/redeploy.sh`](deploy/redeploy.sh); see
+  One-command reproduce/redeploy via [`deploy/redeploy.sh`](deploy/redeploy.sh); see the
+  [Proof of Alibaba Cloud Deployment](#proof-of-alibaba-cloud-deployment),
   [`deploy/DEPLOY_STATE.md`](deploy/DEPLOY_STATE.md) and [`deploy/DEPLOY_NOTE.md`](deploy/DEPLOY_NOTE.md).
 - **Deferred:** managed **ApsaraDB RDS for PostgreSQL** / **Function Compute** as an
   alternative to the ECS + on-box pgvector topology; and the real Sinks adapters above.
