@@ -1,0 +1,20 @@
+{
+  "_comment": "Golden snapshot of Archon Autopilot's headline, judge-facing claims. Pins the numbers the README states so future documentation drift is caught by tests/docs/docs-consistency.test.ts. Update DELIBERATELY, in the same PR that changes the underlying code + README.",
+  "eval": {
+    "pass": 21,
+    "total": 22,
+    "percent": 95.5,
+    "avgAutonomousSteps": 2.3
+  },
+  "mcpToolCount": 7,
+  "skills": {
+    "total": 9,
+    "autonomous": 5,
+    "gated": 4
+  },
+  "security": {
+    "attackPayloads": 8,
+    "terminalActionsExcludedFromModelCatalog": true,
+    "terminalActionNames": ["approve", "amend", "reject", "pay"]
+  }
+}
