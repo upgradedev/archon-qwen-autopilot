@@ -38,9 +38,13 @@ import { DailyRateLimiter } from "./ap/rate-limit.js";
 import {
   defaultExtractionClient,
   validateDocument,
+  validateMagicBytes,
   MAX_DOCUMENT_BYTES,
   type ExtractionClient,
+  type ExtractionResult,
 } from "./qwen/vision.js";
+import { scanForInjection } from "./qwen/injection-scan.js";
+import { assessRelevance } from "./qwen/relevance.js";
 import type { TraceStep } from "./types.js";
 
 const pkg = createRequire(import.meta.url)("../package.json") as { version: string };
@@ -389,13 +393,27 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
         send("start", { message: "document received", filename, remaining });
         send("extracting", { message: `Extracting document with Qwen-VL (${extractor.modelId})…`, model: extractor.modelId });
         const extracted = await extractor.extract({ buffer, filename, mimetype });
+        // Advisory input-safety scan (injection detection + relevance). It does NOT
+        // change the decision — the fence already neutralized any injection and the
+        // human gate is unchanged; it only makes the neutralized attack VISIBLE.
+        const safety = inputSafety(extracted);
         send("extracted", {
           message: "Document extracted — running the decision loop.",
           model: extracted.model,
           pages: extracted.pages,
           sourceType: extracted.sourceType,
           invoice: extracted.invoice,
+          security: safety.security,
+          relevance: safety.relevance,
         });
+        // Surface a NEUTRALIZED prompt-injection as its own live trace event so it
+        // shows in the stream. Advisory: the loop below still runs unchanged.
+        if (safety.security.injectionDetected) {
+          send("security", {
+            message: `⚠️ This document contained ${safety.security.injectionCount} suspected injected instruction(s) — shown as data, never followed.`,
+            ...safety.security,
+          });
+        }
         const item = await agent.intake(extracted.invoice, { onStep: (step: TraceStep) => send("step", step) });
         send("proposal", item);
         send("done", { id: item.id });
@@ -441,6 +459,10 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
       // Extract with Qwen-VL (or the offline fake). NO decision loop runs here.
       try {
         const extracted = await extractor.extract({ buffer, filename, mimetype });
+        // Advisory input-safety scan surfaced for the human reviewer: whether the
+        // document carried a (neutralized) prompt-injection, and whether it even looks
+        // like an invoice. Neither changes the flow — the reviewer still decides.
+        const safety = inputSafety(extracted);
         // Mint a single-use ticket so the follow-up /intake/stream skips the limiter.
         const ticket = randomUUID();
         processTickets.add(ticket);
@@ -452,6 +474,8 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
           invoice: extracted.invoice,
           ticket,
           remaining,
+          security: safety.security,
+          relevance: safety.relevance,
         };
       } catch (err) {
         return reply.code(502).send({ error: err instanceof Error ? err.message : "document extraction failed" });
@@ -603,11 +627,44 @@ async function readAndValidateUpload(req: unknown, rateLimiter: DailyRateLimiter
   const v = validateDocument({ filename, mimetype, size: buffer.length });
   if (!v.ok) return { ok: false, status: v.status, body: { error: v.error } };
 
+  // 2b) Magic-byte sniff — the real bytes must match the CLAIMED type (a `.pdf` that
+  //     is actually a PNG is rejected here). Also before budget, so a disguised file
+  //     never costs a slot.
+  const mb = validateMagicBytes(buffer, v.ext);
+  if (!mb.ok) return { ok: false, status: mb.status, body: { error: mb.error } };
+
   // 3) Consume the daily budget (429 when the cap is reached).
   const rl = rateLimiter.consume();
   if (!rl.allowed) return { ok: false, status: 429, body: rateLimitError(rl) };
 
   return { ok: true, filename, mimetype, buffer, remaining: rl.remaining };
+}
+
+// Advisory input-safety summary for an uploaded document. Runs the read-only
+// prompt-injection scan + the relevance gate over the vision-extracted invoice.
+// ADVISORY ONLY — NEITHER changes behavior: the decider fence has already
+// neutralized any injection (it lands as fenced DATA), and an irrelevant document
+// still goes to the human gate. This only SURFACES what was found, so the response,
+// the live trace, and the approval UI can SHOW the neutralized attack.
+function inputSafety(extracted: ExtractionResult): {
+  security: {
+    injectionDetected: boolean;
+    injectionCount: number;
+    matches: ReturnType<typeof scanForInjection>["matches"];
+    neutralized: true;
+  };
+  relevance: { relevant: boolean; reason: string };
+} {
+  const scan = scanForInjection(extracted.invoice as Record<string, unknown>);
+  return {
+    security: {
+      injectionDetected: scan.detected,
+      injectionCount: scan.count,
+      matches: scan.matches,
+      neutralized: true, // the fence already made it inert — this block just reports it
+    },
+    relevance: assessRelevance(extracted.invoice),
+  };
 }
 
 // Accept either { invoice: {...} } or a bare invoice object; return the invoice
