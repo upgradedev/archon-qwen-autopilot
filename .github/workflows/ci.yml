@@ -96,6 +96,25 @@ jobs:
       - name: Decision-quality eval (offline policy/regression gate — no key)
         run: npm run eval -- --gate
 
+  # Stage 2c-docs — documentation-drift fitness functions. A DISTINCT job so it shows
+  # as its own check: it asserts the README's claims (model ids, HTTP endpoints, the
+  # 7 MCP tools + 9 custom skills, the security invariant that the model tool catalog
+  # excludes the human terminal actions) against the live code + a committed golden,
+  # and pins the headline eval numbers. Fully offline (no key, no DB, no browser).
+  docs-consistency:
+    needs: secret-scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install deps
+        run: npm ci
+      - name: Docs-consistency fitness functions (offline — no key, no DB)
+        run: npm run test:docs
+
   # Stage 2c — code-coverage measurement + gate. Runs the FULL node:test pyramid
   # (unit + integration) under c8 against a real pgvector service container, so the
   # DB seams (db/client.ts + the Pg stores) and the MCP stdio transport are measured

@@ -20,6 +20,7 @@
     "test:integration": "node --import tsx --test --test-concurrency=1 tests/integration/workflow-http.test.ts tests/integration/pgvector-store.test.ts tests/integration/mcp-transport.test.ts",
     "test": "node --import tsx --test --test-concurrency=1 tests/unit/embeddings.test.ts tests/unit/memory.test.ts tests/unit/normalize.test.ts tests/unit/validate.test.ts tests/unit/tools.test.ts tests/unit/analysis-tools.test.ts tests/unit/loop.test.ts tests/unit/workflow.test.ts tests/unit/rate-limit.test.ts tests/unit/vision.test.ts tests/unit/server.test.ts tests/unit/skills.test.ts tests/unit/mcp.test.ts tests/security/tool-attack.test.ts tests/integration/workflow-http.test.ts tests/integration/pgvector-store.test.ts tests/integration/mcp-transport.test.ts",
     "test:e2e": "playwright test",
+    "test:docs": "node --import tsx --test tests/docs/docs-consistency.test.ts",
     "coverage": "c8 --check-coverage --statements=80 --branches=80 --functions=80 --lines=80 node --import tsx --test --test-concurrency=1 tests/unit/embeddings.test.ts tests/unit/memory.test.ts tests/unit/normalize.test.ts tests/unit/validate.test.ts tests/unit/tools.test.ts tests/unit/analysis-tools.test.ts tests/unit/loop.test.ts tests/unit/workflow.test.ts tests/unit/rate-limit.test.ts tests/unit/vision.test.ts tests/unit/server.test.ts tests/unit/skills.test.ts tests/unit/mcp.test.ts tests/security/tool-attack.test.ts tests/integration/workflow-http.test.ts tests/integration/pgvector-store.test.ts tests/integration/mcp-transport.test.ts"
   },
   "dependencies": {
