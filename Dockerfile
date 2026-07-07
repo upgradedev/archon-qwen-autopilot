@@ -12,8 +12,14 @@ WORKDIR /app
 # poppler-utils provides `pdftoppm`, used to rasterize an uploaded PDF invoice to
 # page images before Qwen-VL vision extraction (POST /intake/document). PNG/JPG
 # uploads and the offline test path need no system deps; this is only for PDFs.
+#
+# The version is PINNED for reproducible builds (node:20-slim tracks Debian 12
+# "bookworm", whose poppler-utils is 22.12.0-2+deb12u1). If a security update rolls
+# the suffix (deb12u2, …), bump this pin deliberately rather than letting the build
+# float. `POPPLER_VERSION` is overridable for a controlled upgrade.
+ARG POPPLER_VERSION=22.12.0-2+deb12u1
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends poppler-utils \
+    && apt-get install -y --no-install-recommends "poppler-utils=${POPPLER_VERSION}" \
     && rm -rf /var/lib/apt/lists/*
 
 # Install dependencies first for layer caching. tsx is a runtime dependency so

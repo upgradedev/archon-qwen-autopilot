@@ -445,6 +445,73 @@ test("GET /sample-document serves the committed sample invoice PNG", async () =>
   assert.ok(res.rawPayload.length > 1000);
 });
 
+test("security headers: helmet sets X-Frame-Options + X-Content-Type-Options on responses", async () => {
+  const res = await app.inject({ method: "GET", url: "/health" });
+  assert.equal(res.statusCode, 200);
+  assert.equal(String(res.headers["x-content-type-options"]).toLowerCase(), "nosniff");
+  assert.ok(res.headers["x-frame-options"], "X-Frame-Options is set");
+});
+
+test("POST /intake surfaces an upstream decider failure as a typed 503 { error } (never a raw 500 stack)", async () => {
+  // A loop whose run() throws models Qwen/the embedder being unreachable. The route
+  // must translate that into a clean 503 { error }, not a generic 500.
+  const boomLoop = {
+    modelId: "boom",
+    async run() { throw new Error("qwen unreachable"); },
+  } as unknown as ServerDeps["loop"];
+  const local = await buildServer(deps({ loop: boomLoop }));
+  await local.ready();
+  try {
+    const res = await local.inject({ method: "POST", url: "/intake", payload: { invoice: sampleInvoice } });
+    assert.equal(res.statusCode, 503);
+    assert.match(res.json().error, /decision service is unavailable/i);
+    assert.match(res.json().error, /qwen unreachable/);
+  } finally {
+    await local.close();
+  }
+});
+
+test("global error handler: an unexpected throw past a route becomes a typed { error } (no raw stack)", async () => {
+  // A work-item store whose approve() throws a generic error exercises the guard()
+  // rethrow → the global setErrorHandler, which must answer { error } (not a stack).
+  const throwingStore = {
+    ...new InMemoryWorkItemStore(),
+    async get() { throw new Error("db exploded"); },
+  } as unknown as ServerDeps["workitems"];
+  const local = await buildServer(deps({ workitems: throwingStore }));
+  await local.ready();
+  try {
+    const res = await local.inject({ method: "POST", url: "/approve/anything" });
+    assert.equal(res.statusCode, 500);
+    assert.deepEqual(Object.keys(res.json()), ["error"]);
+    assert.match(res.json().error, /db exploded/);
+    assert.doesNotMatch(res.json().error, /at .*\(.*:\d+:\d+\)/); // no stack frames leaked
+  } finally {
+    await local.close();
+  }
+});
+
+test("approval gate: a malformed :id that hits a uuid column (Postgres 22P02) → 400, not a 500 leak", async () => {
+  // Simulate the pgvector store rejecting a non-UUID id with SQLSTATE 22P02.
+  const pgLikeStore = {
+    ...new InMemoryWorkItemStore(),
+    async get() {
+      throw Object.assign(new Error('invalid input syntax for type uuid: "not-a-uuid"'), { code: "22P02" });
+    },
+  } as unknown as ServerDeps["workitems"];
+  const local = await buildServer(deps({ workitems: pgLikeStore }));
+  await local.ready();
+  try {
+    for (const route of ["/approve/not-a-uuid", "/amend/not-a-uuid", "/reject/not-a-uuid"]) {
+      const res = await local.inject({ method: "POST", url: route, payload: {} });
+      assert.equal(res.statusCode, 400, `${route} should be 400`);
+      assert.match(res.json().error, /invalid work item id/i);
+    }
+  } finally {
+    await local.close();
+  }
+});
+
 test("POST /intake/stream streams the reasoning live (SSE) then the proposal, executing nothing", async () => {
   const local = await buildServer(deps());
   await local.ready();
