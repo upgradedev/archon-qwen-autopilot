@@ -22,6 +22,7 @@ import Fastify from "fastify";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import cors from "@fastify/cors";
+import helmet from "@fastify/helmet";
 import multipart from "@fastify/multipart";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
@@ -79,10 +80,28 @@ const errorResponse = {
 export async function buildServer(deps: Partial<ServerDeps> = {}) {
   const app = Fastify({ logger: true });
 
+  // Security response headers (HSTS · X-Frame-Options · X-Content-Type-Options ·
+  // Referrer-Policy · …). The Content-Security-Policy default is DISABLED on
+  // purpose: the approval UI (src/ui.html) and the Swagger UI both rely on inline
+  // scripts/styles, which a default CSP would break. The other hardening headers
+  // apply to every route.
+  await app.register(helmet, { contentSecurityPolicy: false });
+
   await app.register(cors, {
     origin: process.env.CORS_ORIGIN
       ? process.env.CORS_ORIGIN.split(",").map((s) => s.trim())
       : true,
+  });
+
+  // A single, typed error envelope for anything that throws past a route handler:
+  // never leak a raw stack — always `{ error: <message> }` with a sane status.
+  // Explicit `.send({ error })` responses in the routes below are unaffected (they
+  // never throw); this catches the rest (e.g. the guard() rethrow path).
+  app.setErrorHandler((err: { statusCode?: number; message?: string }, req, reply) => {
+    req.log.error(err);
+    const status =
+      typeof err.statusCode === "number" && err.statusCode >= 400 ? err.statusCode : 500;
+    reply.code(status).send({ error: err.message || "internal server error" });
   });
 
   // Real document uploads (POST /intake/document) arrive as multipart/form-data.
@@ -243,7 +262,17 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
       if (!raw) return reply.code(400).send({ error: "an invoice payload is required (send { invoice: {...} })" });
       const rl = rateLimiter.consume();
       if (!rl.allowed) return reply.code(429).send(rateLimitError(rl));
-      return agent.intake(raw);
+      // The loop reaches out to Qwen; a decider/embedder failure is an UPSTREAM
+      // dependency error, so surface it as a clean 503 { error } rather than letting
+      // it bubble to a generic 500. (The wall-clock deadline inside the loop already
+      // turns a *slow* upstream into a graceful flag_for_review; this catches a
+      // *failed* one.)
+      try {
+        return await agent.intake(raw);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "the decision service is unavailable";
+        return reply.code(503).send({ error: `the decision service is unavailable: ${msg}` });
+      }
     }
   );
 
@@ -340,38 +369,13 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
       },
     },
     async (req, reply) => {
-      // 1) Parse the multipart file. A non-multipart request or a missing file part
-      //    is a 400 — before anything is consumed.
-      let filename = "";
-      let mimetype = "";
-      let buffer: Buffer;
-      try {
-        const part = await (req as unknown as { file: () => Promise<MultipartFile | undefined> }).file();
-        if (!part) return reply.code(400).send({ error: "no file uploaded — attach one PDF, PNG, or JPG in the `file` field" });
-        filename = part.filename ?? "";
-        mimetype = part.mimetype ?? "";
-        buffer = await part.toBuffer();
-        // The parser truncates a stream past the fileSize cap; treat that as 413.
-        if (part.file?.truncated) {
-          return reply.code(413).send({ error: `document too large — the limit is ${MAX_DOCUMENT_BYTES} bytes` });
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (/file too large|reached size limit|FST_REQ_FILE_TOO_LARGE|maxFileSize/i.test(msg)) {
-          return reply.code(413).send({ error: `document too large — the limit is ${MAX_DOCUMENT_BYTES} bytes` });
-        }
-        return reply.code(400).send({ error: `could not read the upload as multipart/form-data: ${msg}` });
-      }
+      // Parse → validate type+size → consume ONE daily slot, in that strict order
+      // (shared with /extract/document via readAndValidateUpload so the two never drift).
+      const up = await readAndValidateUpload(req, rateLimiter);
+      if (!up.ok) return reply.code(up.status).send(up.body);
+      const { filename, mimetype, buffer, remaining } = up;
 
-      // 2) Validate type + size BEFORE consuming budget (a bad file must not cost a slot).
-      const v = validateDocument({ filename, mimetype, size: buffer.length });
-      if (!v.ok) return reply.code(v.status).send({ error: v.error });
-
-      // 3) Consume the daily budget (429 when the cap is reached).
-      const rl = rateLimiter.consume();
-      if (!rl.allowed) return reply.code(429).send(rateLimitError(rl));
-
-      // 4) Take over the socket and stream: extract → the live loop → the proposal.
+      // Take over the socket and stream: extract → the live loop → the proposal.
       reply.hijack();
       const res = reply.raw;
       res.writeHead(200, {
@@ -382,7 +386,7 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
       const send = (event: string, data: unknown) =>
         res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
       try {
-        send("start", { message: "document received", filename, remaining: rl.remaining });
+        send("start", { message: "document received", filename, remaining });
         send("extracting", { message: `Extracting document with Qwen-VL (${extractor.modelId})…`, model: extractor.modelId });
         const extracted = await extractor.extract({ buffer, filename, mimetype });
         send("extracted", {
@@ -428,36 +432,13 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
       },
     },
     async (req, reply) => {
-      // 1) Parse the multipart file (a non-multipart request / missing part → 400).
-      let filename = "";
-      let mimetype = "";
-      let buffer: Buffer;
-      try {
-        const part = await (req as unknown as { file: () => Promise<MultipartFile | undefined> }).file();
-        if (!part) return reply.code(400).send({ error: "no file uploaded — attach one PDF, PNG, or JPG in the `file` field" });
-        filename = part.filename ?? "";
-        mimetype = part.mimetype ?? "";
-        buffer = await part.toBuffer();
-        if (part.file?.truncated) {
-          return reply.code(413).send({ error: `document too large — the limit is ${MAX_DOCUMENT_BYTES} bytes` });
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (/file too large|reached size limit|FST_REQ_FILE_TOO_LARGE|maxFileSize/i.test(msg)) {
-          return reply.code(413).send({ error: `document too large — the limit is ${MAX_DOCUMENT_BYTES} bytes` });
-        }
-        return reply.code(400).send({ error: `could not read the upload as multipart/form-data: ${msg}` });
-      }
+      // Parse → validate type+size → consume ONE daily slot, in that strict order
+      // (shared with /intake/document via readAndValidateUpload so the two never drift).
+      const up = await readAndValidateUpload(req, rateLimiter);
+      if (!up.ok) return reply.code(up.status).send(up.body);
+      const { filename, mimetype, buffer, remaining } = up;
 
-      // 2) Validate type + size BEFORE consuming budget (a bad file must not cost a slot).
-      const v = validateDocument({ filename, mimetype, size: buffer.length });
-      if (!v.ok) return reply.code(v.status).send({ error: v.error });
-
-      // 3) Consume the daily budget (429 when the cap is reached).
-      const rl = rateLimiter.consume();
-      if (!rl.allowed) return reply.code(429).send(rateLimitError(rl));
-
-      // 4) Extract with Qwen-VL (or the offline fake). NO decision loop runs here.
+      // Extract with Qwen-VL (or the offline fake). NO decision loop runs here.
       try {
         const extracted = await extractor.extract({ buffer, filename, mimetype });
         // Mint a single-use ticket so the follow-up /intake/stream skips the limiter.
@@ -470,7 +451,7 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
           sourceType: extracted.sourceType,
           invoice: extracted.invoice,
           ticket,
-          remaining: rl.remaining,
+          remaining,
         };
       } catch (err) {
         return reply.code(502).send({ error: err instanceof Error ? err.message : "document extraction failed" });
@@ -583,6 +564,52 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
   return app;
 }
 
+// The parsed-and-validated result of a document upload, or a ready-to-send error.
+// Shared by BOTH multipart routes (/intake/document + /extract/document) so their
+// strict order — parse the file, validate type+size, THEN consume the daily budget —
+// can never drift between the two.
+type UploadResult =
+  | { ok: true; filename: string; mimetype: string; buffer: Buffer; remaining: number }
+  | { ok: false; status: 400 | 413 | 429; body: Record<string, unknown> };
+
+// Parse the multipart file, validate it, and consume ONE daily slot — in that exact
+// order, so a bad/oversized file returns a clean 400/413 and never costs a slot, and
+// an over-limit upload returns 429. The caller sends `{ error }` on !ok, else proceeds.
+async function readAndValidateUpload(req: unknown, rateLimiter: DailyRateLimiter): Promise<UploadResult> {
+  // 1) Parse the multipart file. A non-multipart request or a missing file part
+  //    is a 400 — before anything is consumed.
+  let filename = "";
+  let mimetype = "";
+  let buffer: Buffer;
+  try {
+    const part = await (req as { file: () => Promise<MultipartFile | undefined> }).file();
+    if (!part) return { ok: false, status: 400, body: { error: "no file uploaded — attach one PDF, PNG, or JPG in the `file` field" } };
+    filename = part.filename ?? "";
+    mimetype = part.mimetype ?? "";
+    buffer = await part.toBuffer();
+    // The parser truncates a stream past the fileSize cap; treat that as 413.
+    if (part.file?.truncated) {
+      return { ok: false, status: 413, body: { error: `document too large — the limit is ${MAX_DOCUMENT_BYTES} bytes` } };
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/file too large|reached size limit|FST_REQ_FILE_TOO_LARGE|maxFileSize/i.test(msg)) {
+      return { ok: false, status: 413, body: { error: `document too large — the limit is ${MAX_DOCUMENT_BYTES} bytes` } };
+    }
+    return { ok: false, status: 400, body: { error: `could not read the upload as multipart/form-data: ${msg}` } };
+  }
+
+  // 2) Validate type + size BEFORE consuming budget (a bad file must not cost a slot).
+  const v = validateDocument({ filename, mimetype, size: buffer.length });
+  if (!v.ok) return { ok: false, status: v.status, body: { error: v.error } };
+
+  // 3) Consume the daily budget (429 when the cap is reached).
+  const rl = rateLimiter.consume();
+  if (!rl.allowed) return { ok: false, status: 429, body: rateLimitError(rl) };
+
+  return { ok: true, filename, mimetype, buffer, remaining: rl.remaining };
+}
+
 // Accept either { invoice: {...} } or a bare invoice object; return the invoice
 // record, or null when there is no usable payload (→ 400). Shared by /intake +
 // /intake/stream so both validate identically.
@@ -604,16 +631,32 @@ function rateLimitError(rl: { limit: number; day: string }): { error: string; li
 }
 
 // Map the agent's domain errors to HTTP status codes: unknown id → 404, an
-// already-decided item → 409 (the approval gate). Anything else bubbles to
-// Fastify's default 500.
+// already-decided item → 409 (the approval gate). A malformed `:id` that reaches the
+// pgvector store (the id column is a uuid) surfaces as Postgres error 22P02 —
+// "invalid input syntax for type uuid" — which is a client mistake, so we return a
+// clean 400 rather than leaking a 500 DB error. Anything else bubbles to the global
+// error handler (a typed { error } 500).
 async function guard<T>(reply: import("fastify").FastifyReply, fn: () => Promise<T>): Promise<T | void> {
   try {
     return await fn();
   } catch (err) {
     if (err instanceof NotFoundError) return reply.code(404).send({ error: err.message });
     if (err instanceof ConflictError) return reply.code(409).send({ error: err.message });
+    if (isInvalidUuidError(err)) {
+      return reply.code(400).send({ error: "invalid work item id — expected a UUID" });
+    }
     throw err;
   }
+}
+
+// True for the Postgres "invalid input syntax for type uuid" error (SQLSTATE 22P02),
+// raised when a non-UUID :id reaches the uuid-typed ap_workitems.id column.
+function isInvalidUuidError(err: unknown): boolean {
+  const e = err as { code?: unknown; message?: unknown };
+  return (
+    e?.code === "22P02" ||
+    (typeof e?.message === "string" && /invalid input syntax for type uuid/i.test(e.message))
+  );
 }
 
 /* c8 ignore start -- process bootstrap: only runs when invoked as the entrypoint (`npm start`), never under test */

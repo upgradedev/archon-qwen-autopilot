@@ -1,8 +1,12 @@
 # Deploy note — Archon Autopilot → Alibaba Cloud
 
-> This is a NOTE, not an executed deploy. It mirrors the Track-1 MemoryAgent
-> deployment shape (ECS + docker-compose) so the same runbook applies. Nothing
-> here has been run against a live account.
+> **Status: LIVE.** Archon Autopilot is deployed on Alibaba Cloud **ECS** and served
+> over HTTPS at **https://autopilot.43.106.13.19.sslip.io** (approval UI, `/health`,
+> `/docs`). It reuses the Track-1 MemoryAgent box's pgvector in its own isolated
+> `autopilot` database and talks to real Qwen (`qwen-plus` + `text-embedding-v4`) on
+> Alibaba Cloud Model Studio. This note captures the target shape + runbook; the
+> one-command deploy/redeploy is [`redeploy.sh`](redeploy.sh), and the live
+> checkpoint is [`DEPLOY_STATE.md`](DEPLOY_STATE.md).
 
 ## Target shape
 
@@ -52,8 +56,16 @@ docker push <registry>/archon-qwen-autopilot:latest
 # DASHSCOPE_API_KEY, pointed at ApsaraDB RDS for PostgreSQL (pgvector).
 ```
 
-## Not done here (deferred)
+## Done (live)
 
-- Actual provisioning of ECS / RDS / Model Studio key.
-- TLS / custom domain in front of the backend.
-- A web approval UI over `/pending` + `/approve` + `/amend` + `/reject`.
+- ECS provisioned + Model Studio (`DASHSCOPE_API_KEY`) wired — live at
+  **https://autopilot.43.106.13.19.sslip.io**.
+- TLS in front of the backend (HTTPS via a reverse proxy + `sslip.io` hostname).
+- The web approval UI over `/pending` + `/approve` + `/amend` + `/reject` (served by
+  the backend itself at `/` and `/ui`).
+
+## Deferred (alternatives, not blockers)
+
+- Managed **ApsaraDB RDS for PostgreSQL** as an alternative to the on-box pgvector.
+- **Function Compute** custom-container as an alternative to the ECS topology.
+- A custom (non-`sslip.io`) domain.

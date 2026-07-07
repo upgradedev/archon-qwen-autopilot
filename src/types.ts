@@ -94,7 +94,8 @@ export interface TraceStep {
 export type LoopStopReason =
   | "terminal_action" // the model chose a side-effecting tool → PENDING for approval
   | "max_steps_fallback" // the step budget was exhausted → deterministic flag_for_review
-  | "no_progress_fallback"; // the model looped without progress → deterministic flag_for_review
+  | "no_progress_fallback" // the model looped without progress → deterministic flag_for_review
+  | "deadline_fallback"; // the wall-clock run budget was exceeded → deterministic flag_for_review
 
 // ── Work item (a unit of AP work moving through the HITL gate) ──────────────────
 

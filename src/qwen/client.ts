@@ -25,11 +25,22 @@ export function hasQwenCreds(): boolean {
   return Boolean(process.env.DASHSCOPE_API_KEY);
 }
 
+// Robustness defaults for every live call to DashScope: a per-request timeout so a
+// hung upstream cannot stall the ReAct loop indefinitely, and a small automatic
+// retry budget for transient network / 5xx blips. Overridable via env for tuning.
+export const QWEN_REQUEST_TIMEOUT_MS = Number(process.env.QWEN_TIMEOUT_MS || 20_000);
+export const QWEN_MAX_RETRIES = Number(process.env.QWEN_MAX_RETRIES || 2);
+
 export function createQwenClient(
   apiKey: string = process.env.DASHSCOPE_API_KEY ?? "",
   baseURL: string = DEFAULT_BASE_URL
 ): OpenAI {
-  return new OpenAI({ apiKey, baseURL });
+  return new OpenAI({
+    apiKey,
+    baseURL,
+    timeout: QWEN_REQUEST_TIMEOUT_MS,
+    maxRetries: QWEN_MAX_RETRIES,
+  });
 }
 
 // ── Embeddings seam ───────────────────────────────────────────────────────────
@@ -96,8 +107,19 @@ export interface ChatResponse {
   }>;
 }
 
+// The optional per-request options the loop passes alongside the body. Only `signal`
+// is used (to abort a call the wall-clock deadline has passed); it mirrors the real
+// `openai` client's second argument, so passing it through is a no-op for the Fakes.
+export interface ChatRequestOptions {
+  signal?: AbortSignal;
+}
+
 export interface QwenChatClient {
-  chat: { completions: { create(args: ChatCreateArgs): Promise<ChatResponse> } };
+  chat: {
+    completions: {
+      create(args: ChatCreateArgs, opts?: ChatRequestOptions): Promise<ChatResponse>;
+    };
+  };
 }
 
 export function chatClient(): QwenChatClient {
