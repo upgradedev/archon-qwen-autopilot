@@ -232,18 +232,23 @@ curl -s -X POST localhost:9000/approve/<id>    # execute for real
 
 ## Live
 
-The Autopilot deploys onto the **same Alibaba Cloud ECS box** as the Track-1
-MemoryAgent, **reusing that box's pgvector** (its own `autopilot` database), served
-on host port **9100** (the MemoryAgent holds 9000):
+**Archon Autopilot is deployed and live on Alibaba Cloud**, over HTTPS:
 
-- **Approval UI:** http://43.106.13.19:9100/ — the browser approval queue (review
-  each Qwen-proposed action + its reasoning + arguments, then approve / amend /
-  reject). Also at `/ui`.
-- **Health:** http://43.106.13.19:9100/health
-- **API docs:** http://43.106.13.19:9100/docs
+- **Approval UI:** **https://autopilot.43.106.13.19.sslip.io/** — the browser
+  approval queue (review each Qwen-proposed action + its reasoning + arguments, then
+  approve / amend / reject). Also at `/ui`.
+- **Health:** https://autopilot.43.106.13.19.sslip.io/health
+- **API docs:** https://autopilot.43.106.13.19.sslip.io/docs
 
-Reproduce it with one command on the box (idempotent, schema-first, fail-closed,
-health + intake/pending smoke):
+It runs on the **same Alibaba Cloud ECS box** as the Track-1 MemoryAgent, **reusing
+that box's pgvector** in its own isolated `autopilot` database. The backend container
+listens on `9000` and is published to host port `9100`; a TLS-terminating reverse
+proxy in front maps the `sslip.io` hostname to the box and serves it over HTTPS
+(`sslip.io` resolves `autopilot.43.106.13.19.sslip.io` → `43.106.13.19`, so a real
+certificate can be issued for the host).
+
+Reproduce / redeploy it with one command on the box — [`deploy/redeploy.sh`](deploy/redeploy.sh)
+is idempotent, schema-first, fail-closed, and runs a health + intake/pending smoke:
 
 ```bash
 ssh -i <key.pem> root@43.106.13.19
@@ -252,12 +257,9 @@ bash deploy/redeploy.sh
 ```
 
 It joins the MemoryAgent's docker network, reuses its pgvector container in a
-separate `autopilot` database, builds + serves the backend on 9100, and proves the
-round-trip. Full runbook, the reuse-pgvector decision, and the one security-group
-rule to open (port 9100) are in [`deploy/DEPLOY_STATE.md`](deploy/DEPLOY_STATE.md).
-
-> The public URL depends on a human opening port 9100 on the box's security group
-> and running `deploy/redeploy.sh` — see the deploy state doc.
+separate `autopilot` database, builds + serves the backend (container `9000` → host
+`9100`), and proves the round-trip. Full runbook, the reuse-pgvector decision, and the
+one security-group rule are in [`deploy/DEPLOY_STATE.md`](deploy/DEPLOY_STATE.md).
 
 ---
 
@@ -415,8 +417,8 @@ client config entry:
 ```
 
 > **stdio ≠ the HTTP port.** The public HTTP + Approval-UI surface is
-> `http://43.106.13.19:9100` (see [Live](#live)); the MCP server is a **locally
-> spawned stdio process**, not a host:port. To reach the same live agent's MCP
+> `https://autopilot.43.106.13.19.sslip.io` (see [Live](#live)); the MCP server is a
+> **locally spawned stdio process**, not a host:port. To reach the same live agent's MCP
 > surface on the box, spawn it there over SSH — e.g.
 > `ssh root@43.106.13.19 'cd /root/autopilot && npm run mcp'` — so the MCP client's
 > stdin/stdout is piped to the process. Both surfaces then drive the same pgvector
@@ -479,10 +481,21 @@ The suite is the full pyramid, offline-first:
   (`mcp-transport.test.ts` — full protocol wiring, gate preserved); plus a real
   pgvector store round-trip that runs against the CI service container and **skips
   automatically when `DATABASE_URL` is unset**.
+- **End-to-end (browser)** — a **Playwright** tier (`tests/e2e/upload-ux.spec.ts`, 4
+  specs) drives the REAL served approval UI in headless Chromium against a locally
+  started server with the offline Fakes: file-select → extraction → the reviewed
+  invoice, clicking **Process** → the live SSE step stream → a PENDING proposal, the
+  paste-JSON path, and the static surfaces (guided tour, sample buttons, decided tab,
+  charts, empty state). These catch the browser-only upload-UX regressions (a dead
+  file handler, a missing filename, a hidden step stream) that the node:test pyramid
+  cannot see. It runs as its **own CI job** (a browser can't be measured under `c8`).
+- **Coverage** — the full unit + integration pyramid runs under **c8** with an **80%
+  floor** (statements / branches / functions / lines) on `src/`, gated in CI.
 
 CI (`.github/workflows/ci.yml`): **gitleaks** (pinned v8.18.4) → **dep-audit**
 (`npm audit`, fails on high/critical) → **typecheck** → **build** (`tsc`) →
-**test** → **demo smoke** → **decision-quality eval gate** — all with no
+**test** → **demo smoke** → **decision-quality eval gate**, with a parallel
+**coverage** gate and a dedicated **Playwright e2e** job — all with no
 `DASHSCOPE_API_KEY`, so the whole agent runs on the deterministic Fakes.
 
 ---
@@ -532,9 +545,13 @@ Stated plainly (see also the Scope note up top):
   drop-in seam for real ledger / payment-rail / SMTP adapters. No ERP, bank, or mail
   server is contacted. **The loop and the autonomous read/analyze tools + memory
   grounding are real** — only the terminal side-effects are simulated.
-- **Deferred:** actual Alibaba Cloud deployment (ECS / Function Compute + ApsaraDB
-  RDS for PostgreSQL, see [`deploy/DEPLOY_NOTE.md`](deploy/DEPLOY_NOTE.md)); and the
-  real Sinks adapters above.
+- **Live on Alibaba Cloud.** The app is deployed on an Alibaba Cloud **ECS** box over
+  HTTPS at **https://autopilot.43.106.13.19.sslip.io** — real Qwen (`qwen-plus` +
+  `text-embedding-v4`) on Alibaba Cloud Model Studio, backed by pgvector on the box.
+  One-command reproduce/redeploy via [`deploy/redeploy.sh`](deploy/redeploy.sh); see
+  [`deploy/DEPLOY_STATE.md`](deploy/DEPLOY_STATE.md) and [`deploy/DEPLOY_NOTE.md`](deploy/DEPLOY_NOTE.md).
+- **Deferred:** managed **ApsaraDB RDS for PostgreSQL** / **Function Compute** as an
+  alternative to the ECS + on-box pgvector topology; and the real Sinks adapters above.
 
 ## License
 

@@ -3,9 +3,11 @@
 Crash-recoverable checkpoint / runbook. Secrets **MASKED** — never commit the real
 `DASHSCOPE_API_KEY` or any AccessKey.
 
-> This documents the deploy SHAPE + the one-command script. The live deploy is run
-> by a human (SSH + the security-group edit below); nothing here has been executed
-> from this checkout.
+> **Status: LIVE.** Deployed on Alibaba Cloud ECS and served over HTTPS at
+> **https://autopilot.43.106.13.19.sslip.io** (the container's host port `9100` is
+> fronted by a TLS-terminating reverse proxy; `sslip.io` maps the hostname to the
+> box IP). This documents the deploy SHAPE + the one-command script
+> ([`redeploy.sh`](redeploy.sh)) used to (re)deploy it.
 
 ## Target
 
@@ -109,11 +111,17 @@ curl -s http://43.106.13.19:9100/pending
 - VPC/vSwitch: `vpc-t4n52ldyprw3c6s7c0x5o` / `vsw-t4nkxqnrrmnl8sxpijtno`
 - MemoryAgent pgvector container + network: auto-detected by `redeploy.sh`
 - Autopilot DATABASE_URL (masked): `postgresql://postgres:****@db:5432/autopilot`
-- **Live URL (once deployed + SG open): http://43.106.13.19:9100/**
+- **Live URL: https://autopilot.43.106.13.19.sslip.io/** (HTTPS; direct box access
+  is container `9000` → host `9100`).
 
-## Not done here (deferred to the human)
+## Done (live)
 
-- Actual SSH deploy + running `redeploy.sh` on the box.
-- The `aliyun ecs AuthorizeSecurityGroup` rule for port 9100 above.
-- Setting the real `DASHSCOPE_API_KEY` in `/root/autopilot/.env`.
-- Stopping/releasing the ECS box after the demo to cap cost.
+- SSH deploy + `redeploy.sh` executed on the box — backend live, schema applied,
+  intake/pending round-trip verified.
+- Security-group inbound for port `9100` opened; HTTPS fronting via a
+  TLS-terminating reverse proxy + the `sslip.io` hostname.
+- Real `DASHSCOPE_API_KEY` set in `/root/autopilot/.env` (real Qwen).
+
+## Follow-ups (human, cost/hygiene)
+
+- Stop/release the ECS box after the demo window to cap cost.
