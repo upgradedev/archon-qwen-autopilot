@@ -17,7 +17,7 @@ WORKDIR /app
 # "bookworm", whose poppler-utils is 22.12.0-2+deb12u1). If a security update rolls
 # the suffix (deb12u2, …), bump this pin deliberately rather than letting the build
 # float. `POPPLER_VERSION` is overridable for a controlled upgrade.
-ARG POPPLER_VERSION=22.12.0-2+deb12u1
+ARG POPPLER_VERSION=22.12.0-2+deb12u2
 RUN apt-get update \
     && apt-get install -y --no-install-recommends "poppler-utils=${POPPLER_VERSION}" \
     && rm -rf /var/lib/apt/lists/*
