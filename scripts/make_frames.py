@@ -386,6 +386,64 @@ def scene_attack_result(data, cap):
     return img
 
 
+def scene_security_surface(security, banner, cap):
+    """Show the REAL advisory `security` block that /extract + /intake return — the
+    neutralized injection made VISIBLE. The fence already made the payload inert (it
+    landed as DATA); this scene proves the human at the gate is TOLD about it.
+
+    `security` is the captured production block (injectionDetected / injectionCount /
+    neutralized / matches), read from demo/video/assets/live_intake_attack_security.json
+    so every number on screen is authentic, not fabricated.
+    """
+    img, d = new_frame()
+    kicker(d, "Multi-step tool-attack · the neutralized injection, surfaced")
+    d.text((MARGIN, 168), "Shown as data — never followed", font=font("bold", 58), fill=EMERALD)
+
+    count = security["injectionCount"]
+
+    # The real API `security` block, rendered as the JSON the response carries.
+    x0, y0, x1 = MARGIN, 300, W - MARGIN
+    rounded(d, [x0, y0, x1, y0 + 340], 18, fill=(9, 12, 16), outline=BORDER, width=2)
+    d.text((x0 + 30, y0 + 22), "GET  /extract/document  ·  response.security",
+           font=font("mono", 26), fill=MUTED)
+    fm = font("mono", 30)
+    y = y0 + 78
+    block = [
+        ('  "injectionDetected": true,', RED),
+        (f'  "injectionCount": {count},', RED),
+        ('  "neutralized": true,', EMERALD),
+        ('  "matches": [ vendor · ignore-previous-instructions,', TEXT),
+        ('               vendor · coerce-approve, coerce-pay-now,', TEXT),
+        ('               vendor · spoof-confidence-1 ]', TEXT),
+    ]
+    for txt, col in block:
+        d.text((x0 + 40, y), txt, font=fm, fill=col)
+        y += 42
+
+    # The human-facing banner the SSE trace + approval gate render. Strip the leading
+    # ⚠️ (DejaVu has no emoji glyph — it would render as tofu) and draw a real amber
+    # warning triangle instead; the wording itself is verbatim from the live banner.
+    text = banner
+    for junk in ("⚠️", "⚠", "️"):
+        text = text.replace(junk, "")
+    text = text.strip()
+    fy = y0 + 380
+    rounded(d, [x0, fy, x1, fy + 116], 16, fill=PANEL2, outline=AMBER, width=3)
+    # amber warning triangle with a "!" — a font-independent stand-in for ⚠️
+    tx, tcy, ts = x0 + 44, fy + 58, 26
+    d.polygon([(tx, tcy + ts), (tx + ts, tcy + ts), (tx + ts // 2, tcy - ts)],
+              fill=AMBER)
+    d.text((tx + ts // 2 - 4, tcy - ts // 2 - 2), "!", font=font("bold", 26), fill=(9, 12, 16))
+    bx = tx + ts + 28
+    f, lines = fit_lines(d, text, "bold", x1 - bx - 40, 2, 34, 26)
+    ly = fy + 30
+    for ln in lines:
+        d.text((bx, ly), ln, font=f, fill=AMBER)
+        ly += f.size + 12
+    draw_caption(img, d, cap)
+    return img
+
+
 def scene_mcp(cap):
     img, d = new_frame()
     kicker(d, "Also an MCP server + a custom-skills catalog")
@@ -468,6 +526,7 @@ def build_beats(assets) -> list[Beat]:
     je = json.load(open(os.path.join(assets, "live_intake_journal.json"), encoding="utf-8"))
     dup = json.load(open(os.path.join(assets, "live_intake_duplicate.json"), encoding="utf-8"))
     atk = json.load(open(os.path.join(assets, "live_intake_attack.json"), encoding="utf-8"))
+    atk_sec = json.load(open(os.path.join(assets, "live_intake_attack_security.json"), encoding="utf-8"))
     je_steps = [(t["tool"], t["observation"]) for t in je["trace"]]
     je_term = {"tool": je["proposed"]["tool"], "confidence": je["proposed"]["confidence"]}
     dup_steps = [(t["tool"], t["observation"]) for t in dup["trace"]]
@@ -500,9 +559,8 @@ def build_beats(assets) -> list[Beat]:
 
     # ---- Scene 2 · What it is ----
     add("what",
-        "Archon Autopilot runs on qwen-plus function-calling, grounded in a persistent "
-        "vendor memory carried over from our Track One Memory Agent. It takes a messy "
-        "invoice all the way to a proposed action, then stops and waits for a person.",
+        "It runs on qwen-plus function-calling, grounded in persistent vendor memory. "
+        "It takes a messy invoice to a proposed action, then stops for a human.",
         lambda: scene_panel(
             "What it is", "A human-gated AP agent, grounded in memory",
             [("model", "Qwen qwen-plus — real function-calling"),
@@ -513,8 +571,7 @@ def build_beats(assets) -> list[Beat]:
 
     # ---- Scene 3 · The multi-step loop (per-STEP beats for exact sync) ----
     add("curl",
-        "Here is a real invoice, sent live over HTTPS to the deployed box. Watch the "
-        "multi-step loop think.",
+        "A real invoice, sent live over HTTPS. Watch the multi-step loop think.",
         lambda: scene_curl(
             "A real invoice, sent live over HTTPS to the deployed box"))
     step_caps = [
@@ -584,6 +641,11 @@ def build_beats(assets) -> list[Beat]:
         lambda: scene_attack_result(
             atk,
             "Injection neutralized — every rule passes, yet the agent proposes only a gated journal entry, PENDING"))
+    add("security_surface",
+        "And Archon never hides the attack — surfaced, shown as data, never followed.",
+        lambda: scene_security_surface(
+            atk_sec["security"], atk_sec["banner"],
+            "The neutralized injection is SURFACED — shown as data, never followed"))
 
     # ---- Scene 6 · MCP + custom skills ----
     add("mcp",

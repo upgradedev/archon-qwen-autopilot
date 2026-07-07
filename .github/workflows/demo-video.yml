@@ -63,6 +63,7 @@ jobs:
           for f in demo/video/assets/live_intake_journal.json \
                    demo/video/assets/live_intake_duplicate.json \
                    demo/video/assets/live_intake_attack.json \
+                   demo/video/assets/live_intake_attack_security.json \
                    demo/video/assets/ui_overview.png \
                    demo/video/assets/ui_card.png; do
             test -s "$f" || { echo "::error::missing asset $f"; exit 1; }
