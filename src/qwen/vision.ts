@@ -125,6 +125,48 @@ export function validateDocument(doc: {
   return { ok: true, ext, isPdf: ext === ".pdf" };
 }
 
+// ── Magic-byte (content-sniff) validation ──────────────────────────────────────
+// Defence BEYOND the extension + declared content-type: read the buffer's leading
+// bytes and confirm they match the type the file CLAIMS to be. This catches a file
+// whose real bytes disagree with its name/content-type — e.g. a `.pdf` that is
+// actually a PNG (a classic "disguised payload" trick). It runs after validateDocument
+// (so `ext` is already a known type) and BEFORE the daily budget is consumed, so a
+// disguised file never costs a slot. Strict + correct: no leading-whitespace tolerance
+// (the existing validator has none either — a real PDF starts with `%PDF` at offset 0).
+//
+// A full antivirus / content-disarm scan is deliberately OUT OF SCOPE for this demo —
+// this is the pragmatic "is the file what it claims to be" check, not malware analysis.
+
+// The magic-byte signatures, keyed by resolved extension. `.jpg` and `.jpeg` share the
+// JPEG SOI marker. Documented in one place so a new accepted type adds one row here.
+const MAGIC_BYTES: Record<string, number[]> = {
+  ".pdf": [0x25, 0x50, 0x44, 0x46], // "%PDF"
+  ".png": [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], // PNG 8-byte signature
+  ".jpg": [0xff, 0xd8, 0xff], // JPEG SOI
+  ".jpeg": [0xff, 0xd8, 0xff],
+};
+
+export function validateMagicBytes(buffer: Buffer, ext: string): ValidationOk | ValidationErr {
+  const expected = MAGIC_BYTES[ext];
+  // Only the accepted types reach here (validateDocument gates the ext), so a missing
+  // signature would be a programmer error — fail closed rather than silently pass.
+  if (!expected) {
+    return { ok: false, status: 400, error: `cannot content-verify an unsupported "${ext}" document` };
+  }
+  const head = buffer.subarray(0, expected.length);
+  const matches = head.length === expected.length && expected.every((b, i) => head[i] === b);
+  if (!matches) {
+    return {
+      ok: false,
+      status: 400,
+      error:
+        `the uploaded file's contents do not match its "${ext}" type — its leading bytes are not a valid ` +
+        `${ext.slice(1).toUpperCase()} signature (a file disguised as ${ext}?)`,
+    };
+  }
+  return { ok: true, ext, isPdf: ext === ".pdf" };
+}
+
 // ── The structured-extraction prompt ──────────────────────────────────────────
 // Injection-hardened: any imperative text inside the document is DATA, never an
 // instruction. Canonical keys match the normalizer's primary aliases so the raw

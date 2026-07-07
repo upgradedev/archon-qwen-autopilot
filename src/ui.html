@@ -245,6 +245,15 @@
     }
     .review-note.show { display: block; }
 
+    /* Advisory input-safety banners (injection detection + relevance). */
+    .sec-banner {
+      display: flex; gap: 9px; align-items: flex-start; margin: 10px 0 0;
+      font-size: 12.5px; border-radius: 8px; padding: 9px 13px; line-height: 1.4;
+    }
+    .sec-banner .sec-icon { flex: 0 0 auto; font-weight: 700; }
+    .sec-danger { color: #ffd7d1; background: rgba(180,35,24,.12); border: 1px solid rgba(180,35,24,.45); }
+    .sec-warn { color: var(--amber); background: rgba(210,153,34,.08); border: 1px solid rgba(210,153,34,.3); }
+
     /* ── General polish: elevated header + cards, stronger primary CTA ──────────── */
     header {
       background: linear-gradient(180deg, #12171f 0%, var(--bg) 100%);
@@ -893,6 +902,23 @@
         el('span', { text: 'Extracted for review' }),
         el('span', { class: 'review-model', text: (data && data.model ? data.model : 'qwen-vl') + (data && data.pages ? ' · ' + data.pages + (data.pages === 1 ? ' page' : ' pages') : '') }),
       ]));
+      // Advisory input-safety banners (injection detection + relevance). Both are
+      // ADVISORY: the injection was already neutralized (shown as data, never
+      // followed) and the human still decides — they only make the finding VISIBLE.
+      const sec = (data && data.security) || {};
+      if (sec.injectionDetected) {
+        host.appendChild(el('div', { class: 'sec-banner sec-danger' }, [
+          el('span', { class: 'sec-icon', text: '⚠️' }),
+          el('span', { text: 'This document contained ' + (sec.injectionCount || 0) + ' suspected injected instruction(s) — shown to the agent as data, never followed. The human approval gate is unchanged.' }),
+        ]));
+      }
+      const rel = (data && data.relevance) || {};
+      if (rel.relevant === false) {
+        host.appendChild(el('div', { class: 'sec-banner sec-warn' }, [
+          el('span', { class: 'sec-icon', text: 'ⓘ' }),
+          el('span', { text: 'This may not be an invoice: ' + (rel.reason || 'no financial fields detected') + '. You can still review and decide below.' }),
+        ]));
+      }
       host.appendChild(el('div', { class: 'review-grid' }, [
         reviewField('Vendor', inv.vendor),
         reviewField('Invoice #', inv.invoice_number),
@@ -979,6 +1005,16 @@
               ]),
             ]));
             setHead('Document extracted — the agent is reasoning…');
+          } else if (event === 'security') {
+            // Advisory: a neutralized prompt-injection was surfaced. Show it inline in
+            // the live trace — it does NOT change the decision the human approves.
+            stepsWrap.appendChild(el('div', { class: 'proc-step reveal' }, [
+              el('span', { class: 'num', text: '⚠️' }),
+              el('div', {}, [
+                el('div', { class: 'tool', text: 'prompt-injection neutralized' }),
+                el('div', { class: 'obs', text: '→ ' + ((data && data.message) || 'suspected injected instructions were shown as data, never followed') }),
+              ]),
+            ]));
           } else if (event === 'step') {
             stepsWrap.appendChild(el('div', { class: 'proc-step reveal' }, [
               el('span', { class: 'num', text: (data.step != null ? data.step + '.' : '·') }),

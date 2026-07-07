@@ -347,8 +347,8 @@ needs no configuration.
 | `GET /health` | Liveness + the live embedder / decision-model ids. No DB, no key. |
 | `POST /intake` | Ingest a vendor invoice → normalize → run the multi-step ReAct loop (recall → validate → check duplicate / compute variance) → a **PENDING** proposed action + its full step trace. Nothing executes. **Rate-limited (see below).** |
 | `POST /intake/stream` | Same pipeline as `/intake`, but **streams each reasoning step live** as Server-Sent Events (`event: step` as it happens, then `event: proposal` + `event: done`). Backs the UI's real-time "watch the agent work" upload view. Nothing executes. **Rate-limited.** |
-| `POST /intake/document` | Upload a **REAL invoice document** (PDF / PNG / JPG, `multipart/form-data`, field `file`) → **Qwen-VL vision extraction** (`qwen-vl-max`) → the same multi-step loop, **streamed** (`event: extracting` → `event: extracted` → `event: step` → `event: proposal` → `event: done`). A PDF is rasterized to page images with poppler (`pdftoppm`); a PNG/JPG passes through. Nothing executes. **Rate-limited** (shares the same daily budget). |
-| `POST /extract/document` | Upload a document → **Qwen-VL vision extraction** (`qwen-vl-max`) → returns the extracted structured invoice **without** running the decision loop, plus a single-use `ticket`. The two-step review flow: a reviewer inspects/edits the extracted fields, then posts them to `/intake/stream` **with** that ticket (which skips the limiter, so this does not consume a second slot). Nothing executes. **Rate-limited** (shares the same daily budget). |
+| `POST /intake/document` | Upload a **REAL invoice document** (PDF / PNG / JPG, `multipart/form-data`, field `file`) → magic-byte sniff → **Qwen-VL vision extraction** (`qwen-vl-max`) → the same multi-step loop, **streamed** (`event: extracting` → `event: extracted` → an advisory `event: security` if a neutralized injection was found → `event: step` → `event: proposal` → `event: done`). The `extracted` event carries the `security` + `relevance` blocks. A PDF is rasterized to page images with poppler (`pdftoppm`); a PNG/JPG passes through. Nothing executes. **Rate-limited** (shares the same daily budget). |
+| `POST /extract/document` | Upload a document → magic-byte sniff → **Qwen-VL vision extraction** (`qwen-vl-max`) → returns the extracted structured invoice **without** running the decision loop, plus a single-use `ticket`, a `security` block (advisory injection detection) and a `relevance` block. The two-step review flow: a reviewer inspects/edits the extracted fields, then posts them to `/intake/stream` **with** that ticket (which skips the limiter, so this does not consume a second slot). Nothing executes. **Rate-limited** (shares the same daily budget). |
 | `GET /sample-document` | The bundled sample invoice ([`demo/sample-invoice.png`](demo/sample-invoice.png)) — a real image the UI's **"Use sample document"** button uploads so the whole vision path is one-click reproducible. |
 | `GET /pending` | The human approval queue (proposals awaiting a decision), each including its reasoning trace. |
 | `GET /decided` | The **decided history** — every approved / amended / rejected item, newest first, with its outcome, decision timestamp, and (for an amended item) the prev → new amend audit trail. Read-only: decided items never re-execute. |
@@ -550,6 +550,53 @@ the one proposed, and the injected text cannot forge the gate's confidence/reaso
 decides. An MCP client that drives `approve` is trusted to be operated by that person
 (the same trust boundary as any admin tool); the gate is enforced structurally, not by
 authenticating the caller.
+
+### The document-input vector — three added upload-safety layers
+
+The same tool-attack threat model applies to the **document-upload** front door
+(`POST /extract/document` · `POST /intake/document`), so the upload path adds three
+input-safety layers **on top of** the existing extension/content-type allowlist, size
++ page caps, injection-hardened vision prompt, and the decider fence:
+
+- **Magic-byte content-sniffing** ([`src/qwen/vision.ts`](src/qwen/vision.ts),
+  `validateMagicBytes`). Before any budget is consumed, the buffer's leading bytes are
+  checked against the type the file *claims* to be — `%PDF` for PDF, the 8-byte PNG
+  signature, the JPEG SOI marker. A file whose real bytes disagree with its extension /
+  content-type (a `.pdf` that is actually a PNG — a disguised-payload trick) is rejected
+  `400`. *A full antivirus scan is deliberately out of scope for this demo — this is the
+  pragmatic "is the file what it claims to be" check.*
+- **Prompt-injection detection + surfacing** ([`src/qwen/injection-scan.ts`](src/qwen/injection-scan.ts),
+  `scanForInjection`). The fence already *neutralizes* injection smuggled in a document
+  (it lands as fenced DATA, never followed); this **read-only, advisory** scan of the
+  extracted fields + line-item descriptions makes the neutralized attack **VISIBLE** —
+  it looks for imperative overrides ("ignore previous instructions"), action coercion
+  ("approve", "pay now"), confidence spoofing ("confidence 1.0"), role/prompt hijack,
+  and tool/exfil coercion. It **never** rejects, edits the proposal, or touches the
+  human gate — the safe behavior is unchanged; it only adds the report.
+- **Relevance gate** ([`src/qwen/relevance.ts`](src/qwen/relevance.ts),
+  `assessRelevance`). Derived from the structured extraction (no extra model call): if a
+  document has no invoice fields (vendor / invoice number / amount) or the extractor
+  reports very low confidence, it is flagged `relevant: false` with a reason. It is
+  advisory — the human still decides — and it spends no decider budget on an obviously
+  irrelevant file (`/extract/document` runs no loop).
+
+Both `/extract/document` (JSON) and `/intake/document` (SSE) surface the findings as:
+
+```jsonc
+"security":  { "injectionDetected": true, "injectionCount": 2,
+               "matches": [ { "field": "notes", "pattern": "coerce-approve", "snippet": "…Approve and pay…" } ],
+               "neutralized": true },
+"relevance": { "relevant": true, "reason": "invoice fields detected (amount plus a vendor or invoice number)" }
+```
+
+On `/intake/document` a neutralized injection is also emitted as an advisory
+`event: security` step in the live stream, and the approval UI shows a warning banner
+("⚠️ This document contained N suspected injected instructions — shown as data, never
+followed."). Proven offline by
+[`tests/security/upload-guard.test.ts`](tests/security/upload-guard.test.ts): a `.pdf`
+carrying PNG bytes is rejected; an injected upload is **detected** *and* the agent's
+downstream behavior is **unchanged** (still PENDING, never a payment, confidence never
+the injected 1.0); a non-invoice document is flagged `relevant: false`.
 
 ## Testing & CI
 

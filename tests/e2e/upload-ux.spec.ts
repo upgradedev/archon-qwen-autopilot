@@ -13,12 +13,13 @@
 
 import { test, expect } from "@playwright/test";
 
-// A tiny fake image payload. The offline FakeExtractionClient ignores the bytes and
-// returns the canonical demo invoice (Meridian Logistics), so any buffer works.
+// A tiny fake image payload. It carries the real 8-byte PNG signature so the upload
+// path's magic-byte sniff accepts it; the offline FakeExtractionClient then ignores
+// the bytes and returns the canonical demo invoice (Meridian Logistics).
 const FAKE_PNG = {
   name: "acme-invoice.png",
   mimeType: "image/png",
-  buffer: Buffer.from("\x89PNG\r\n\x1a\n fake image bytes for e2e"),
+  buffer: Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from(" fake image bytes for e2e")]),
 };
 
 // Close the first-visit guided tour if it is showing (it auto-opens and its backdrop
