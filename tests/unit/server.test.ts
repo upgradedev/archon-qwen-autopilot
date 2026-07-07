@@ -30,6 +30,11 @@ function deps(extra: Partial<ServerDeps> = {}): ServerDeps {
 
 const sampleInvoice = { vendor: "Acme", invoice_number: "A-1", tax_id: "T", subtotal: 100, tax: 20, total: 120 };
 
+// The upload path now content-sniffs the leading bytes, so a fixture PNG must carry
+// the real 8-byte PNG signature. The offline FakeExtractionClient ignores the bytes
+// (returns the canonical Meridian invoice), so any valid-magic buffer works here.
+const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01]);
+
 // Build a multipart/form-data body with ONE file part. Multipart parts REQUIRE
 // CRLF line endings, so a bare-\n body would not parse — hence the explicit \r\n.
 function multipartFile(field: string, filename: string, contentType: string, content: Buffer | string): { payload: Buffer; headers: Record<string, string> } {
@@ -256,7 +261,7 @@ test("POST /intake/document: a real PNG upload → Qwen-VL extraction → the lo
   const local = await buildServer(deps());
   await local.ready();
   try {
-    const { payload, headers } = multipartFile("file", "sample-invoice.png", "image/png", Buffer.from("\x89PNG\r\n\x1a\n fake png bytes"));
+    const { payload, headers } = multipartFile("file", "sample-invoice.png", "image/png", PNG_BYTES);
     const res = await local.inject({ method: "POST", url: "/intake/document", payload, headers });
     assert.equal(res.statusCode, 200);
     assert.match(String(res.headers["content-type"]), /text\/event-stream/);
@@ -290,7 +295,7 @@ test("POST /intake/document rejects an unsupported type (400) WITHOUT burning th
     const badRes = await local.inject({ method: "POST", url: "/intake/document", payload: bad.payload, headers: bad.headers });
     assert.equal(badRes.statusCode, 400);
     // … and did NOT consume the budget-of-1, so a valid PNG still succeeds.
-    const ok = multipartFile("file", "invoice.png", "image/png", Buffer.from("png-bytes"));
+    const ok = multipartFile("file", "invoice.png", "image/png", PNG_BYTES);
     const okRes = await local.inject({ method: "POST", url: "/intake/document", payload: ok.payload, headers: ok.headers });
     assert.equal(okRes.statusCode, 200);
   } finally {
@@ -302,10 +307,10 @@ test("POST /intake/document shares the daily budget — the 2nd upload → 429 (
   const local = await buildServer(deps({ rateLimiter: new DailyRateLimiter(1) }));
   await local.ready();
   try {
-    const one = multipartFile("file", "invoice.png", "image/png", Buffer.from("png-1"));
+    const one = multipartFile("file", "invoice.png", "image/png", PNG_BYTES);
     const first = await local.inject({ method: "POST", url: "/intake/document", payload: one.payload, headers: one.headers });
     assert.equal(first.statusCode, 200);
-    const two = multipartFile("file", "invoice.png", "image/png", Buffer.from("png-2"));
+    const two = multipartFile("file", "invoice.png", "image/png", PNG_BYTES);
     const over = await local.inject({ method: "POST", url: "/intake/document", payload: two.payload, headers: two.headers });
     assert.equal(over.statusCode, 429);
     assert.match(over.json().error, /daily upload limit/i);
@@ -321,7 +326,7 @@ test("POST /extract/document: a PNG upload → Qwen-VL extraction → invoice JS
   const local = await buildServer(deps());
   await local.ready();
   try {
-    const { payload, headers } = multipartFile("file", "invoice.png", "image/png", Buffer.from("png-bytes"));
+    const { payload, headers } = multipartFile("file", "invoice.png", "image/png", PNG_BYTES);
     const res = await local.inject({ method: "POST", url: "/extract/document", payload, headers });
     assert.equal(res.statusCode, 200);
     const body = res.json();
@@ -347,7 +352,7 @@ test("POST /extract/document surfaces an extractor failure as 502 (the vision ca
   const local = await buildServer(deps({ extractor: failing }));
   await local.ready();
   try {
-    const { payload, headers } = multipartFile("file", "invoice.png", "image/png", Buffer.from("png"));
+    const { payload, headers } = multipartFile("file", "invoice.png", "image/png", PNG_BYTES);
     const res = await local.inject({ method: "POST", url: "/extract/document", payload, headers });
     assert.equal(res.statusCode, 502);
     assert.match(res.json().error, /vision backend unavailable/);
@@ -364,7 +369,7 @@ test("POST /extract/document rejects an unsupported type (400) WITHOUT burning t
     const badRes = await local.inject({ method: "POST", url: "/extract/document", payload: bad.payload, headers: bad.headers });
     assert.equal(badRes.statusCode, 400);
     // Budget-of-1 intact → a valid extract still succeeds.
-    const ok = multipartFile("file", "invoice.png", "image/png", Buffer.from("png"));
+    const ok = multipartFile("file", "invoice.png", "image/png", PNG_BYTES);
     const okRes = await local.inject({ method: "POST", url: "/extract/document", payload: ok.payload, headers: ok.headers });
     assert.equal(okRes.statusCode, 200);
   } finally {
@@ -377,7 +382,7 @@ test("two-step flow: extract consumes ONE slot, process-with-ticket consumes NON
   await local.ready();
   try {
     // Extract consumes the only slot and mints a ticket.
-    const up = multipartFile("file", "invoice.png", "image/png", Buffer.from("png"));
+    const up = multipartFile("file", "invoice.png", "image/png", PNG_BYTES);
     const ex = await local.inject({ method: "POST", url: "/extract/document", payload: up.payload, headers: up.headers });
     assert.equal(ex.statusCode, 200);
     const ticket = ex.json().ticket;
@@ -403,7 +408,7 @@ test("a process ticket is single-use: replaying the SAME ticket consumes the dai
   const local = await buildServer(deps({ rateLimiter: new DailyRateLimiter(2) }));
   await local.ready();
   try {
-    const up = multipartFile("file", "invoice.png", "image/png", Buffer.from("png"));
+    const up = multipartFile("file", "invoice.png", "image/png", PNG_BYTES);
     const ex = await local.inject({ method: "POST", url: "/extract/document", payload: up.payload, headers: up.headers });
     const ticket = ex.json().ticket; // consumed slot #1
     const invoice = ex.json().invoice;
