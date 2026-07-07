@@ -1,0 +1,56 @@
+flowchart TD
+    IN["Untrusted vendor invoice<br/>PDF / image via qwen-vl-max &middot; or JSON"]:::untrusted
+
+    subgraph SURF["Two client surfaces &middot; ONE injectable agent"]
+      HTTP["HTTP + Approval UI"]:::surface
+      MCP["MCP server &middot; stdio"]:::surface
+    end
+
+    NORM["Normalize &middot; fence as<br/>UNTRUSTED DATA"]:::untrusted
+
+    subgraph LOOP["Bounded multi-step ReAct loop &middot; qwen-plus function-calling"]
+      direction TB
+      DEC{"Qwen picks<br/>the next tool"}:::ai
+      READ["Autonomous read / analyze &middot; NO side-effect<br/>recall_vendor_history &middot; validate R1-R6<br/>check_duplicate &middot; compute_variance"]:::auto
+      TERM["Terminal action &mdash; exactly one<br/>draft_journal_entry &middot; draft_payment<br/>draft_vendor_reply &middot; flag_for_review"]:::terminal
+      DEC -->|observe| READ
+      READ -->|append to trace| DEC
+      DEC -->|enough evidence| TERM
+    end
+
+    PEND[("PENDING proposal<br/>+ full step trace")]:::pending
+    GATE{{"HUMAN-IN-THE-LOOP GATE<br/>Approve &middot; Amend &middot; Reject"}}:::gate
+    NOTE["Model tool catalog EXCLUDES<br/>approve / pay &mdash; no injection<br/>can reach a side-effect"]:::guard
+    EXE["Execute for real<br/>simulated sink adapters"]:::exec
+
+    MEM[("pgvector memory")]:::memory
+    QWEN["Qwen Cloud / Model Studio &middot; DashScope<br/>vision &middot; decider &middot; embeddings"]:::ai
+
+    IN --> HTTP
+    IN --> MCP
+    HTTP -->|intake| NORM
+    MCP -->|intake| NORM
+    NORM --> DEC
+    TERM --> PEND
+    PEND --> GATE
+    GATE -->|approve only| EXE
+    GATE -->|reject| MEM
+    EXE -->|write outcome back| MEM
+    GATE -.- NOTE
+
+    MEM -. recall / writeback .- READ
+    QWEN -. powers vision &middot; decider &middot; embeddings .- LOOP
+
+    classDef untrusted fill:#b42318,stroke:#7a1710,stroke-width:1.5px,color:#ffffff;
+    classDef surface fill:#6f42c1,stroke:#4c2d8f,stroke-width:1.5px,color:#ffffff;
+    classDef ai fill:#1f6feb,stroke:#134a9e,stroke-width:1.5px,color:#ffffff;
+    classDef auto fill:#1a7f37,stroke:#116029,stroke-width:1.5px,color:#ffffff;
+    classDef terminal fill:#334155,stroke:#1e293b,stroke-width:1.5px,color:#ffffff;
+    classDef pending fill:#475569,stroke:#334155,stroke-width:1.5px,color:#ffffff;
+    classDef gate fill:#f0b429,stroke:#b7791f,stroke-width:3px,color:#3d2c00;
+    classDef guard fill:#fde68a,stroke:#b7791f,stroke-width:1px,color:#3d2c00;
+    classDef exec fill:#0f766e,stroke:#0b544e,stroke-width:1.5px,color:#ffffff;
+    classDef memory fill:#0891b2,stroke:#0b647a,stroke-width:1.5px,color:#ffffff;
+
+    style SURF fill:#f5f3ff,stroke:#6f42c1,color:#4c2d8f;
+    style LOOP fill:#f0fdf4,stroke:#1a7f37,color:#116029;
