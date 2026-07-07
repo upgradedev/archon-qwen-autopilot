@@ -95,56 +95,75 @@ Both tiers are formalized as a first-class, introspectable **custom-skills catal
 
 ## Architecture
 
+> A static render is at [`docs/architecture.png`](docs/architecture.png) (also
+> [`docs/architecture.svg`](docs/architecture.svg)) as a fallback if the live
+> mermaid does not render.
+
 ```mermaid
 flowchart TD
-    C[Incoming vendor invoice<br/>possibly messy / ambiguous]
+    IN["Untrusted vendor invoice<br/>PDF / image via qwen-vl-max &middot; or JSON"]:::untrusted
 
-    subgraph SURF [Two client surfaces · ONE injectable agent]
-      direction LR
-      HTTP[HTTP + Approval UI<br/>POST /intake · GET /pending<br/>/approve · /amend · /reject · /skills]
-      MCP[MCP server · stdio<br/>intake_invoice · list_pending<br/>approve · amend · reject<br/>recall_vendor · list_skills]
+    subgraph SURF["Two client surfaces &middot; ONE injectable agent"]
+      HTTP["HTTP + Approval UI"]:::surface
+      MCP["MCP server &middot; stdio"]:::surface
     end
 
-    C --> HTTP
-    C --> MCP
-    HTTP -->|intake| N[Normalize + Extract]
-    MCP -->|intake| N
+    NORM["Normalize &middot; fence as<br/>UNTRUSTED DATA"]:::untrusted
 
-    subgraph LOOP [Bounded multi-step ReAct loop · qwen-plus function-calling]
+    subgraph LOOP["Bounded multi-step ReAct loop &middot; qwen-plus function-calling"]
       direction TB
-      D{{Qwen picks the<br/>next tool}}
-      D -->|autonomous read/analyze<br/>NO side-effect| T[recall_vendor_history ·<br/>validate_invoice · check_duplicate ·<br/>compute_variance_vs_history]
-      T -->|append observation to the trace| D
-      D -->|guard: max-steps / no-progress| G[fallback → flag_for_review]
+      DEC{"Qwen picks<br/>the next tool"}:::ai
+      READ["Autonomous read / analyze &middot; NO side-effect<br/>recall_vendor_history &middot; validate R1-R6<br/>check_duplicate &middot; compute_variance"]:::auto
+      TERM["Terminal action &mdash; exactly one<br/>draft_journal_entry &middot; draft_payment<br/>draft_vendor_reply &middot; flag_for_review"]:::terminal
+      DEC -->|observe| READ
+      READ -->|append to trace| DEC
+      DEC -->|enough evidence| TERM
     end
 
-    N --> D
-    D -->|TERMINAL action + args + reasoning + confidence<br/>+ full step trace| P[(PENDING work item<br/>approval queue)]
-    G --> P
+    PEND[("PENDING proposal<br/>+ full step trace")]:::pending
+    GATE{{"HUMAN-IN-THE-LOOP GATE<br/>Approve &middot; Amend &middot; Reject"}}:::gate
+    NOTE["Model tool catalog EXCLUDES<br/>approve / pay &mdash; no injection<br/>can reach a side-effect"]:::guard
+    EXE["Execute for real<br/>simulated sink adapters"]:::exec
 
-    subgraph HITL [Human-in-the-loop approval gate · same over HTTP + MCP]
-      P -->|list_pending · GET /pending<br/>incl. the reasoning trace| Q[Approval queue]
-      Q -->|approve · POST /approve/:id| A[Approve]
-      Q -->|amend · POST /amend/:id| M[Amend then approve]
-      Q -->|reject · POST /reject/:id| X[Reject - discard]
-    end
+    MEM[("pgvector memory")]:::memory
+    QWEN["Qwen Cloud / Model Studio &middot; DashScope<br/>vision &middot; decider &middot; embeddings"]:::ai
 
-    A --> E[Execute tool for real<br/>simulated adapter]
-    M --> E
-    E --> W[Write outcome back to memory]
-    X --> W
+    IN --> HTTP
+    IN --> MCP
+    HTTP -->|intake| NORM
+    MCP -->|intake| NORM
+    NORM --> DEC
+    TERM --> PEND
+    PEND --> GATE
+    GATE -->|approve only| EXE
+    GATE -->|reject| MEM
+    EXE -->|write outcome back| MEM
+    GATE -.- NOTE
 
-    T -. cosine recall .-> MEM[(pgvector memory<br/>agent_memory)]
-    W -. remember .-> MEM
-    D -. qwen-plus .-> QWEN[Alibaba Cloud Model Studio / DashScope]
-    T -. text-embedding-v4 .-> QWEN
+    MEM -. recall / writeback .- READ
+    QWEN -. powers vision &middot; decider &middot; embeddings .- LOOP
 
-    style SURF fill:#f3e8ff,stroke:#8250df
-    style LOOP fill:#eef7ee,stroke:#2ea043
-    style HITL fill:#fff3cd,stroke:#d39e00
-    style MEM fill:#d1ecf1,stroke:#0c5460
-    style QWEN fill:#e2e3f3,stroke:#383d7c
+    classDef untrusted fill:#b42318,stroke:#7a1710,stroke-width:1.5px,color:#ffffff;
+    classDef surface fill:#6f42c1,stroke:#4c2d8f,stroke-width:1.5px,color:#ffffff;
+    classDef ai fill:#1f6feb,stroke:#134a9e,stroke-width:1.5px,color:#ffffff;
+    classDef auto fill:#1a7f37,stroke:#116029,stroke-width:1.5px,color:#ffffff;
+    classDef terminal fill:#334155,stroke:#1e293b,stroke-width:1.5px,color:#ffffff;
+    classDef pending fill:#475569,stroke:#334155,stroke-width:1.5px,color:#ffffff;
+    classDef gate fill:#f0b429,stroke:#b7791f,stroke-width:3px,color:#3d2c00;
+    classDef guard fill:#fde68a,stroke:#b7791f,stroke-width:1px,color:#3d2c00;
+    classDef exec fill:#0f766e,stroke:#0b544e,stroke-width:1.5px,color:#ffffff;
+    classDef memory fill:#0891b2,stroke:#0b647a,stroke-width:1.5px,color:#ffffff;
+
+    style SURF fill:#f5f3ff,stroke:#6f42c1,color:#4c2d8f;
+    style LOOP fill:#f0fdf4,stroke:#1a7f37,color:#116029;
 ```
+
+Palette: untrusted input = red, client surfaces = purple, Qwen / AI = blue,
+autonomous read-tools = green, the human-in-the-loop gate = amber (the hero,
+thick border), terminal action / PENDING = slate, execution = teal, pgvector
+memory = cyan. The **structural human gate** is the security differentiator —
+the model's tool catalog **excludes** `approve` / `pay`, so no prompt-injection
+in the untrusted invoice can reach a side-effect.
 
 **Stack (consistent with Track 1):** TypeScript · Node ≥20 (ESM) · Fastify 5 ·
 the `openai` SDK against Alibaba Cloud Model Studio / DashScope (`qwen-plus` for
