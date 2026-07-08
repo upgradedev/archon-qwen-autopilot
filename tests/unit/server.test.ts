@@ -218,7 +218,7 @@ test("GET /decided lists decided items (empty array on a fresh app)", async () =
   assert.ok(Array.isArray(res.json().decided));
 });
 
-test("upload rate limit: the default cap is 20/day and the 21st upload → 429 (open-demo budget guard)", async () => {
+test("upload rate limit: a per-client cap of 20/day means the 21st upload from that client → 429 (open-demo budget guard)", async () => {
   // A dedicated app so the shared `before` app's usage does not affect the count,
   // and a pinned clock so all 21 uploads land in the same UTC day.
   const local = await buildServer(deps({ rateLimiter: new DailyRateLimiter(20, () => new Date("2026-07-06T09:00:00Z")) }));
@@ -235,6 +235,25 @@ test("upload rate limit: the default cap is 20/day and the 21st upload → 429 (
     // The streaming upload shares the same budget — also 429 once over.
     const overStream = await local.inject({ method: "POST", url: "/intake/stream", payload: { invoice: sampleInvoice } });
     assert.equal(overStream.statusCode, 429);
+  } finally {
+    await local.close();
+  }
+});
+
+test("rate limit is PER-CLIENT over HTTP: one client's exhausted budget does not 429 another (X-Forwarded-For)", async () => {
+  // Per-client cap of 1, pinned clock. Client A exhausts its slot; client B (a
+  // different X-Forwarded-For) still gets its own. This is the judging-window fix:
+  // one busy visitor cannot lock the next judge out on their first upload.
+  const local = await buildServer(deps({ rateLimiter: new DailyRateLimiter(1, () => new Date("2026-07-06T09:00:00Z")) }));
+  await local.ready();
+  try {
+    const a1 = await local.inject({ method: "POST", url: "/intake", headers: { "x-forwarded-for": "203.0.113.1" }, payload: { invoice: sampleInvoice } });
+    assert.equal(a1.statusCode, 200);
+    const a2 = await local.inject({ method: "POST", url: "/intake", headers: { "x-forwarded-for": "203.0.113.1" }, payload: { invoice: sampleInvoice } });
+    assert.equal(a2.statusCode, 429, "client A is over its own cap");
+    // A different client is NOT affected.
+    const b1 = await local.inject({ method: "POST", url: "/intake", headers: { "x-forwarded-for": "203.0.113.2" }, payload: { invoice: sampleInvoice } });
+    assert.equal(b1.statusCode, 200, "client B has its own independent budget");
   } finally {
     await local.close();
   }

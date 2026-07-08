@@ -6,7 +6,6 @@
 [![Demo Video](https://img.shields.io/badge/Demo%20Video-watch-ff0000?logo=youtube)](demo/video/final/archon-autopilot-demo.mp4)
 [![Tests](https://img.shields.io/badge/Tests-168%20node%3Atest%20%2B%20Playwright-brightgreen)](tests)
 [![Project Story](https://img.shields.io/badge/Project%20Story-Devpost-003e54)](demo/PROJECT_STORY.md)
-<!-- TODO after YouTube upload: point the Demo Video badge at the YouTube URL -->
 
 Archon Autopilot is a **human-gated accounts-payable (AP) agent**. For each
 incoming vendor invoice it runs a **bounded multi-step ReAct loop** over **Qwen
@@ -376,19 +375,32 @@ freely (upload an invoice, watch it process, approve/amend/reject). This is a
 deliberate, rules-compliant choice: the app must be judge-testable end to end. There
 is no sign-in wall by design.
 
-To keep an open, unauthenticated endpoint from running up the model bill, **invoice
-uploads are rate-limited to 20/day** (per UTC day, resetting at 00:00 UTC) across
-the four budget-consuming upload routes — `POST /intake`, `POST /intake/stream`,
-`POST /intake/document`, **and `POST /extract/document`** (all four share one
-budget). A `/extract/document` upload mints a single-use ticket so the *follow-up*
+To keep an open, unauthenticated endpoint from running up the model bill, invoice
+uploads are rate-limited **per UTC day** (resetting at 00:00 UTC) across the four
+budget-consuming upload routes — `POST /intake`, `POST /intake/stream`, `POST
+/intake/document`, **and `POST /extract/document`** (all four share one budget). A
+`/extract/document` upload mints a single-use ticket so the *follow-up*
 `/intake/stream` call that presents it does not consume a second slot — the pair
-costs one budget slot, not two. **Upload is rate-limited to 20/day to
-protect the Qwen API budget.** The limiter lives in
-[`src/ap/rate-limit.ts`](src/ap/rate-limit.ts) (`DailyRateLimiter`, cap configurable
-via `UPLOAD_DAILY_LIMIT`); it is checked **after** payload/file validation, so an
-invalid request or an unsupported/oversize document never burns budget, and an
-over-limit upload returns `429` with a clear message. Validation, the approval gate, and every read endpoint (`/pending`,
-`/decided`, `/skills`, `/health`) are **not** limited.
+costs one budget slot, not two.
+
+The limiter ([`src/ap/rate-limit.ts`](src/ap/rate-limit.ts), `DailyRateLimiter`) is
+**two-tier**, so one busy visitor can never lock a judge out on their first upload:
+
+- a **per-client bucket** (default **100/day**, `UPLOAD_DAILY_LIMIT`) keyed by the
+  caller's IP, so each visitor gets their own fair budget; and
+- a **global daily backstop** across all clients (default **2000/day**,
+  `UPLOAD_GLOBAL_DAILY_LIMIT`) — the hard, spoof-proof bound on total Qwen spend.
+
+A request is refused (`429`) only when **either** the caller's own bucket **or** the
+global backstop is full, and the message says which. The per-client key is
+**best-effort** — behind the reverse proxy the client IP comes from
+`X-Forwarded-For`, which a client can spoof, so the **global backstop** (not the
+per-client key) is the real spend bound; it is sized well above the per-client cap so
+distinct judges never collide on it. Both caps are env-tunable for a judging window.
+The limiter is checked **after** payload/file validation, so an invalid request or an
+unsupported/oversize document never burns budget. Validation, the approval gate, and
+every read endpoint (`/pending`, `/decided`, `/skills`, `/health`) are **not**
+limited.
 
 ### Real document upload → Qwen-VL vision extraction
 
