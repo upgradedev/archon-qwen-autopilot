@@ -36,7 +36,11 @@ agent has learned about a vendor across sessions. Crucially, **the approval gate
 also a training signal** — a human's amendment or rejection is written back with
 structured metadata, and **read on the vendor's next decision**: an invoice that
 re-bills an amount a human previously corrected *down* is escalated for review
-instead of straight-through paid. That behavior is **measured**, not asserted — see
+instead of straight-through paid. The **mechanism is measured** — writeback → recall →
+the correction surfaced in the observation the model reads, with a before/after
+behavioural delta (the offline escalation is the deterministic policy guard, exactly
+as the eval's offline number is; online, `qwen-plus` reasons over the same recalled
+correction) — see
 [Learning from corrections](#learning-from-corrections-the-approval-gate-as-a-training-signal).
 
 > **Positioning:** universal financial-intelligence terms only. `tax` / `tax_id`
@@ -711,9 +715,10 @@ npm run eval:corrections   # prints the before/after table (offline, zero spend)
 | Same correction, next invoice **bills the corrected 3000** (negative control) | `draft_payment` | `draft_payment` | no |
 
 So the learning signal **flips `draft_payment → flag_for_review` on the genuine
-re-bill (1/1)** while **correctly leaving the compliant invoice alone** — it is
-amount-scoped, so it escalates the error, not every future invoice (no crying wolf).
-This is gated in CI by
+re-bill (1/1)** while **leaving a compliant invoice — one that bills the corrected
+amount — as `draft_payment`**: the escalation is amount-scoped (it fires only when a
+later invoice bills materially above the corrected amount), not a blanket "escalate
+this vendor forever". This is gated in CI by
 [`tests/integration/learning-from-corrections.test.ts`](tests/integration/learning-from-corrections.test.ts),
 which drives the real `amend()`/`reject()` → memory → recall path (nothing
 hand-injected) and asserts the tool changes on the re-bill and does **not** on the

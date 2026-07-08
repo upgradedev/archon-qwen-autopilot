@@ -171,9 +171,10 @@ human correction happened:
 | Same correction, next invoice **bills the corrected 3000** (control) | `draft_payment` | `draft_payment` | unchanged |
 
 **The measured result:** the correction signal flips `draft_payment → flag_for_review`
-on the genuine re-bill (**1/1**), and correctly leaves the compliant invoice as
-`draft_payment` (**0 false escalations** — the signal is amount-scoped, so it does not
-cry wolf on every future invoice). If the effect were smaller we would report it
+on the genuine re-bill (**1/1**), and leaves a **compliant** invoice — one that bills
+the corrected amount — as `draft_payment` (the signal is amount-scoped: it fires only
+when a later invoice bills materially above the corrected amount, so it is not a
+blanket "escalate this vendor forever"). If the effect were smaller we would report it
 smaller; here it is a clean, isolated flip on the one case that warrants it.
 
 **Why the escalation is legitimate, not circular.** The `flag_for_review` here is
