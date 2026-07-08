@@ -25,7 +25,7 @@
 
 import type { ToolDef } from "../qwen/client.js";
 import type { Embedder } from "../memory/embeddings.js";
-import type { MemoryStore } from "../memory/store.js";
+import type { MemoryStore, RecallHit } from "../memory/store.js";
 import { recall } from "../memory/memory.js";
 import {
   detectAmountAnomaly,
@@ -83,6 +83,14 @@ export interface LoopState {
   reconcileIssue: boolean; // R3/R4 confirmed by validate_invoice
   anomaly: boolean; // R6 confirmed by compute_variance_vs_history
   noTotal: boolean; // R1 confirmed by validate_invoice
+
+  // PRIOR HUMAN CORRECTIONS surfaced by recall — the "approval gate as training
+  // signal". These are FACTS read back from what a human previously did to this
+  // vendor's proposals (amended the amount down, or rejected one), NOT verdicts:
+  priorRejection: boolean; // a past proposal for this vendor was rejected by a human
+  priorCorrection: boolean; // any prior human correction on record for this vendor
+  correctedAmount: number | null; // the most-recent amount a human corrected this vendor DOWN to
+  rebillsCorrected: boolean; // this invoice re-bills materially ABOVE that corrected amount
 }
 
 export function newLoopState(invoice: NormalizedInvoice): LoopState {
@@ -105,8 +113,17 @@ export function newLoopState(invoice: NormalizedInvoice): LoopState {
     reconcileIssue: false,
     anomaly: false,
     noTotal: false,
+    priorRejection: false,
+    priorCorrection: false,
+    correctedAmount: null,
+    rebillsCorrected: false,
   };
 }
+
+// A future invoice must re-bill more than 5% ABOVE the human-corrected amount before
+// it counts as re-billing the corrected-down amount — a small margin so a trivial,
+// legitimate increase (or rounding) does not trip the escalation (no crying wolf).
+const CORRECTION_REBILL_MARGIN = 1.05;
 
 export interface AnalysisDeps {
   embedder: Embedder;
@@ -171,23 +188,76 @@ async function runRecall(state: LoopState, { embedder, memory }: AnalysisDeps): 
     const avg = amounts.reduce((s, a) => s + a, 0) / amounts.length;
     state.amountRatio = avg > 0 ? round2(inv.total / avg) : null;
   }
+
+  // THE APPROVAL GATE AS A TRAINING SIGNAL — read back any PRIOR HUMAN CORRECTIONS
+  // for this vendor from the recalled memories (written by amend()/reject()). A
+  // human amending a proposal's amount DOWN or rejecting one is durable feedback the
+  // next decision reasons over. Recall is already vendor-scoped, so these hits are
+  // this vendor's; we lift the structured `correction` metadata back out.
+  deriveCorrections(state, hits);
+
   state.didRecall = true;
   return recallSummary(state);
+}
+
+// Lift prior human-correction FACTS out of the vendor's recalled memories. Sets the
+// rejection flag, the most-recent human-corrected-down amount, and whether THIS
+// invoice re-bills materially above it — the signal the loop escalates on.
+function deriveCorrections(state: LoopState, hits: RecallHit[]): void {
+  const corrections = hits.filter(
+    (h) => h.metadata && typeof h.metadata === "object" && typeof (h.metadata as Record<string, unknown>)["correction"] === "string"
+  );
+  state.priorRejection = corrections.some((h) => (h.metadata as Record<string, unknown>)["correction"] === "rejected");
+
+  const amendedDowns = corrections
+    .filter(
+      (h) =>
+        (h.metadata as Record<string, unknown>)["correction"] === "amended_down" &&
+        typeof (h.metadata as Record<string, unknown>)["corrected_amount"] === "number"
+    )
+    .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? "")); // most recent first
+  if (amendedDowns.length > 0) {
+    state.correctedAmount = (amendedDowns[0]!.metadata as Record<string, unknown>)["corrected_amount"] as number;
+  }
+
+  state.priorCorrection = state.priorRejection || state.correctedAmount != null;
+  const inv = state.invoice;
+  state.rebillsCorrected =
+    state.correctedAmount != null && inv.total != null && inv.total > state.correctedAmount * CORRECTION_REBILL_MARGIN;
 }
 
 function recallSummary(state: LoopState): string {
   const inv = state.invoice;
   if (!inv.vendor) return "No vendor name on the invoice — no history could be recalled.";
   if (state.priorCount === 0) {
-    return `No prior invoices recalled for ${inv.vendor} — this vendor is new (first time seen).`;
+    const cold = `No prior invoices recalled for ${inv.vendor} — this vendor is new (first time seen).`;
+    const note = correctionNote(state);
+    return note ? `${cold} ${note}` : cold;
   }
   const parts = [
     `Recalled ${state.priorCount} prior invoice(s) for ${inv.vendor}.`,
     state.refMatch ? `A prior invoice shares this vendor reference (${inv.vendor_ref}).` : null,
     state.amountDateMatch ? `A prior invoice shares this amount and date.` : null,
     state.amountRatio != null ? `This total is ${state.amountRatio}x the vendor's historical average.` : null,
+    correctionNote(state),
   ].filter(Boolean);
   return parts.join(" ");
+}
+
+// Surface prior HUMAN CORRECTIONS in the natural-language recall observation (what
+// the real qwen-plus reads), so a reviewer — and the model — see that the approval
+// gate's feedback is being taken into account on this decision.
+function correctionNote(state: LoopState): string | null {
+  const notes: string[] = [];
+  if (state.correctedAmount != null) {
+    notes.push(
+      `A human previously corrected this vendor's amount DOWN to ${state.correctedAmount}` +
+        (state.rebillsCorrected ? `, and this invoice re-bills materially ABOVE that corrected amount` : ``) +
+        `.`
+    );
+  }
+  if (state.priorRejection) notes.push(`A prior proposal for this vendor was REJECTED by a human.`);
+  return notes.length ? notes.join(" ") : null;
 }
 
 function runValidate(state: LoopState): string {
@@ -265,7 +335,8 @@ export function computeEvidence(state: LoopState): string {
     `dup_checked=${b(state.didCheckDuplicate)} variance_computed=${b(state.didComputeVariance)} ` +
     `known_vendor=${b(state.knownVendor)} dup_candidate=${b(dupCandidate)} anomaly_candidate=${b(anomalyCandidate)} ` +
     `duplicate=${b(state.duplicate)} missing_fields=${b(state.missingFields)} ` +
-    `reconcile_issue=${b(state.reconcileIssue)} anomaly=${b(state.anomaly)} no_total=${b(state.noTotal)}`
+    `reconcile_issue=${b(state.reconcileIssue)} anomaly=${b(state.anomaly)} no_total=${b(state.noTotal)} ` +
+    `prior_correction=${b(state.priorCorrection)} rebills_corrected=${b(state.rebillsCorrected)}`
   );
 }
 

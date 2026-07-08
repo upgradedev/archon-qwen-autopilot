@@ -32,8 +32,12 @@ It is the **Track-4 (Autopilot Agent)** entry for the Global AI Hackathon Series
 with Qwen Cloud, and it is the **top layer on top of our Track-1 [Archon
 MemoryAgent](../qwen-memoryagent)**: the autopilot uses a persistent, queryable
 **pgvector memory** as its foundation, so every decision is grounded in what the
-agent has learned about a vendor across sessions, and every executed outcome is
-written back so the agent gets smarter over time.
+agent has learned about a vendor across sessions. Crucially, **the approval gate is
+also a training signal** — a human's amendment or rejection is written back with
+structured metadata, and **read on the vendor's next decision**: an invoice that
+re-bills an amount a human previously corrected *down* is escalated for review
+instead of straight-through paid. That behavior is **measured**, not asserted — see
+[Learning from corrections](#learning-from-corrections-the-approval-gate-as-a-training-signal).
 
 > **Positioning:** universal financial-intelligence terms only. `tax` / `tax_id`
 > are generic accounting fields, not tied to any national scheme or authority.
@@ -213,7 +217,9 @@ offline `FakeEmbedder`), the same pgvector `MemoryStore` pattern (real vs.
 in-memory), and the same "auto-select real Qwen vs. deterministic Fakes by
 environment" design. Where the MemoryAgent *answers questions* from memory, the
 Autopilot *acts* on memory: it recalls a vendor's history to ground a decision,
-then remembers the outcome so the next invoice is judged with more context. Track
+then remembers the outcome — including a human's amend/reject at the gate — so the
+next invoice is judged with more context (see [Learning from
+corrections](#learning-from-corrections-the-approval-gate-as-a-training-signal)). Track
 1 is the memory; Track 4 is the human-gated agent that reasons over it and acts
 only once a person approves.
 
@@ -677,6 +683,55 @@ npm run eval -- --gate  # CI gate: fail if accuracy < the floor
   `ONLINE` and prints the live model ids.
 
 Method, honesty caveats, and the offline/online split: [`EVAL.md`](EVAL.md).
+
+---
+
+## Learning from corrections: the approval gate as a training signal
+
+The human decisions at the approval gate are not just an audit trail — they are
+**feedback the next decision reads**. When a person **amends** a proposal's amount
+*down* or **rejects** it, that correction is written back to memory with structured
+metadata (`src/agents/autopilot-agent.ts`), and on the vendor's next invoice
+`recall_vendor_history` **lifts it back out** (`src/ap/analysis-tools.ts`) as a
+first-class piece of evidence the loop reasons over. The concrete, defensible rule:
+**an invoice that re-bills materially above an amount a human previously corrected
+down for that vendor is escalated (`flag_for_review`) instead of straight-through
+paid** — re-billing a corrected-down amount is a genuine error a clerk catches.
+
+This is **measured as a behavioural delta**, not asserted — the same decision
+invoice is run twice, differing only in whether the human correction happened:
+
+```bash
+npm run eval:corrections   # prints the before/after table (offline, zero spend)
+```
+
+| Scenario | Before (no correction) | After (with correction) | Changed? |
+|---|---|---|---|
+| Vendor amended down 5000→3000, next invoice **re-bills 5000** | `draft_payment` | `flag_for_review` | **yes** |
+| Same correction, next invoice **bills the corrected 3000** (negative control) | `draft_payment` | `draft_payment` | no |
+
+So the learning signal **flips `draft_payment → flag_for_review` on the genuine
+re-bill (1/1)** while **correctly leaving the compliant invoice alone** — it is
+amount-scoped, so it escalates the error, not every future invoice (no crying wolf).
+This is gated in CI by
+[`tests/integration/learning-from-corrections.test.ts`](tests/integration/learning-from-corrections.test.ts),
+which drives the real `amend()`/`reject()` → memory → recall path (nothing
+hand-injected) and asserts the tool changes on the re-bill and does **not** on the
+control.
+
+> **Scope, stated honestly.** This is a small, deliberately-isolated demonstration
+> that the gate feedback is *read and changes behaviour* — retiring any "write-only"
+> reading of the memory writeback — not a general online-learning claim. The
+> escalation rule is one conservative, independently-justifiable policy (a re-bill
+> above a human-corrected amount), and the offline delta is deterministic; a live
+> `qwen-plus` run reasons over the same recalled correction in natural language.
+> Method + caveats: [`EVAL.md`](EVAL.md#learning-from-corrections).
+
+Related, in the approval surface: a proposal whose **model-self-reported confidence**
+falls below a threshold (`LOW_CONFIDENCE_THRESHOLD`, default 0.5) is flagged **"low
+confidence — review carefully"** in `/pending` (the `lowConfidence` field) and the
+approval UI. This is a *prompt to look closer*, not a calibrated probability — the
+confidence is the model's own clamped number.
 
 ---
 

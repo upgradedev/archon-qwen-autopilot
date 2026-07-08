@@ -45,7 +45,7 @@ import {
 } from "./qwen/vision.js";
 import { scanForInjection } from "./qwen/injection-scan.js";
 import { assessRelevance } from "./qwen/relevance.js";
-import type { TraceStep } from "./types.js";
+import type { TraceStep, WorkItem } from "./types.js";
 
 const pkg = createRequire(import.meta.url)("../package.json") as { version: string };
 
@@ -509,7 +509,7 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
         response: { 200: looseObject },
       },
     },
-    async () => ({ pending: await agent.pending() })
+    async () => ({ pending: (await agent.pending()).map(withReviewFlags) })
   );
 
   app.get(
@@ -665,6 +665,22 @@ function inputSafety(extracted: ExtractionResult): {
     },
     relevance: assessRelevance(extracted.invoice),
   };
+}
+
+// The review-nudge threshold. A proposal whose model-self-reported confidence is
+// below this gets a visible "review carefully" flag in /pending + the approval UI.
+// This is NOT a calibrated probability — the confidence is the model's own number
+// (clamped 0..1 in the loop); the flag is only a prompt to look closer before
+// approving. Tunable via LOW_CONFIDENCE_THRESHOLD.
+export const LOW_CONFIDENCE_THRESHOLD = Number(process.env.LOW_CONFIDENCE_THRESHOLD || 0.5);
+
+// Attach derived, read-only review flags to a pending item for the approval surface.
+// Adds `lowConfidence` (see the threshold above). Does NOT mutate the stored item or
+// change any decision — advisory presentation only.
+export function withReviewFlags(item: WorkItem): WorkItem & { lowConfidence: boolean } {
+  const c = item.proposed?.confidence;
+  const lowConfidence = typeof c === "number" && c < LOW_CONFIDENCE_THRESHOLD;
+  return { ...item, lowConfidence };
 }
 
 // Accept either { invoice: {...} } or a bare invoice object; return the invoice

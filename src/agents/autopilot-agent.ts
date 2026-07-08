@@ -163,7 +163,14 @@ export class AutopilotAgent {
     const mergedArgs = { ...proposedArgs, ...(patch.args ?? {}) };
     item.proposed = { ...item.proposed, args: mergedArgs };
     item.amendment = { proposedArgs, amendedArgs: mergedArgs, amendedBy: patch.by, reason: patch.reason };
-    return this.executeAndRemember(item, mergedArgs, { amended: true, reason: patch.reason });
+    const result = await this.executeAndRemember(item, mergedArgs, { amended: true, reason: patch.reason });
+    // THE APPROVAL GATE AS A TRAINING SIGNAL: when the human approved a LOWER amount
+    // than was billed, record that downward correction as a first-class, recallable
+    // memory (structured metadata), so the next invoice from this vendor can reason
+    // over "we already corrected this vendor's amount down" and escalate a re-bill
+    // rather than straight-through paying it (see analysis-tools.ts runRecall).
+    await this.rememberAmountCorrection(item, mergedArgs, patch.reason);
+    return result;
   }
 
   // A human discards the proposal. Nothing executes; the rejection is remembered.
@@ -183,6 +190,15 @@ export class AutopilotAgent {
         `A proposed ${item.proposed.tool} for ${item.invoice.vendor ?? "a vendor"} ` +
         `(invoice ${item.invoice.vendor_ref ?? item.invoice.invoice_id}) was REJECTED by a human` +
         `${reason ? `: ${reason}` : "."}`,
+      // Structured so recall can surface this rejection as a first-class prior human
+      // correction on the vendor (the approval gate feeding the next decision).
+      metadata: {
+        correction: "rejected",
+        vendor: item.invoice.vendor,
+        tool: item.proposed.tool,
+        invoice_id: item.invoice.invoice_id,
+        reason: reason ?? null,
+      },
     });
     return item;
   }
@@ -198,6 +214,45 @@ export class AutopilotAgent {
       throw new ConflictError(`work item ${id} is already ${item.status} and cannot be acted on again`);
     }
     return item;
+  }
+
+  // Record a human DOWNWARD amount correction as a recallable memory. Fires only
+  // when the human approved a numeric `amount` materially BELOW what the vendor
+  // billed (the invoice total) — i.e. "you billed X, the agreed amount is the lower
+  // Y". Stored with structured metadata so runRecall can lift `corrected_amount`
+  // back out and the loop can escalate a future re-bill above it. A no-op for an
+  // amendment that did not lower the amount (e.g. a memo/account edit), so it never
+  // manufactures a correction that did not happen.
+  private async rememberAmountCorrection(
+    item: WorkItem,
+    approvedArgs: Record<string, unknown>,
+    reason?: string
+  ): Promise<void> {
+    const billed = item.invoice.total;
+    const approved = numericAmount(approvedArgs["amount"]);
+    if (approved == null || billed == null) return;
+    if (approved >= billed - 0.01) return; // not a downward correction → nothing to learn
+    const cur = item.invoice.currency;
+    const ref = item.invoice.vendor_ref ?? item.invoice.invoice_id;
+    await remember(this.embedder, this.memory, {
+      kind: "insight",
+      vendor: item.invoice.vendor ?? "_global",
+      sourceRef: item.invoice.invoice_id,
+      importance: 0.85,
+      content:
+        `Human CORRECTION for ${item.invoice.vendor ?? "a vendor"}: the ${item.proposed.tool} on invoice ${ref} ` +
+        `was AMENDED DOWN from ${cur} ${billed} (as billed) to ${cur} ${approved} (approved)` +
+        `${reason ? ` — ${reason}` : "."} The agreed amount for this vendor is ${cur} ${approved}; a later invoice ` +
+        `re-billing materially more should be escalated for review, not auto-paid.`,
+      metadata: {
+        correction: "amended_down",
+        vendor: item.invoice.vendor,
+        tool: item.proposed.tool,
+        corrected_amount: approved,
+        billed_amount: billed,
+        invoice_id: item.invoice.invoice_id,
+      },
+    });
   }
 
   private async executeAndRemember(
@@ -238,4 +293,15 @@ export class AutopilotAgent {
     });
     return item;
   }
+}
+
+// Coerce an amount arg (number, or a numeric string) to a finite number, else null.
+// Kept lenient because a human amend may arrive as a string from a form field.
+function numericAmount(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string" && v.trim() !== "") {
+    const n = Number(v.replace(/[^0-9.\-]/g, ""));
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
 }

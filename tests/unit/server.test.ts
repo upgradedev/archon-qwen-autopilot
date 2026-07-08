@@ -12,6 +12,8 @@ import { InMemoryWorkItemStore } from "../../src/ap/workitem-store.js";
 import { defaultLoop } from "../../src/ap/loop.js";
 import { fakeSinks } from "../../src/ap/sinks.js";
 import { DailyRateLimiter } from "../../src/ap/rate-limit.js";
+import { withReviewFlags, LOW_CONFIDENCE_THRESHOLD } from "../../src/server.js";
+import type { WorkItem } from "../../src/types.js";
 import { FakeExtractionClient } from "../../src/qwen/vision.js";
 
 let app: FastifyInstance;
@@ -65,6 +67,23 @@ test("GET /health returns ok with embedder + decider identity (no DB, no key)", 
   assert.equal(body.status, "ok");
   assert.ok(typeof body.embedder === "string" && body.embedder.length > 0);
   assert.ok(typeof body.decider === "string" && body.decider.length > 0);
+});
+
+test("withReviewFlags flags a below-threshold confidence for review, and leaves a confident one alone", () => {
+  const base = (confidence: number): WorkItem =>
+    ({ proposed: { tool: "draft_payment", args: {}, reasoning: "", confidence, modelId: "x" } } as unknown as WorkItem);
+  assert.ok(LOW_CONFIDENCE_THRESHOLD > 0 && LOW_CONFIDENCE_THRESHOLD <= 1);
+  assert.equal(withReviewFlags(base(0.2)).lowConfidence, true, "0.2 < threshold → flagged");
+  assert.equal(withReviewFlags(base(0.9)).lowConfidence, false, "0.9 ≥ threshold → not flagged");
+});
+
+test("GET /pending carries the advisory lowConfidence review flag on each item", async () => {
+  await app.inject({ method: "POST", url: "/intake", payload: { invoice: sampleInvoice } });
+  const res = await app.inject({ method: "GET", url: "/pending" });
+  assert.equal(res.statusCode, 200);
+  const items = res.json().pending as Array<{ lowConfidence: unknown }>;
+  assert.ok(items.length >= 1);
+  for (const it of items) assert.equal(typeof it.lowConfidence, "boolean", "every pending item exposes lowConfidence");
 });
 
 test("CORS: a cross-origin GET reflects the request origin", async () => {
