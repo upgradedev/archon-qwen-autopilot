@@ -209,6 +209,20 @@ pgvector for persistent memory and the approval queue.
   dep-audit in CI, swagger docs, a Dockerfile + compose, and a deploy note for
   Alibaba Cloud ECS / Function Compute + ApsaraDB RDS for PostgreSQL (pgvector).
 
+### The architectural stance: an agent embedded in a workflow
+
+Archon Autopilot is deliberately **an autonomous agent embedded in a workflow**, not
+an open-ended agent. Its core is a genuine bounded ReAct agent — `qwen-plus` chooses
+each step and can chain several read/analyze tools before it acts — but that agent's
+**consequential edge** is wrapped in a **deterministic, auditable workflow**:
+`normalize → agentic decision → human gate → execute`. That is a design *choice*, not
+a limitation: where money moves, we want **predictability and auditability**, so the
+side-effecting edge is given workflow semantics (a fixed, inspectable path with a
+structural human checkpoint) while the *reasoning* stays fully agentic. The MCP server
+is a **second surface** onto the exact same agent + gate, not a second decision path.
+The decision framework is simply: *agentic where judgement helps, workflow semantics
+at the money edge where predictability is required.*
+
 ---
 
 ## How it layers on the Track-1 MemoryAgent
@@ -749,6 +763,42 @@ falls below a threshold (`LOW_CONFIDENCE_THRESHOLD`, default 0.5) is flagged **"
 confidence — review carefully"** in `/pending` (the `lowConfidence` field) and the
 approval UI. This is a *prompt to look closer*, not a calibrated probability — the
 confidence is the model's own clamped number.
+
+## How this maps to the judging rubric
+
+A one-glance guide from each judging criterion to the evidence for it. A click-by-click
+walkthrough is in [`docs/JUDGE-GUIDE.md`](docs/JUDGE-GUIDE.md).
+
+| Criterion (weight) | Where to look |
+|---|---|
+| **Technical Depth & Engineering (30%)** | A real bounded **multi-step ReAct loop** over `qwen-plus` **function-calling** (`src/ap/loop.ts`) across a two-tier tool set — autonomous read/analyze skills vs. human-gated terminal actions — with the **same `tool_calls`-parse path online and offline** (a canned `FakeQwenChatClient`), so the integration is exercised in CI with no key. The **same injectable agent** is exposed on **two surfaces** (HTTP + Approval UI and a **seven-tool MCP server**, `@modelcontextprotocol/sdk`), wired from one `resolveDeps()` so they can't drift, plus a derived **nine-skill custom-skills catalog**. Real `qwen-vl-max` document vision on the upload path. Full test pyramid (unit → integration → Playwright e2e) + an **80% coverage gate** + **documentation-drift fitness functions** + gitleaks + dep-audit; live on Alibaba Cloud (ECS + pgvector). |
+| **Innovation & AI Creativity (30%)** | **The approval gate is also the training signal** — a human's amend/reject is written back and *read* on the vendor's next decision, so re-billing an amount a person corrected *down* is escalated instead of paid (a **measured** before/after behavioural delta; see [`EVAL.md`](EVAL.md)). Plus the **structural safety design**: the model's tool catalog **excludes** approve/pay, so no prompt-injection in an untrusted invoice can reach a side-effect — proven by a multi-step tool-attack suite. Decision quality is a **measured** number (21/22 offline, gated), not asserted. |
+| **Problem Value & Impact (25%)** | A real, recurring SMB pain: accounts-payable clerks hand-triage messy incoming invoices — accrue, pay, query, or escalate — under real duplicate-payment and over-billing risk. Archon runs that triage automatically to a *proposed* action and stops for a human, so it saves the triage work **without** ever moving money unattended. |
+| **Presentation & Documentation (15%)** | This README + the architecture diagram + [`EVAL.md`](EVAL.md) (method + honest caveats) + [`docs/JUDGE-GUIDE.md`](docs/JUDGE-GUIDE.md) + the interactive `/docs` API explorer + the live Alibaba Cloud URL + the demo video. |
+
+### Consciously deferred — an A2A validator-debate layer
+
+We evaluated adding an **agent-to-agent (A2A) "validator debate"** in front of the gate
+— a second agent (or a panel) that argues for/against each proposal to reach consensus
+before it reaches a human. We **deliberately did not build it**, and that is a
+considered decision, not a gap:
+
+- **It fights the invariant.** The safety guarantee here is a *deterministic,
+  auditable structural gate* — a fixed path where the model has no money-moving tool
+  and a human approves the exact args. A consensus/debate step injects
+  **nondeterminism** (the same invoice can be argued either way run-to-run) right at
+  the money-adjacent edge, which is exactly where we chose predictability.
+- **Cost and latency.** Multiple extra `qwen-plus` turns per invoice for a verdict a
+  human still has to confirm — it spends budget and adds latency without changing who
+  is ultimately accountable (the approver).
+- **The value it targets is already covered**, deterministically: cross-checks
+  (R1–R6), memory-grounded duplicate/anomaly detection, the injection fence + advisory
+  scan, and the learning-from-corrections signal — all inspectable, all free offline.
+
+If a future need arises (e.g. genuinely ambiguous high-value cases), the clean seam is
+to add such a reviewer as **another advisory input to the human**, never as an
+autonomous consensus that can gate a side-effect. Recording the decision — and *why* —
+is worth more here than building it.
 
 ---
 
