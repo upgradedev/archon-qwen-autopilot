@@ -1,5 +1,13 @@
 # Archon Autopilot — a human-gated accounts-payable agent (Qwen · Track 4)
 
+[![CI](https://github.com/upgradedev/archon-qwen-autopilot/actions/workflows/ci.yml/badge.svg)](https://github.com/upgradedev/archon-qwen-autopilot/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-Alibaba%20Cloud-ff6a00?logo=alibabacloud&logoColor=white)](https://autopilot.43.106.13.19.sslip.io)
+[![Demo Video](https://img.shields.io/badge/Demo%20Video-watch-ff0000?logo=youtube)](demo/video/final/archon-autopilot-demo.mp4)
+[![Tests](https://img.shields.io/badge/Tests-168%20node%3Atest%20%2B%20Playwright-brightgreen)](tests)
+[![Project Story](https://img.shields.io/badge/Project%20Story-Devpost-003e54)](demo/PROJECT_STORY.md)
+<!-- TODO after YouTube upload: point the Demo Video badge at the YouTube URL -->
+
 Archon Autopilot is a **human-gated accounts-payable (AP) agent**. For each
 incoming vendor invoice it runs a **bounded multi-step ReAct loop** over **Qwen
 function-calling**: the agent autonomously **recalls the vendor's history**,
