@@ -107,6 +107,7 @@
     .trace-step .obs { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
     .trace-step .why { color: var(--text); font-size: 12px; opacity: .75; margin-top: 1px; }
     .stopreason { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-left: 10px; }
+    .lowconf { display: inline-block; margin-left: 10px; padding: 1px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; color: #7a4f01; background: #fde68a; border: 1px solid #d9a441; }
     textarea {
       width: 100%;
       min-height: 96px;
@@ -586,11 +587,18 @@
       ]);
 
       const conf = typeof p.confidence === 'number' ? ' · confidence ' + Math.round(p.confidence * 100) + '%' : '';
+      // A model-self-reported confidence below the review threshold gets a visible
+      // "review carefully" nudge. This is the model's own number (clamped 0..1), not a
+      // calibrated probability — a prompt to look closer, nothing more.
+      const lowConf = (typeof item.lowConfidence === 'boolean')
+        ? item.lowConfidence
+        : (typeof p.confidence === 'number' && p.confidence < 0.5);
       const proposed = el('div', { 'data-tour': 'proposed' }, [
         el('div', { class: 'section-label', text: 'Proposed action (Qwen)' }),
         el('span', { class: 'tool', text: p.tool || 'flag_for_review' }),
         el('span', { class: 'conf', text: (p.modelId ? p.modelId : '') + conf }),
         (item.stopReason ? el('span', { class: 'stopreason', text: 'stop: ' + item.stopReason }) : document.createTextNode('')),
+        (lowConf ? el('span', { class: 'lowconf', title: 'The model reported low confidence in this proposal — check the arguments and reasoning before approving.', text: 'low confidence — review carefully' }) : document.createTextNode('')),
         el('div', { class: 'reasoning', text: p.reasoning || '' }),
       ]);
 

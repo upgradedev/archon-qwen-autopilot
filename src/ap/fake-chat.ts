@@ -34,6 +34,8 @@ interface Evidence {
   reconcile_issue: boolean;
   anomaly: boolean;
   no_total: boolean;
+  prior_correction: boolean;
+  rebills_corrected: boolean;
 }
 
 export class FakeQwenChatClient implements QwenChatClient {
@@ -84,6 +86,19 @@ function chooseNextTool(e: Evidence): ToolCall {
       priority: "normal",
       reasoning: "The confirmed variance is several times the vendor's historical average — a human should confirm before posting.",
       confidence: 0.72,
+    });
+  }
+  // 4b) LEARNED FROM CORRECTIONS — the approval gate as a training signal. A human
+  //     previously corrected this vendor's amount DOWN, and this invoice re-bills
+  //     materially above that corrected amount. Re-billing an amount a human already
+  //     corrected down is a genuine error a clerk catches, so escalate rather than
+  //     straight-through pay — the gate's own past feedback outranks payment.
+  if (e.rebills_corrected) {
+    return terminal("flag_for_review", {
+      reason: "This invoice re-bills an amount a human previously corrected DOWN for this vendor — escalate rather than auto-pay.",
+      priority: "high",
+      reasoning: "A prior human amend-down for this vendor is on record and this invoice bills materially above the corrected amount; a person should confirm before it is paid.",
+      confidence: 0.7,
     });
   }
   // 5) Missing required fields or figures that do not reconcile → query the vendor.
@@ -143,5 +158,7 @@ function parseEvidence(prompt: string): Evidence {
     reconcile_issue: flag("reconcile_issue"),
     anomaly: flag("anomaly"),
     no_total: flag("no_total"),
+    prior_correction: flag("prior_correction"),
+    rebills_corrected: flag("rebills_corrected"),
   };
 }

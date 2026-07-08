@@ -147,6 +147,55 @@ the deterministic policy is perfect. We deliberately **do not gate arg-sanity** 
 Fake omits some args by design) and **do not gate the online number** (it needs a
 key and costs spend; it is captured and reported, not enforced).
 
+## Learning from corrections
+
+The eval above grades a single invoice in isolation. A separate, complementary
+measurement answers a different question: **does a human correction at the approval
+gate actually change the NEXT decision for that vendor?** (This is what makes the
+"the agent gets smarter" claim true rather than write-only.)
+
+```bash
+npm run eval:corrections   # offline, zero spend
+```
+
+It reports a **behavioural delta, not an accuracy number** — and this is a
+deliberate honesty choice. The eval's whole credibility rests on labels being
+business ground truth, never back-derived from our policy; so rather than invent a
+label for these scenarios and grade against it, we **run the same decision invoice
+twice and report what the agent proposes each time**, differing *only* in whether the
+human correction happened:
+
+| Scenario | Before (no correction) | After (with correction) | Δ |
+|---|---|---|---|
+| Vendor amended down 5000→3000, next invoice **re-bills 5000** | `draft_payment` | `flag_for_review` | **changed** |
+| Same correction, next invoice **bills the corrected 3000** (control) | `draft_payment` | `draft_payment` | unchanged |
+
+**The measured result:** the correction signal flips `draft_payment → flag_for_review`
+on the genuine re-bill (**1/1**), and leaves a **compliant** invoice — one that bills
+the corrected amount — as `draft_payment` (the signal is amount-scoped: it fires only
+when a later invoice bills materially above the corrected amount, so it is not a
+blanket "escalate this vendor forever"). If the effect were smaller we would report it
+smaller; here it is a clean, isolated flip on the one case that warrants it.
+
+**Why the escalation is legitimate, not circular.** The `flag_for_review` here is
+independently justifiable: re-billing an amount a human already corrected *down* for
+a vendor is a concrete error an AP clerk catches — the label survives *without*
+reference to the fact that we built a correction-reader. It is a **conservative,
+recency/amount-scoped** policy (only when the new invoice bills materially above the
+corrected amount), not "escalate this vendor forever after one correction".
+
+**What is exercised.** The measurement (and its CI-gated twin,
+`tests/integration/learning-from-corrections.test.ts`) drives the **real**
+`agent.amend()` / `agent.reject()` → memory-writeback → `recall_vendor_history` path
+— nothing is hand-injected — so it proves the whole feedback loop, not just a flag.
+Offline this is deterministic (the `FakeQwenChatClient` branches on the
+`rebills_corrected` evidence flag); online, `qwen-plus` reads the same recalled
+correction in natural language and chooses freely.
+
+**Scope, owned.** Two scenarios (a genuine re-bill + a negative control) — a small,
+honest demonstration that the approval gate's feedback is *read and changes
+behaviour*, not a general online-learning claim.
+
 ## Reproduce
 
 ```bash
