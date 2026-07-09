@@ -1,0 +1,106 @@
+name: Load Test (k6)
+
+# k6 load / performance test — the LOAD tier of the testing pyramid.
+#
+# MANUAL ONLY (workflow_dispatch). It is deliberately NOT wired to push / PR: it
+# needs the k6 binary and a running server, and load-testing on every commit is
+# waste. It boots the OFFLINE Autopilot server (no DASHSCOPE_API_KEY → the
+# deterministic Fakes, no DATABASE_URL → in-memory stores) with a high daily
+# upload cap so POST /intake (the main workflow endpoint) is actually exercised
+# under load rather than immediately rate-limited — with ZERO spend and no
+# side-effects (intake only proposes; nothing executes).
+#
+# Run: Actions -> "Load Test (k6)" -> Run workflow  (or gh workflow run load-test.yml).
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Base URL to load-test. Leave blank to boot + test the offline server locally."
+        required: false
+        default: ""
+      run_ramp:
+        description: "Run the 0->20->50->0 ramp scenario after the smoke. Default true."
+        required: false
+        default: "true"
+        type: boolean
+      intake_ratio:
+        description: "Share of iterations that POST /intake (0..1). Default 0.3."
+        required: false
+        default: "0.3"
+
+permissions:
+  contents: read
+
+jobs:
+  load:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install deps
+        run: npm ci
+
+      # Install the k6 binary from the official Grafana apt repository.
+      - name: Install k6
+        run: |
+          set -euo pipefail
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
+            --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
+            | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install -y k6
+          k6 version
+
+      # Boot the OFFLINE server only when no external base_url was supplied. Fakes +
+      # in-memory stores + a high daily cap → real load, zero spend, no side-effects.
+      - name: Start offline server (when no base_url given)
+        if: ${{ github.event.inputs.base_url == '' }}
+        env:
+          DASHSCOPE_API_KEY: ""
+          DATABASE_URL: ""
+          UPLOAD_DAILY_LIMIT: "1000000"
+          PORT: "9000"
+        run: |
+          set -euo pipefail
+          nohup npm start > server.log 2>&1 &
+          echo "SERVER_PID=$!" >> "$GITHUB_ENV"
+          # Wait for liveness (up to ~60s).
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:9000/health >/dev/null 2>&1; then
+              echo "server is up"; break
+            fi
+            sleep 1
+          done
+          curl -fsS http://localhost:9000/health
+
+      - name: Run k6 load test
+        env:
+          BASE_URL: ${{ github.event.inputs.base_url }}
+          RUN_RAMP: ${{ github.event.inputs.run_ramp }}
+          INTAKE_RATIO: ${{ github.event.inputs.intake_ratio }}
+        run: |
+          set -euo pipefail
+          TARGET="${BASE_URL:-http://localhost:9000}"
+          echo "Target: ${TARGET}  |  RUN_RAMP=${RUN_RAMP}  |  INTAKE_RATIO=${INTAKE_RATIO}"
+          BASE_URL="${TARGET}" k6 run load/workflow-load.js
+
+      - name: Stop offline server
+        if: ${{ always() && env.SERVER_PID != '' }}
+        run: kill "${SERVER_PID}" 2>/dev/null || true
+
+      - name: Upload k6 summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-load-summary
+          path: load-summary.json
+          if-no-files-found: warn
+          retention-days: 14
