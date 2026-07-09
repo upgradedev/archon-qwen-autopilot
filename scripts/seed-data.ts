@@ -1,17 +1,8 @@
-import { PgVectorStore } from "../src/memory/store.js";
-import { defaultEmbedder } from "../src/memory/embeddings.js";
-import { PgWorkItemStore } from "../src/ap/workitem-store.js";
-import { defaultLoop } from "../src/ap/loop.js";
-import { defaultSinks } from "../src/ap/sinks.js";
-import { AutopilotAgent } from "../src/agents/autopilot-agent.js";
+import { buildAgent } from "../src/deps.js";
 
 async function main() {
-  const embedder = defaultEmbedder();
-  const memory = new PgVectorStore();
-  const workitems = new PgWorkItemStore();
-  const loop = defaultLoop();
-  const sinks = defaultSinks(workitems);
-  const agent = new AutopilotAgent(embedder, memory, workitems, loop, sinks);
+  const { agent, deps } = buildAgent();
+  const { memory, workitems } = deps;
 
   console.log("Clearing previous autopilot data...");
   await memory.clear();
