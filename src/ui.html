@@ -122,6 +122,33 @@
       line-height: 1.5;
     }
     textarea:focus { outline: none; border-color: var(--accent); }
+    .warn-step {
+      background: rgba(253, 230, 138, 0.08) !important;
+      border: 1px solid rgba(217, 164, 65, 0.4) !important;
+      padding: 10px;
+      border-radius: 8px;
+      margin: 4px 0;
+    }
+    .warn-step .tool {
+      color: var(--amber) !important;
+      font-weight: bold;
+    }
+    .force-btn {
+      display: inline-block;
+      margin-left: 12px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      color: #ffffff;
+      background: #d97706;
+      border: 1px solid #b45309;
+      cursor: pointer;
+      line-height: 1.2;
+    }
+    .force-btn:hover {
+      background: #b45309;
+    }
     .findings { display: grid; gap: 4px; }
     .finding { display: flex; gap: 8px; align-items: baseline; font-size: 12.5px; }
     .finding .rule { font-family: var(--mono); color: var(--muted); min-width: 26px; }
@@ -527,14 +554,24 @@
       return data;
     }
 
-    function renderFindings(findings) {
+    function renderFindings(findings, onOverride) {
       const wrap = el('div', { class: 'findings' });
       (findings || []).forEach((f) => {
         const cls = f.passed ? 'ok' : ('sev-' + (f.severity || 'info'));
-        wrap.appendChild(el('div', { class: 'finding' }, [
+        const kids = [
           el('span', { class: 'rule', text: f.rule || '' }),
           el('span', { class: cls, text: (f.passed ? '✓ ' : '✗ ') + (f.message || '') }),
-        ]));
+        ];
+        if (f.rule === 'R5' && !f.passed && onOverride) {
+          const forceBtn = el('button', {
+            class: 'force-btn',
+            type: 'button',
+            text: 'Ignore & Pay anyway'
+          });
+          forceBtn.onclick = onOverride;
+          kids.push(forceBtn);
+        }
+        wrap.appendChild(el('div', { class: 'finding' }, kids));
       });
       return wrap;
     }
@@ -551,7 +588,10 @@
         if (t.observation) body.appendChild(el('div', { class: 'obs', text: '→ ' + t.observation }));
         if (t.reasoning) body.appendChild(el('div', { class: 'why', text: t.reasoning }));
         kids.push(body);
-        wrap.appendChild(el('div', { class: 'trace-step' }, kids));
+
+        const isDup = t.tool === 'check_duplicate' && (t.observation || '').includes('DUPLICATE');
+        const stepCls = 'trace-step' + (isDup ? ' warn-step' : '');
+        wrap.appendChild(el('div', { class: stepCls }, kids));
       });
       return wrap;
     }
@@ -601,9 +641,10 @@
       const lowConf = (typeof item.lowConfidence === 'boolean')
         ? item.lowConfidence
         : (typeof p.confidence === 'number' && p.confidence < 0.5);
+      const toolSpan = el('span', { class: 'tool', text: p.tool || 'flag_for_review' });
       const proposed = el('div', { 'data-tour': 'proposed' }, [
         el('div', { class: 'section-label', text: 'Proposed action (Qwen)' }),
-        el('span', { class: 'tool', text: p.tool || 'flag_for_review' }),
+        toolSpan,
         el('span', { class: 'conf', text: (p.modelId ? p.modelId : '') + conf }),
         (item.stopReason ? el('span', { class: 'stopreason', text: 'stop: ' + item.stopReason }) : document.createTextNode('')),
         (lowConf ? el('span', { class: 'lowconf', title: 'The model reported low confidence in this proposal — check the arguments and reasoning before approving.', text: 'low confidence — review carefully' }) : document.createTextNode('')),
@@ -628,7 +669,20 @@
         body.appendChild(el('div', { 'data-tour': 'trace' }, [ collapsible(label, renderTrace(item.trace)) ]));
       }
       if ((item.findings || []).length) {
-        body.appendChild(el('div', {}, [ el('div', { class: 'section-label', text: 'Validation findings' }), renderFindings(item.findings) ]));
+        const onOverride = () => {
+          item.proposed.tool = 'draft_payment';
+          toolSpan.textContent = 'draft_payment';
+          const currentArgs = JSON.parse(ta.value || '{}');
+          const newArgs = {
+            vendor: inv.vendor,
+            amount: inv.total,
+            vendor_ref: inv.vendor_ref,
+            ...currentArgs
+          };
+          ta.value = JSON.stringify(newArgs, null, 2);
+          toast('Proposed action changed to draft_payment. Review and click "Approve" or "Amend & approve" to execute.', 'ok');
+        };
+        body.appendChild(el('div', {}, [ el('div', { class: 'section-label', text: 'Validation findings' }), renderFindings(item.findings, onOverride) ]));
       }
       if ((item.recalled || []).length) {
         body.appendChild(el('div', {}, [ el('div', { class: 'section-label', text: 'Recalled vendor history' }), renderRecalled(item.recalled) ]));
