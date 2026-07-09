@@ -6,7 +6,6 @@
 [![Demo Video](https://img.shields.io/badge/Demo%20Video-watch-ff0000?logo=youtube)](demo/video/final/archon-autopilot-demo.mp4)
 [![Tests](https://img.shields.io/badge/Tests-168%20node%3Atest%20%2B%20Playwright-brightgreen)](tests)
 [![Project Story](https://img.shields.io/badge/Project%20Story-Devpost-003e54)](demo/PROJECT_STORY.md)
-<!-- TODO after YouTube upload: point the Demo Video badge at the YouTube URL -->
 
 Archon Autopilot is a **human-gated accounts-payable (AP) agent**. For each
 incoming vendor invoice it runs a **bounded multi-step ReAct loop** over **Qwen
@@ -32,8 +31,16 @@ It is the **Track-4 (Autopilot Agent)** entry for the Global AI Hackathon Series
 with Qwen Cloud, and it is the **top layer on top of our Track-1 [Archon
 MemoryAgent](../qwen-memoryagent)**: the autopilot uses a persistent, queryable
 **pgvector memory** as its foundation, so every decision is grounded in what the
-agent has learned about a vendor across sessions, and every executed outcome is
-written back so the agent gets smarter over time.
+agent has learned about a vendor across sessions. Crucially, **the approval gate is
+also a training signal** — a human's amendment or rejection is written back with
+structured metadata, and **read on the vendor's next decision**: an invoice that
+re-bills an amount a human previously corrected *down* is escalated for review
+instead of straight-through paid. The **mechanism is measured** — writeback → recall →
+the correction surfaced in the observation the model reads, with a before/after
+behavioural delta (the offline escalation is the deterministic policy guard, exactly
+as the eval's offline number is; online, `qwen-plus` reasons over the same recalled
+correction) — see
+[Learning from corrections](#learning-from-corrections-the-approval-gate-as-a-training-signal).
 
 > **Positioning:** universal financial-intelligence terms only. `tax` / `tax_id`
 > are generic accounting fields, not tied to any national scheme or authority.
@@ -202,6 +209,20 @@ pgvector for persistent memory and the approval queue.
   dep-audit in CI, swagger docs, a Dockerfile + compose, and a deploy note for
   Alibaba Cloud ECS / Function Compute + ApsaraDB RDS for PostgreSQL (pgvector).
 
+### The architectural stance: an agent embedded in a workflow
+
+Archon Autopilot is deliberately **an autonomous agent embedded in a workflow**, not
+an open-ended agent. Its core is a genuine bounded ReAct agent — `qwen-plus` chooses
+each step and can chain several read/analyze tools before it acts — but that agent's
+**consequential edge** is wrapped in a **deterministic, auditable workflow**:
+`normalize → agentic decision → human gate → execute`. That is a design *choice*, not
+a limitation: where money moves, we want **predictability and auditability**, so the
+side-effecting edge is given workflow semantics (a fixed, inspectable path with a
+structural human checkpoint) while the *reasoning* stays fully agentic. The MCP server
+is a **second surface** onto the exact same agent + gate, not a second decision path.
+The decision framework is simply: *agentic where judgement helps, workflow semantics
+at the money edge where predictability is required.*
+
 ---
 
 ## How it layers on the Track-1 MemoryAgent
@@ -213,7 +234,9 @@ offline `FakeEmbedder`), the same pgvector `MemoryStore` pattern (real vs.
 in-memory), and the same "auto-select real Qwen vs. deterministic Fakes by
 environment" design. Where the MemoryAgent *answers questions* from memory, the
 Autopilot *acts* on memory: it recalls a vendor's history to ground a decision,
-then remembers the outcome so the next invoice is judged with more context. Track
+then remembers the outcome — including a human's amend/reject at the gate — so the
+next invoice is judged with more context (see [Learning from
+corrections](#learning-from-corrections-the-approval-gate-as-a-training-signal)). Track
 1 is the memory; Track 4 is the human-gated agent that reasons over it and acts
 only once a person approves.
 
@@ -376,19 +399,32 @@ freely (upload an invoice, watch it process, approve/amend/reject). This is a
 deliberate, rules-compliant choice: the app must be judge-testable end to end. There
 is no sign-in wall by design.
 
-To keep an open, unauthenticated endpoint from running up the model bill, **invoice
-uploads are rate-limited to 20/day** (per UTC day, resetting at 00:00 UTC) across
-the four budget-consuming upload routes — `POST /intake`, `POST /intake/stream`,
-`POST /intake/document`, **and `POST /extract/document`** (all four share one
-budget). A `/extract/document` upload mints a single-use ticket so the *follow-up*
+To keep an open, unauthenticated endpoint from running up the model bill, invoice
+uploads are rate-limited **per UTC day** (resetting at 00:00 UTC) across the four
+budget-consuming upload routes — `POST /intake`, `POST /intake/stream`, `POST
+/intake/document`, **and `POST /extract/document`** (all four share one budget). A
+`/extract/document` upload mints a single-use ticket so the *follow-up*
 `/intake/stream` call that presents it does not consume a second slot — the pair
-costs one budget slot, not two. **Upload is rate-limited to 20/day to
-protect the Qwen API budget.** The limiter lives in
-[`src/ap/rate-limit.ts`](src/ap/rate-limit.ts) (`DailyRateLimiter`, cap configurable
-via `UPLOAD_DAILY_LIMIT`); it is checked **after** payload/file validation, so an
-invalid request or an unsupported/oversize document never burns budget, and an
-over-limit upload returns `429` with a clear message. Validation, the approval gate, and every read endpoint (`/pending`,
-`/decided`, `/skills`, `/health`) are **not** limited.
+costs one budget slot, not two.
+
+The limiter ([`src/ap/rate-limit.ts`](src/ap/rate-limit.ts), `DailyRateLimiter`) is
+**two-tier**, so one busy visitor can never lock a judge out on their first upload:
+
+- a **per-client bucket** (default **100/day**, `UPLOAD_DAILY_LIMIT`) keyed by the
+  caller's IP, so each visitor gets their own fair budget; and
+- a **global daily backstop** across all clients (default **2000/day**,
+  `UPLOAD_GLOBAL_DAILY_LIMIT`) — the hard, spoof-proof bound on total Qwen spend.
+
+A request is refused (`429`) only when **either** the caller's own bucket **or** the
+global backstop is full, and the message says which. The per-client key is
+**best-effort** — behind the reverse proxy the client IP comes from
+`X-Forwarded-For`, which a client can spoof, so the **global backstop** (not the
+per-client key) is the real spend bound; it is sized well above the per-client cap so
+distinct judges never collide on it. Both caps are env-tunable for a judging window.
+The limiter is checked **after** payload/file validation, so an invalid request or an
+unsupported/oversize document never burns budget. Validation, the approval gate, and
+every read endpoint (`/pending`, `/decided`, `/skills`, `/health`) are **not**
+limited.
 
 ### Real document upload → Qwen-VL vision extraction
 
@@ -677,6 +713,92 @@ npm run eval -- --gate  # CI gate: fail if accuracy < the floor
   `ONLINE` and prints the live model ids.
 
 Method, honesty caveats, and the offline/online split: [`EVAL.md`](EVAL.md).
+
+---
+
+## Learning from corrections: the approval gate as a training signal
+
+The human decisions at the approval gate are not just an audit trail — they are
+**feedback the next decision reads**. When a person **amends** a proposal's amount
+*down* or **rejects** it, that correction is written back to memory with structured
+metadata (`src/agents/autopilot-agent.ts`), and on the vendor's next invoice
+`recall_vendor_history` **lifts it back out** (`src/ap/analysis-tools.ts`) as a
+first-class piece of evidence the loop reasons over. The concrete, defensible rule:
+**an invoice that re-bills materially above an amount a human previously corrected
+down for that vendor is escalated (`flag_for_review`) instead of straight-through
+paid** — re-billing a corrected-down amount is a genuine error a clerk catches.
+
+This is **measured as a behavioural delta**, not asserted — the same decision
+invoice is run twice, differing only in whether the human correction happened:
+
+```bash
+npm run eval:corrections   # prints the before/after table (offline, zero spend)
+```
+
+| Scenario | Before (no correction) | After (with correction) | Changed? |
+|---|---|---|---|
+| Vendor amended down 5000→3000, next invoice **re-bills 5000** | `draft_payment` | `flag_for_review` | **yes** |
+| Same correction, next invoice **bills the corrected 3000** (negative control) | `draft_payment` | `draft_payment` | no |
+
+So the learning signal **flips `draft_payment → flag_for_review` on the genuine
+re-bill (1/1)** while **leaving a compliant invoice — one that bills the corrected
+amount — as `draft_payment`**: the escalation is amount-scoped (it fires only when a
+later invoice bills materially above the corrected amount), not a blanket "escalate
+this vendor forever". This is gated in CI by
+[`tests/integration/learning-from-corrections.test.ts`](tests/integration/learning-from-corrections.test.ts),
+which drives the real `amend()`/`reject()` → memory → recall path (nothing
+hand-injected) and asserts the tool changes on the re-bill and does **not** on the
+control.
+
+> **Scope, stated honestly.** This is a small, deliberately-isolated demonstration
+> that the gate feedback is *read and changes behaviour* — retiring any "write-only"
+> reading of the memory writeback — not a general online-learning claim. The
+> escalation rule is one conservative, independently-justifiable policy (a re-bill
+> above a human-corrected amount), and the offline delta is deterministic; a live
+> `qwen-plus` run reasons over the same recalled correction in natural language.
+> Method + caveats: [`EVAL.md`](EVAL.md#learning-from-corrections).
+
+Related, in the approval surface: a proposal whose **model-self-reported confidence**
+falls below a threshold (`LOW_CONFIDENCE_THRESHOLD`, default 0.5) is flagged **"low
+confidence — review carefully"** in `/pending` (the `lowConfidence` field) and the
+approval UI. This is a *prompt to look closer*, not a calibrated probability — the
+confidence is the model's own clamped number.
+
+## How this maps to the judging rubric
+
+A one-glance guide from each judging criterion to the evidence for it. A click-by-click
+walkthrough is in [`docs/JUDGE-GUIDE.md`](docs/JUDGE-GUIDE.md).
+
+| Criterion (weight) | Where to look |
+|---|---|
+| **Technical Depth & Engineering (30%)** | A real bounded **multi-step ReAct loop** over `qwen-plus` **function-calling** (`src/ap/loop.ts`) across a two-tier tool set — autonomous read/analyze skills vs. human-gated terminal actions — with the **same `tool_calls`-parse path online and offline** (a canned `FakeQwenChatClient`), so the integration is exercised in CI with no key. The **same injectable agent** is exposed on **two surfaces** (HTTP + Approval UI and a **seven-tool MCP server**, `@modelcontextprotocol/sdk`), wired from one `resolveDeps()` so they can't drift, plus a derived **nine-skill custom-skills catalog**. Real `qwen-vl-max` document vision on the upload path. Full test pyramid (unit → integration → Playwright e2e) + an **80% coverage gate** + **documentation-drift fitness functions** + gitleaks + dep-audit; live on Alibaba Cloud (ECS + pgvector). |
+| **Innovation & AI Creativity (30%)** | **The approval gate is also the training signal** — a human's amend/reject is written back and *read* on the vendor's next decision, so re-billing an amount a person corrected *down* is escalated instead of paid (a **measured** before/after behavioural delta; see [`EVAL.md`](EVAL.md)). Plus the **structural safety design**: the model's tool catalog **excludes** approve/pay, so no prompt-injection in an untrusted invoice can reach a side-effect — proven by a multi-step tool-attack suite. Decision quality is a **measured** number (21/22 offline, gated), not asserted. |
+| **Problem Value & Impact (25%)** | A real, recurring SMB pain: accounts-payable clerks hand-triage messy incoming invoices — accrue, pay, query, or escalate — under real duplicate-payment and over-billing risk. Archon runs that triage automatically to a *proposed* action and stops for a human, so it saves the triage work **without** ever moving money unattended. |
+| **Presentation & Documentation (15%)** | This README + the architecture diagram + [`EVAL.md`](EVAL.md) (method + honest caveats) + [`docs/JUDGE-GUIDE.md`](docs/JUDGE-GUIDE.md) + the interactive `/docs` API explorer + the live Alibaba Cloud URL + the demo video. |
+
+### Consciously deferred — an A2A validator-debate layer
+
+We evaluated adding an **agent-to-agent (A2A) "validator debate"** in front of the gate
+— a second agent (or a panel) that argues for/against each proposal to reach consensus
+before it reaches a human. We **deliberately did not build it**, and that is a
+considered decision, not a gap:
+
+- **It fights the invariant.** The safety guarantee here is a *deterministic,
+  auditable structural gate* — a fixed path where the model has no money-moving tool
+  and a human approves the exact args. A consensus/debate step injects
+  **nondeterminism** (the same invoice can be argued either way run-to-run) right at
+  the money-adjacent edge, which is exactly where we chose predictability.
+- **Cost and latency.** Multiple extra `qwen-plus` turns per invoice for a verdict a
+  human still has to confirm — it spends budget and adds latency without changing who
+  is ultimately accountable (the approver).
+- **The value it targets is already covered**, deterministically: cross-checks
+  (R1–R6), memory-grounded duplicate/anomaly detection, the injection fence + advisory
+  scan, and the learning-from-corrections signal — all inspectable, all free offline.
+
+If a future need arises (e.g. genuinely ambiguous high-value cases), the clean seam is
+to add such a reviewer as **another advisory input to the human**, never as an
+autonomous consensus that can gate a side-effect. Recording the decision — and *why* —
+is worth more here than building it.
 
 ---
 

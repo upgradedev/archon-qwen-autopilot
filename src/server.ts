@@ -45,7 +45,7 @@ import {
 } from "./qwen/vision.js";
 import { scanForInjection } from "./qwen/injection-scan.js";
 import { assessRelevance } from "./qwen/relevance.js";
-import type { TraceStep } from "./types.js";
+import type { TraceStep, WorkItem } from "./types.js";
 
 const pkg = createRequire(import.meta.url)("../package.json") as { version: string };
 
@@ -264,7 +264,7 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
       // the loop. So an invalid or over-limit upload never reaches the agent.
       const raw = extractInvoice(req.body);
       if (!raw) return reply.code(400).send({ error: "an invoice payload is required (send { invoice: {...} })" });
-      const rl = rateLimiter.consume();
+      const rl = rateLimiter.consume(clientKey(req));
       if (!rl.allowed) return reply.code(429).send(rateLimitError(rl));
       // The loop reaches out to Qwen; a decider/embedder failure is an UPSTREAM
       // dependency error, so surface it as a clean 503 { error } rather than letting
@@ -319,7 +319,7 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
       const ticketed = ticket !== "" && processTickets.delete(ticket);
       let remaining = -1;
       if (!ticketed) {
-        const rl = rateLimiter.consume();
+        const rl = rateLimiter.consume(clientKey(req));
         if (!rl.allowed) return reply.code(429).send(rateLimitError(rl));
         remaining = rl.remaining;
       }
@@ -509,7 +509,7 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
         response: { 200: looseObject },
       },
     },
-    async () => ({ pending: await agent.pending() })
+    async () => ({ pending: (await agent.pending()).map(withReviewFlags) })
   );
 
   app.get(
@@ -633,8 +633,8 @@ async function readAndValidateUpload(req: unknown, rateLimiter: DailyRateLimiter
   const mb = validateMagicBytes(buffer, v.ext);
   if (!mb.ok) return { ok: false, status: mb.status, body: { error: mb.error } };
 
-  // 3) Consume the daily budget (429 when the cap is reached).
-  const rl = rateLimiter.consume();
+  // 3) Consume the daily budget (429 when the cap is reached), keyed by the client.
+  const rl = rateLimiter.consume(clientKey(req));
   if (!rl.allowed) return { ok: false, status: 429, body: rateLimitError(rl) };
 
   return { ok: true, filename, mimetype, buffer, remaining: rl.remaining };
@@ -667,6 +667,22 @@ function inputSafety(extracted: ExtractionResult): {
   };
 }
 
+// The review-nudge threshold. A proposal whose model-self-reported confidence is
+// below this gets a visible "review carefully" flag in /pending + the approval UI.
+// This is NOT a calibrated probability — the confidence is the model's own number
+// (clamped 0..1 in the loop); the flag is only a prompt to look closer before
+// approving. Tunable via LOW_CONFIDENCE_THRESHOLD.
+export const LOW_CONFIDENCE_THRESHOLD = Number(process.env.LOW_CONFIDENCE_THRESHOLD || 0.5);
+
+// Attach derived, read-only review flags to a pending item for the approval surface.
+// Adds `lowConfidence` (see the threshold above). Does NOT mutate the stored item or
+// change any decision — advisory presentation only.
+export function withReviewFlags(item: WorkItem): WorkItem & { lowConfidence: boolean } {
+  const c = item.proposed?.confidence;
+  const lowConfidence = typeof c === "number" && c < LOW_CONFIDENCE_THRESHOLD;
+  return { ...item, lowConfidence };
+}
+
 // Accept either { invoice: {...} } or a bare invoice object; return the invoice
 // record, or null when there is no usable payload (→ 400). Shared by /intake +
 // /intake/stream so both validate identically.
@@ -678,13 +694,35 @@ function extractInvoice(body: unknown): Record<string, unknown> | null {
 }
 
 // The 429 body for an over-limit upload — states the cap explicitly so the caller
-// (and the UI) can show a clear "come back tomorrow" message.
-function rateLimitError(rl: { limit: number; day: string }): { error: string; limit: number; day: string } {
-  return {
-    error: `daily upload limit reached (${rl.limit}/day, UTC). This is an open demo — the cap protects the Qwen API budget. Resets at 00:00 UTC.`,
-    limit: rl.limit,
-    day: rl.day,
-  };
+// (and the UI) can show a clear "come back tomorrow" message. The message reflects
+// WHICH tier was hit: the caller's own per-client cap (the common case) vs the global
+// backstop across all clients (only under heavy shared load).
+function rateLimitError(rl: {
+  limit: number;
+  day: string;
+  scope?: "ip" | "global";
+  globalLimit?: number;
+}): { error: string; limit: number; day: string; scope: "ip" | "global" } {
+  const scope = rl.scope ?? "ip";
+  const error =
+    scope === "global"
+      ? `the demo's global daily upload limit was reached (${rl.globalLimit ?? rl.limit}/day across all visitors, UTC). ` +
+        `This is an open demo — the cap protects the Qwen API budget. Resets at 00:00 UTC.`
+      : `your daily upload limit was reached (${rl.limit}/day, UTC). This is an open demo — the cap ` +
+        `protects the Qwen API budget. Resets at 00:00 UTC.`;
+  return { error, limit: rl.limit, day: rl.day, scope };
+}
+
+// A best-effort client key for the per-client rate-limit bucket. Prefers the first
+// hop of `X-Forwarded-For` (set by the reverse proxy in front of the app), falling
+// back to Fastify's socket IP. Best-effort by design — XFF is client-spoofable, so
+// the limiter's GLOBAL backstop, not this key, is the hard spend bound (see
+// src/ap/rate-limit.ts).
+function clientKey(req: unknown): string {
+  const r = req as { headers?: Record<string, unknown>; ip?: unknown };
+  const xff = r.headers?.["x-forwarded-for"];
+  if (typeof xff === "string" && xff.trim()) return xff.split(",")[0]!.trim();
+  return typeof r.ip === "string" && r.ip ? r.ip : "_shared";
 }
 
 // Map the agent's domain errors to HTTP status codes: unknown id → 404, an

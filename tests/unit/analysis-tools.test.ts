@@ -97,6 +97,56 @@ test("computeEvidence renders a machine-readable snapshot the Fake can branch on
   assert.match(ev, /missing_fields=true/); // no vendor_ref / tax_id
 });
 
+test("recall surfaces a prior human AMEND-DOWN correction and flags a re-bill materially above it", async () => {
+  const d = deps();
+  // A prior invoice for the vendor (so it is 'known') + the amend-down correction memory.
+  await seedPrior(d, { invoice_id: "gx-1", vendor: "Globex", vendor_ref: "GX-1", total: 5000, invoice_date: "2026-01-01" });
+  await remember(d.embedder, d.memory, {
+    kind: "insight",
+    vendor: "Globex",
+    sourceRef: "gx-1",
+    content: "Human CORRECTION for Globex: amended down from EUR 5000 to EUR 3000.",
+    metadata: { correction: "amended_down", vendor: "Globex", tool: "draft_payment", corrected_amount: 3000, billed_amount: 5000, invoice_id: "gx-1" },
+  });
+  // The invoice under decision re-bills 5000 (above the corrected 3000).
+  const state = newLoopState(normalizeInvoice({ vendor: "Globex", invoice_number: "GX-2", tax_id: "T", total: 5000, date: "2026-03-01" }));
+  const obs = await executeAnalysisTool("recall_vendor_history", {}, state, d);
+
+  assert.equal(state.correctedAmount, 3000);
+  assert.equal(state.priorCorrection, true);
+  assert.equal(state.rebillsCorrected, true);
+  assert.match(obs, /corrected this vendor's amount DOWN to 3000/i);
+  assert.match(computeEvidence(state), /prior_correction=true rebills_corrected=true/);
+});
+
+test("recall surfaces a prior REJECTION, and a re-bill AT the corrected amount does NOT trip the escalation", async () => {
+  const d = deps();
+  await seedPrior(d, { invoice_id: "gx-1", vendor: "Globex", vendor_ref: "GX-1", total: 5000, invoice_date: "2026-01-01" });
+  await remember(d.embedder, d.memory, {
+    kind: "insight",
+    vendor: "Globex",
+    sourceRef: "gx-1",
+    content: "A proposed draft_payment for Globex was REJECTED by a human: not recognised.",
+    metadata: { correction: "rejected", vendor: "Globex", tool: "draft_payment", invoice_id: "gx-1", reason: "not recognised" },
+  });
+  await remember(d.embedder, d.memory, {
+    kind: "insight",
+    vendor: "Globex",
+    sourceRef: "gx-1",
+    content: "Human CORRECTION for Globex: amended down to EUR 3000.",
+    metadata: { correction: "amended_down", vendor: "Globex", tool: "draft_payment", corrected_amount: 3000, billed_amount: 5000, invoice_id: "gx-1" },
+  });
+  // This invoice bills the CORRECTED 3000 — compliant, so no re-bill escalation.
+  const state = newLoopState(normalizeInvoice({ vendor: "Globex", invoice_number: "GX-2", tax_id: "T", total: 3000, date: "2026-03-01" }));
+  const obs = await executeAnalysisTool("recall_vendor_history", {}, state, d);
+
+  assert.equal(state.priorRejection, true);
+  assert.equal(state.correctedAmount, 3000);
+  assert.equal(state.rebillsCorrected, false); // 3000 is NOT materially above the corrected 3000
+  assert.match(obs, /REJECTED by a human/i);
+  assert.match(computeEvidence(state), /prior_correction=true rebills_corrected=false/);
+});
+
 test("request_more_context is a benign no-side-effect read", async () => {
   const d = deps();
   const state = newLoopState(normalizeInvoice({ vendor: "X", invoice_number: "1", tax_id: "T", total: 1 }));
