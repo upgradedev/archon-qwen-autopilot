@@ -356,6 +356,7 @@
     #tourPop p { margin: 0 0 14px; font-size: 13px; color: var(--muted); line-height: 1.55; }
     #tourPop .nav { display: flex; align-items: center; gap: 8px; }
     #tourPop .step-count { flex: 1; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+    #searchQueue:focus { border-color: var(--accent); }
   </style>
 </head>
 <body>
@@ -419,6 +420,13 @@
     <div class="tabs">
       <button class="tab active" id="tabPending" data-tab="pending">Pending approvals</button>
       <button class="tab" id="tabDecided" data-tab="decided">Decided</button>
+    </div>
+
+    <!-- Live Search filter (UX Improvement) -->
+    <div class="search-bar" style="margin-bottom: 22px; position: relative;">
+      <input type="text" id="searchQueue" placeholder="Search approvals by vendor, amount, reference, proposed action or outcome..." 
+             style="width: 100%; padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); color: var(--text); font-size: 13.5px; outline: none; transition: border-color 0.12s ease;" />
+      <span id="clearSearch" style="position: absolute; right: 14px; top: 50%; transform: translateY(-50%); cursor: pointer; color: var(--muted); display: none; font-size: 15px; font-weight: bold; user-select: none;">✕</span>
     </div>
 
     <section class="tabpane active" id="pane-pending">
@@ -796,25 +804,78 @@
     }
 
     // ---- Loaders ----------------------------------------------------------------
+    let allPendingItems = [];
+    let allDecidedItems = [];
+
+    function renderPendingQueue(items) {
+      const queue = $('#queue');
+      $('#count').textContent = items.length + (items.length === 1 ? ' item' : ' items');
+      queue.innerHTML = '';
+      if (!items.length) {
+        const emptyBtn = el('button', { class: 'primary', text: 'Load sample invoice' });
+        emptyBtn.onclick = () => loadSample();
+        queue.appendChild(el('div', { class: 'empty' }, [
+          el('div', { class: 'empty-msg', text: 'No invoices in the queue — click "Load sample invoice" (or upload one above) to watch the agent recall history, run its checks, and propose an action for your approval.' }),
+          emptyBtn,
+        ]));
+      } else {
+        items.forEach((it) => queue.appendChild(card(it)));
+      }
+    }
+
+    function renderDecidedQueue(items) {
+      const host = $('#decided');
+      $('#decidedCount').textContent = items.length + (items.length === 1 ? ' item' : ' items');
+      host.innerHTML = '';
+      if (!items.length) {
+        host.appendChild(el('div', { class: 'empty', text: 'Nothing decided yet. Approve, amend, or reject a pending proposal and it will appear here with its outcome.' }));
+      } else {
+        items.forEach((it) => host.appendChild(decidedRow(it)));
+      }
+    }
+
+    function applySearch() {
+      const query = $('#searchQueue').value.toLowerCase().trim();
+      const clearBtn = $('#clearSearch');
+      if (query) {
+        clearBtn.style.display = 'block';
+      } else {
+        clearBtn.style.display = 'none';
+      }
+
+      // Filter pending
+      const filteredPending = allPendingItems.filter(item => {
+        const vendor = (item.invoice?.vendor || '').toLowerCase();
+        const ref = (item.invoice?.vendor_ref || item.invoice?.invoice_id || '').toLowerCase();
+        const amount = money(item.invoice).toLowerCase();
+        const tool = (item.proposed?.tool || '').toLowerCase();
+        const reasoning = (item.proposed?.reasoning || '').toLowerCase();
+        return vendor.includes(query) || ref.includes(query) || amount.includes(query) || tool.includes(query) || reasoning.includes(query);
+      });
+      renderPendingQueue(filteredPending);
+
+      // Filter decided
+      const filteredDecided = allDecidedItems.filter(item => {
+        const vendor = (item.invoice?.vendor || '').toLowerCase();
+        const ref = (item.invoice?.vendor_ref || item.invoice?.invoice_id || '').toLowerCase();
+        const amount = money(item.invoice).toLowerCase();
+        const status = (item.status || '').toLowerCase();
+        const label = decisionLabel(item).toLowerCase();
+        const outcome = (item.execution?.summary || '').toLowerCase();
+        const tool = (item.proposed?.tool || '').toLowerCase();
+        return vendor.includes(query) || ref.includes(query) || amount.includes(query) || status.includes(query) || label.includes(query) || outcome.includes(query) || tool.includes(query);
+      });
+      renderDecidedQueue(filteredDecided);
+    }
+
     async function load() {
       const queue = $('#queue');
       try {
         const data = await api('GET', '/pending');
-        const items = (data && data.pending) || [];
-        $('#count').textContent = items.length + (items.length === 1 ? ' item' : ' items');
-        queue.innerHTML = '';
-        if (!items.length) {
-          const emptyBtn = el('button', { class: 'primary', text: 'Load sample invoice' });
-          emptyBtn.onclick = () => loadSample();
-          queue.appendChild(el('div', { class: 'empty' }, [
-            el('div', { class: 'empty-msg', text: 'No invoices in the queue — click "Load sample invoice" (or upload one above) to watch the agent recall history, run its checks, and propose an action for your approval.' }),
-            emptyBtn,
-          ]));
-        } else {
-          items.forEach((it) => queue.appendChild(card(it)));
-        }
-        renderPendingChart(items);
+        allPendingItems = (data && data.pending) || [];
+        renderPendingChart(allPendingItems);
       } catch (e) {
+        allPendingItems = [];
         queue.innerHTML = '';
         queue.appendChild(el('div', { class: 'empty', text: 'Could not load the queue: ' + e.message }));
       }
@@ -824,16 +885,10 @@
       const host = $('#decided');
       try {
         const data = await api('GET', '/decided');
-        const items = (data && data.decided) || [];
-        $('#decidedCount').textContent = items.length + (items.length === 1 ? ' item' : ' items');
-        host.innerHTML = '';
-        if (!items.length) {
-          host.appendChild(el('div', { class: 'empty', text: 'Nothing decided yet. Approve, amend, or reject a pending proposal and it will appear here with its outcome.' }));
-        } else {
-          items.forEach((it) => host.appendChild(decidedRow(it)));
-        }
-        renderDecidedChart(items);
+        allDecidedItems = (data && data.decided) || [];
+        renderDecidedChart(allDecidedItems);
       } catch (e) {
+        allDecidedItems = [];
         host.innerHTML = '';
         host.appendChild(el('div', { class: 'empty', text: 'Could not load the decided list: ' + e.message }));
       }
@@ -841,6 +896,7 @@
 
     async function refreshAll() {
       await Promise.all([load(), loadDecided()]);
+      applySearch();
     }
 
     async function loadHealth() {
@@ -1280,6 +1336,12 @@
     window.addEventListener('resize', () => {
       if ($('#tourOverlay').classList.contains('show')) placeTour(tour.steps[tour.i]);
     });
+
+    $('#searchQueue').addEventListener('input', applySearch);
+    $('#clearSearch').onclick = () => {
+      $('#searchQueue').value = '';
+      applySearch();
+    };
 
     // Prefill the upload box with the sample so a first-time visitor can Process immediately.
     $('#invoiceInput').value = JSON.stringify(SAMPLE_INVOICE, null, 2);
