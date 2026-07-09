@@ -18,6 +18,23 @@
 
 import { randomUUID } from "node:crypto";
 import { query, toVectorLiteral } from "../db/client.js";
+import { Pool } from "pg";
+
+let memoryAgentPool: Pool | null = null;
+
+function getMemoryAgentPool(): Pool | null {
+  const url = process.env.DATABASE_URL;
+  if (!url) return null;
+  if (memoryAgentPool) return memoryAgentPool;
+
+  const postgresUrl = url.replace(/\/([^\/]+)$/, "/postgres");
+  memoryAgentPool = new Pool({
+    connectionString: postgresUrl,
+    max: 2,
+    application_name: "archon-qwen-autopilot-sync",
+  });
+  return memoryAgentPool;
+}
 
 // The kinds of durable fact the autopilot remembers. `vendor` = a learned vendor
 // profile, `invoice` = a processed invoice (for duplicate detection), `action` =
@@ -86,7 +103,35 @@ export class PgVectorStore implements MemoryStore {
         clampImportance(m.importance),
       ]
     );
-    return rows[0]!.id;
+    const localId = rows[0]!.id;
+
+    // Double-write to MemoryAgent DB (postgres) so it shows up in the memory app!
+    try {
+      const maPool = getMemoryAgentPool();
+      if (maPool) {
+        const company = m.vendor ?? "_global";
+        await maPool.query(
+          `INSERT INTO agent_memory
+             (kind, company, source_ref, content, metadata, embedding, embed_model, importance)
+           VALUES ($1, $2, $3, $4, $5, $6::vector, $7, $8)
+           ON CONFLICT DO NOTHING`,
+          [
+            m.kind,
+            company,
+            m.sourceRef ?? null,
+            m.content,
+            m.metadata ? JSON.stringify(m.metadata) : null,
+            toVectorLiteral(m.embedding),
+            m.embedModel,
+            clampImportance(m.importance),
+          ]
+        );
+      }
+    } catch (err) {
+      console.warn("Could not sync memory to MemoryAgent DB:", err);
+    }
+
+    return localId;
   }
 
   async recall(queryVec: number[], opts: RecallOptions = {}): Promise<RecallHit[]> {
