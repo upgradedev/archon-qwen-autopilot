@@ -1146,6 +1146,7 @@
       pv.appendChild(head); pv.appendChild(stepsWrap);
       const setHead = (txt) => { head.innerHTML = ''; head.appendChild(el('span', { class: 'spin' })); head.appendChild(el('span', { text: txt })); };
       (busyBtns || []).forEach((b) => { if (b) b.disabled = true; });
+      let hasDuplicate = false;
 
       try {
         await kickoff((event, data) => {
@@ -1172,7 +1173,12 @@
               ]),
             ]));
           } else if (event === 'step') {
-            stepsWrap.appendChild(el('div', { class: 'proc-step reveal' }, [
+            const isDup = data.tool === 'check_duplicate' && (data.observation || '').includes('DUPLICATE');
+            if (isDup) {
+              hasDuplicate = true;
+            }
+            const stepCls = 'proc-step reveal' + (isDup ? ' warn-step' : '');
+            stepsWrap.appendChild(el('div', { class: stepCls }, [
               el('span', { class: 'num', text: (data.step != null ? data.step + '.' : '·') }),
               el('div', {}, [
                 el('div', { class: 'tool', text: data.tool || '' }),
@@ -1181,6 +1187,99 @@
             ]));
           } else if (event === 'proposal') {
             const p = (data && data.proposed) || {};
+            
+            if (hasDuplicate) {
+              head.innerHTML = '';
+              const warnIcon = el('span', { text: '⚠️', style: 'margin-right: 8px;' });
+              head.appendChild(warnIcon);
+              head.appendChild(el('span', { text: 'Duplicate reference detected — awaiting confirmation…', style: 'color: var(--amber); font-weight: bold;' }));
+              
+              const itemId = data.id;
+              const inv = data.invoice || {};
+              
+              const promptDiv = el('div', {
+                class: 'dup-prompt reveal',
+                style: 'margin-top: 14px; padding: 16px; border: 1.5px solid var(--amber); border-radius: 8px; background: rgba(217, 164, 65, 0.06); display: grid; gap: 12px;'
+              }, [
+                el('div', { text: '⚠️ Duplicate Invoice Detected', style: 'font-weight: bold; font-size: 14px; color: var(--amber);' }),
+                el('div', { 
+                  text: 'This invoice (' + (inv.vendor || 'Unknown') + ' ref: ' + (inv.vendor_ref || 'None') + ') has the same supplier and reference (or amount and date) as a previously processed invoice.',
+                  style: 'font-size: 12.5px; opacity: 0.9;'
+                }),
+                el('div', { class: 'prompt-buttons', style: 'display: flex; gap: 10px; margin-top: 6px;' }, [
+                  el('button', {
+                    class: 'primary force-btn-large',
+                    text: 'Ignore & Pay anyway',
+                    style: 'background: #d97706; border-color: #b45309; color: #fff; padding: 6px 14px; border-radius: 6px; font-weight: 600; cursor: pointer;'
+                  }),
+                  el('button', {
+                    class: 'ghost',
+                    text: 'Queue for Review',
+                    style: 'padding: 6px 14px; border-radius: 6px; cursor: pointer;'
+                  }),
+                  el('button', {
+                    class: 'reject',
+                    text: 'Reject Invoice',
+                    style: 'border-color: rgba(218,54,51,.5); color: var(--red-hi); padding: 6px 14px; border-radius: 6px; cursor: pointer;'
+                  })
+                ])
+              ]);
+              
+              stepsWrap.appendChild(promptDiv);
+              
+              const [payBtn, reviewBtn, rejectBtn] = promptDiv.querySelectorAll('button');
+              
+              const clearPrompt = () => {
+                promptDiv.remove();
+                head.innerHTML = '';
+                head.appendChild(el('span', { class: 'done-check', text: '✓' }));
+                head.appendChild(el('span', { text: 'Decision recorded — queue updated.' }));
+              };
+              
+              payBtn.onclick = async () => {
+                payBtn.disabled = reviewBtn.disabled = rejectBtn.disabled = true;
+                try {
+                  const payArgs = {
+                    vendor: inv.vendor,
+                    amount: inv.total,
+                    vendor_ref: inv.vendor_ref
+                  };
+                  await api('POST', '/amend/' + itemId, { args: payArgs, reason: 'Duplicate ignored by user during upload' });
+                  clearPrompt();
+                  toast('Invoice force-approved as payment!', 'ok');
+                  setActiveTab('pending');
+                  await refreshAll();
+                } catch (err) {
+                  toast('Error: ' + err.message, 'err');
+                  payBtn.disabled = reviewBtn.disabled = rejectBtn.disabled = false;
+                }
+              };
+              
+              reviewBtn.onclick = async () => {
+                reviewBtn.disabled = payBtn.disabled = rejectBtn.disabled = true;
+                clearPrompt();
+                toast('Invoice queued for review.', 'ok');
+                setActiveTab('pending');
+                await refreshAll();
+              };
+              
+              rejectBtn.onclick = async () => {
+                rejectBtn.disabled = payBtn.disabled = reviewBtn.disabled = true;
+                try {
+                  await api('POST', '/reject/' + itemId, { reason: 'Duplicate rejected by user during upload' });
+                  clearPrompt();
+                  toast('Invoice rejected successfully.', 'ok');
+                  setActiveTab('pending');
+                  await refreshAll();
+                } catch (err) {
+                  toast('Error: ' + err.message, 'err');
+                  rejectBtn.disabled = payBtn.disabled = reviewBtn.disabled = true;
+                }
+              };
+              
+              return;
+            }
+
             head.innerHTML = '';
             head.appendChild(el('span', { class: 'done-check', text: '✓' }));
             head.appendChild(el('span', { text: 'Proposed: ' + (p.tool || '—') + ' — awaiting your approval in the queue below.' }));
@@ -1190,9 +1289,11 @@
             head.appendChild(el('span', { text: 'Could not process: ' + ((data && data.error) || 'processing failed') }));
           }
         });
-        toast('Invoice processed — see the proposal in the pending queue', 'ok');
-        setActiveTab('pending');
-        await refreshAll();
+        if (!hasDuplicate) {
+          toast('Invoice processed — see the proposal in the pending queue', 'ok');
+          setActiveTab('pending');
+          await refreshAll();
+        }
       } catch (e) {
         toast(e.message, 'err');
         head.innerHTML = '';
