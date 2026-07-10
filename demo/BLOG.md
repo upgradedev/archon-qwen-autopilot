@@ -18,6 +18,12 @@ MemoryAgent](../../qwen-memoryagent).
 This post is the build journey: the design decisions, the one that mattered most,
 and how we measured whether the agent's decisions are any good.
 
+## System Architecture
+
+Below is the system architecture diagram showing the Autopilot agent loop, human-in-the-loop gate, and defense layer:
+
+![System Architecture](../docs/architecture.png)
+
 ## The workflow: reason all the way up to the point of consequence
 
 For each invoice (`POST /intake`) the agent runs a real pipeline:

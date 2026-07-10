@@ -5,6 +5,7 @@
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-Alibaba%20Cloud-ff6a00?logo=alibabacloud&logoColor=white)](https://autopilot.43.106.13.19.sslip.io)
 [![Demo Video](https://img.shields.io/badge/Demo%20Video-watch-ff0000?logo=youtube)](demo/video/final/archon-autopilot-demo.mp4)
 [![Tests](https://img.shields.io/badge/Tests-168%20node%3Atest%20%2B%20Playwright-brightgreen)](tests)
+[![Coverage](https://img.shields.io/badge/Coverage-95.94%25-brightgreen)](tests)
 [![Project Story](https://img.shields.io/badge/Project%20Story-Devpost-003e54)](demo/PROJECT_STORY.md)
 
 Archon Autopilot is a **human-gated accounts-payable (AP) agent**. For each

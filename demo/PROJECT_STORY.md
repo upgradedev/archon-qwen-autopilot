@@ -66,6 +66,12 @@ terminal action, and the loop + memory grounding are real. The terminal executio
 ledger / payment rail / SMTP, behind real interfaces; no ERP or bank is contacted.
 Live Qwen is wired; the whole loop is verified offline via deterministic Fakes.
 
+## System Architecture
+
+Below is the system architecture diagram showing the Autopilot agent loop, human-in-the-loop gate, and defense layer:
+
+![System Architecture](../docs/architecture.png)
+
 ## How we built it
 
 The service is **TypeScript on Fastify** (Node ≥20, ESM), the same stack as Track 1,
