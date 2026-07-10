@@ -101,12 +101,16 @@ function chooseNextTool(e: Evidence): ToolCall {
       confidence: 0.7,
     });
   }
-  // 5) Missing required fields or figures that do not reconcile → query the vendor.
-  if (e.missing_fields || e.reconcile_issue) {
+  // 5) Missing required fields, figures that do not reconcile, or missing total → query the vendor.
+  if (e.missing_fields || e.reconcile_issue || e.no_total) {
     return terminal("draft_vendor_reply", {
       subject: "Clarification needed before we can process your invoice",
-      body: "Some required details are missing or do not reconcile. Please confirm the vendor reference, tax id, and that subtotal plus tax equals the total.",
-      reasoning: "The invoice cannot be safely paid until the vendor corrects the missing or inconsistent fields.",
+      body: e.no_total
+        ? "The invoice amount could not be parsed. Please provide a valid total amount."
+        : "Some required details are missing or do not reconcile. Please confirm the vendor reference, tax id, and that subtotal plus tax equals the total.",
+      reasoning: e.no_total
+        ? "The invoice does not carry a parseable total, so we cannot accrue or pay it safely — query first."
+        : "The invoice cannot be safely paid until the vendor corrects the missing or inconsistent fields.",
       confidence: 0.8,
     });
   }

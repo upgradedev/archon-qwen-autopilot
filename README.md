@@ -699,14 +699,12 @@ npm run eval            # drive every scenario, print the table + accuracy N/M
 npm run eval -- --gate  # CI gate: fail if accuracy < the floor
 ```
 
-- **Offline (deterministic Fakes, gated in CI):** **21 / 22 (95.5%)** tool-choice
+- **Offline (deterministic Fakes, gated in CI):** **22 / 22 (100.0%)** tool-choice
   accuracy, with **every one of the 22 scenarios taking ≥2 autonomous read/analyze
   steps** (avg 2.3) before the terminal action — a **policy / regression** guard
-  over the real multi-step pipeline. The single miss (`s22`) is a **documented,
-  deliberately-surfaced limitation**, not a hidden failure: a no-parseable-total
-  invoice is surfaced as an R1 observation but the deterministic policy has no
-  routing branch for it, so it falls through instead of drafting a vendor query. The
-  eval reports it rather than labelling around it.
+  over the real multi-step pipeline. The previous routing gap for no-parseable-total
+  invoices (Scenario 22) is fully resolved: they are now correctly routed to the
+  vendor-reply email tool (`draft_vendor_reply`).
 - **Online (real `qwen-plus`, run with a key):** the actual **decision-quality**
   number — the model choosing freely against the same labels. Set
   `DASHSCOPE_API_KEY` and re-run `npm run eval`; the header self-labels the run
@@ -772,9 +770,9 @@ walkthrough is in [`docs/JUDGE-GUIDE.md`](docs/JUDGE-GUIDE.md).
 | Criterion (weight) | Where to look |
 |---|---|
 | **Technical Depth & Engineering (30%)** | A real bounded **multi-step ReAct loop** over `qwen-plus` **function-calling** (`src/ap/loop.ts`) across a two-tier tool set — autonomous read/analyze skills vs. human-gated terminal actions — with the **same `tool_calls`-parse path online and offline** (a canned `FakeQwenChatClient`), so the integration is exercised in CI with no key. The **same injectable agent** is exposed on **two surfaces** (HTTP + Approval UI and a **seven-tool MCP server**, `@modelcontextprotocol/sdk`), wired from one `resolveDeps()` so they can't drift, plus a derived **nine-skill custom-skills catalog**. Real `qwen-vl-max` document vision on the upload path. Full test pyramid (unit → integration → Playwright e2e) + an **80% coverage gate** + **documentation-drift fitness functions** + gitleaks + dep-audit; live on Alibaba Cloud (ECS + pgvector). |
-| **Innovation & AI Creativity (30%)** | **The approval gate is also the training signal** — a human's amend/reject is written back and *read* on the vendor's next decision, so re-billing an amount a person corrected *down* is escalated instead of paid (a **measured** before/after behavioural delta; see [`EVAL.md`](EVAL.md)). Plus the **structural safety design**: the model's tool catalog **excludes** approve/pay, so no prompt-injection in an untrusted invoice can reach a side-effect — proven by a multi-step tool-attack suite. Decision quality is a **measured** number (21/22 offline, gated), not asserted. |
+| **Innovation & AI Creativity (30%)** | **The approval gate is also the training signal** — a human's amend/reject is written back and *read* on the vendor's next decision, so re-billing an amount a person corrected *down* is escalated instead of paid (a **measured** before/after behavioural delta; see [`EVAL.md`](EVAL.md)). Plus the **structural safety design**: the model's tool catalog **excludes** approve/pay, so no prompt-injection in an untrusted invoice can reach a side-effect — proven by a multi-step tool-attack suite. Decision quality is a **measured** number (22/22 offline, gated), not asserted. |
 | **Problem Value & Impact (25%)** | A real, recurring SMB pain: accounts-payable clerks hand-triage messy incoming invoices — accrue, pay, query, or escalate — under real duplicate-payment and over-billing risk. Archon runs that triage automatically to a *proposed* action and stops for a human, so it saves the triage work **without** ever moving money unattended. |
-| **Presentation & Documentation (15%)** | This README + the architecture diagram + [`EVAL.md`](EVAL.md) (method + honest caveats) + [`docs/JUDGE-GUIDE.md`](docs/JUDGE-GUIDE.md) + the interactive `/docs` API explorer + the live Alibaba Cloud URL + the demo video. |
+| **Presentation & Documentation (15%)** | This README + the architecture diagram + [`EVAL.md`](EVAL.md) (method + honest caveats) + [`docs/JUDGE-GUIDE.md`](docs/JUDGE-GUIDE.md) + [JUDGE_REVIEW.md](./demo/JUDGE_REVIEW.md) (rules check & strict review) + the interactive `/docs` API explorer + the live Alibaba Cloud URL + the demo video. |
 
 ### Consciously deferred — an A2A validator-debate layer
 

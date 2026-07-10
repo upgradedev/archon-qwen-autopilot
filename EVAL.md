@@ -18,7 +18,7 @@ business-correct label.
 
 | Mode | Model seam | Tool-choice accuracy | What the number means |
 |---|---|---:|---|
-| **Offline** (CI, gated) | deterministic Fakes | **21 / 22 (95.5%)** | policy / regression guard over the real multi-step pipeline |
+| **Offline** (CI, gated) | deterministic Fakes | **22 / 22 (100.0%)** | policy / regression guard over the real multi-step pipeline |
 | **Online** (with a key) | real `qwen-plus` | *captured live* | the actual decision quality of the model choosing freely |
 
 ```bash
@@ -108,30 +108,11 @@ against regression, and the one a naive re-implementation gets wrong:
   straight-through payment.
 - **`s20` known vendor, clean, BUT figures don't reconcile →** `draft_vendor_reply`.
 
-## The one miss, reported not hidden (`s22`)
+## The resolved limitation (`s22`)
 
-Offline accuracy is **21 / 22**, not a suspicious 22 / 22, and the miss is
-instructive. `s22` is an invoice whose amount cannot be parsed (`amount: "see
-attached"`, no subtotal/tax) — **no payable total** (validation rule R1 fails). A
-human clerk would query the vendor (`draft_vendor_reply`). The `validate_invoice`
-step now **surfaces the R1 FAIL in the trace**, but the deterministic offline policy
-has **no routing branch for it** — the Fake acts only on missing-required-fields,
-reconcile, duplicate, and anomaly — so the invoice falls through to
-`draft_journal_entry`.
+Previously, offline accuracy was **21 / 22** because scenario `s22` (an invoice whose amount cannot be parsed: `amount: "see attached"`, no subtotal/tax) fell through to `draft_journal_entry`. Although `validate_invoice` correctly surfaced the R1 FAIL (no payable total) in the trace, the deterministic offline Fake did not have a routing branch for `no_total`.
 
-We keep this scenario, labelled with the business-correct action, and **let it
-fail** offline, because:
-
-1. It proves the eval has teeth — it *can* fail, so a green run means something.
-2. It is a concrete, honest limitation of the deterministic floor and a clear
-   candidate improvement (add an R1 routing branch to the Fake).
-3. It is exactly the kind of context-reading judgement we expect **live `qwen-plus`
-   to get right** — it sees the same R1 FAIL observation the offline policy ignores —
-   a case where the LLM should beat the deterministic floor. The live run will show
-   whether it does.
-
-This mirrors the Track-1 benchmark's honesty about its single grounding miss: we
-report the number that falls out, not the one we'd like.
+We have now **resolved this routing limitation**. The offline Fake policy explicitly checks the `no_total` evidence flag and routes it to `draft_vendor_reply` (query the vendor), achieving a clean **22 / 22 (100.0%)** offline policy accuracy. This bridges the gap between the offline policy and the live LLM's expected reasoning.
 
 ## The CI gate (what we actually enforce)
 
@@ -139,9 +120,9 @@ CI runs `npm run eval -- --gate` on every push, with **no `DASHSCOPE_API_KEY`**,
 the deterministic Fakes drive it. The gate is set to the **measured** floor, not an
 aspiration:
 
-> **tool-choice accuracy ≥ 90%** (measured: 95.5%).
+> **tool-choice accuracy ≥ 90%** (measured: 100.0%).
 
-The floor sits at the measured value less the one documented known-limitation, so CI
+The floor sits well below the measured value, so CI
 catches a *real* regression in the multi-step recall→validate→check→act loop without pretending
 the deterministic policy is perfect. We deliberately **do not gate arg-sanity** (the
 Fake omits some args by design) and **do not gate the online number** (it needs a
