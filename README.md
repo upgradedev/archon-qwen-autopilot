@@ -5,7 +5,7 @@
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-Alibaba%20Cloud-ff6a00?logo=alibabacloud&logoColor=white)](https://autopilot.43.106.13.19.sslip.io)
 [![Demo Video](https://img.shields.io/badge/Demo%20Video-watch-ff0000?logo=youtube)](demo/video/final/archon-autopilot-demo.mp4)
 [![Tests](https://img.shields.io/badge/Tests-186%20node%3Atest%20%2B%2025%20Playwright-brightgreen)](tests)
-[![Coverage](https://img.shields.io/badge/Coverage-97.73%25-brightgreen)](tests)
+[![Coverage](https://img.shields.io/badge/Coverage-97.73%25%20(CI%2C%20with%20DB)-brightgreen)](tests)
 [![Project Story](https://img.shields.io/badge/Project%20Story-Devpost-003e54)](demo/PROJECT_STORY.md)
 
 Archon Autopilot is a **human-gated accounts-payable (AP) agent**. For each
@@ -688,8 +688,9 @@ The suite is the full pyramid, offline-first:
   (`mcp-transport.test.ts` — full protocol wiring, gate preserved); plus a real
   pgvector store round-trip that runs against the CI service container and **skips
   automatically when `DATABASE_URL` is unset**.
-- **End-to-end (browser)** — a **Playwright** tier (`tests/e2e/upload-ux.spec.ts`, 4
-  specs) drives the REAL served approval UI in headless Chromium against a locally
+- **End-to-end (browser)** — a **Playwright** tier (`tests/e2e/` — **25 specs** across
+  three files: `upload-ux`, `workflow-happy`, `workflow-unhappy`) drives the REAL served
+  approval UI in headless Chromium against a locally
   started server with the offline Fakes: file-select → extraction → the reviewed
   invoice, clicking **Process** → the live SSE step stream → a PENDING proposal, the
   paste-JSON path, and the static surfaces (guided tour, sample buttons, decided tab,

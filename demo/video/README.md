@@ -10,11 +10,12 @@ over HTTPS.
 1920×1080, H.264 + AAC, narrated, under 3 min, no black lead-in (per-scene assembly,
 captions burned in and auto-fit).
 
-- `final/archon-autopilot-demo.mp4` — **the canonical deliverable, produced by the CI
-  workflow with the ElevenLabs voice** (requires the `ELEVEN_LABS_KEY` repo secret).
-- `final/archon-autopilot-demo.edgetts-fallback.mp4` — a committed **edge-tts** render
-  (the free fallback voice), so a working narrated video exists even before the
-  ElevenLabs key is added. Do not submit this one if the ElevenLabs render is available.
+- `final/archon-autopilot-demo.mp4` — **the canonical deliverable.** The committed
+  render was produced **locally** by `scripts/build_video.py` with the free **edge-tts**
+  voice (no `ELEVEN_LABS_KEY` was set), so it is fully reproducible with zero secrets.
+  Re-running the same pipeline in CI (Actions → "Generate Demo Video") with the
+  `ELEVEN_LABS_KEY` repo secret set swaps in the ElevenLabs voice — same beats, same
+  timings, same 180s guard.
 
 ## Audio/video sync — the per-beat, audio-locked model (v2)
 

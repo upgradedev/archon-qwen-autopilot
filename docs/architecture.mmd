@@ -21,7 +21,7 @@ flowchart TD
     PEND[("PENDING proposal<br/>+ full step trace")]:::pending
     GATE{{"HUMAN-IN-THE-LOOP GATE<br/>Approve &middot; Amend &middot; Reject"}}:::gate
     NOTE["Model tool catalog EXCLUDES<br/>approve / pay &mdash; no injection<br/>can reach a side-effect"]:::guard
-    EXE["Execute for real<br/>simulated sink adapters"]:::exec
+    EXE["Execute for real<br/>real SMTP email &middot; simulated ledger/payment"]:::exec
 
     MEM[("pgvector memory")]:::memory
     QWEN["Qwen Cloud / Model Studio &middot; DashScope<br/>vision &middot; decider &middot; embeddings"]:::ai

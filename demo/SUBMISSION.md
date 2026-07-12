@@ -23,11 +23,16 @@ approval gate.
   one** terminal action. Averages 2.3 reasoning steps per invoice.
 - **Human-in-the-loop gate**: every proposal is persisted as PENDING **with its full
   reasoning trace**. Nothing executes until a person approves, amends, or rejects.
-  The domain args a human approves are exactly the args that execute.
+  The domain args a human approves are exactly the args that execute. One sink is
+  **real** — `draft_vendor_reply` sends over SMTP on approval, delivering exactly the
+  approved (or amended) message (`tests/unit/smtp-sink.test.ts`); the rest are
+  simulated adapters.
 - **Structural tool-attack defense**: the model's tool catalog contains only the
   *proposing* tools — it can never name `approve`, `amend`, `reject`, or `pay`. No
   injection can reach a side-effect. An advisory scan surfaces neutralized injections
-  in the trace and at the gate.
+  in the trace and at the gate. Proven offline — including a **poisoned-memory** prior
+  that is genuinely recalled yet still cannot move money
+  (`tests/security/injection-poisoned-memory.test.ts`).
 - **Memory-grounded**: duplicate + anomaly checks read a persistent **pgvector**
   vendor history; approved outcomes are written back, so recurring vendors get
   recognized over time.
