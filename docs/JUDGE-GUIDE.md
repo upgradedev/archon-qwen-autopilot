@@ -3,8 +3,9 @@
 A click-by-click path through the live agent, with each step mapped to the judging
 criterion it evidences. Everything below works on the **live demo** and on a bare
 local clone (offline Fakes — no key, no database). Nothing here moves real money: the
-terminal sinks are simulated adapters behind real interfaces (see the README's Scope
-note).
+money-moving terminal sinks (ledger / payment-rail) are simulated adapters behind real
+interfaces, and the one real sink — the `SmtpEmailSink` vendor-reply — only sends when
+`SMTP_HOST` is configured and otherwise cleanly simulates (see the README's Scope note).
 
 - **Live Approval UI:** https://autopilot.43.106.13.19.sslip.io/
 - **Local:** `npm install && npm start` → http://localhost:9000/ (Swagger at `/docs`)

@@ -29,7 +29,7 @@ test("toolDefs returns one def per tool; toolByName resolves and rejects unknown
   assert.equal(toolByName("nonexistent_tool"), undefined);
 });
 
-test("every tool executes with EMPTY args on a SPARSE invoice — the fallback defaults hold (no throw)", () => {
+test("every tool executes with EMPTY args on a SPARSE invoice — the fallback defaults hold (no throw)", async () => {
   // The model may omit optional domain args; execute() must fall back to invoice-
   // derived or safe defaults rather than crash. A sparse invoice (no total, currency
   // or refs) exercises every `?? default` / `str(_, fallback)` / `num(_, inv.total ?? 0)`
@@ -37,15 +37,15 @@ test("every tool executes with EMPTY args on a SPARSE invoice — the fallback d
   const sparse = normalizeInvoice({ vendor: "" });
   for (const t of TOOLS) {
     const sinks = fakeSinks();
-    const r = t.execute({}, sparse, sinks);
+    const r = await t.execute({}, sparse, sinks);
     assert.equal(r.ok, true, `${t.name} should execute on a sparse invoice with empty args`);
     assert.ok(typeof r.summary === "string" && r.summary.length > 0, `${t.name} should summarize its effect`);
   }
 });
 
-test("draft_journal_entry posts a balanced debit/credit entry to the ledger", () => {
+test("draft_journal_entry posts a balanced debit/credit entry to the ledger", async () => {
   const sinks = fakeSinks();
-  const r = toolByName("draft_journal_entry")!.execute({ expense_account: "Office Supplies", amount: 1200 }, inv, sinks);
+  const r = await toolByName("draft_journal_entry")!.execute({ expense_account: "Office Supplies", amount: 1200 }, inv, sinks);
   assert.equal(r.ok, true);
   assert.equal(sinks.ledger.entries().length, 1);
   const entry = sinks.ledger.entries()[0]!;
@@ -53,24 +53,24 @@ test("draft_journal_entry posts a balanced debit/credit entry to the ledger", ()
   assert.equal(entry.lines.find((l) => l.credit)!.credit, 1200);
 });
 
-test("draft_payment records a payment, falling back to the invoice total when amount is omitted", () => {
+test("draft_payment records a payment, falling back to the invoice total when amount is omitted", async () => {
   const sinks = fakeSinks();
-  const r = toolByName("draft_payment")!.execute({ vendor: "Acme" }, inv, sinks);
+  const r = await toolByName("draft_payment")!.execute({ vendor: "Acme" }, inv, sinks);
   assert.equal(r.ok, true);
   assert.equal(sinks.payments.payments().length, 1);
   assert.equal(sinks.payments.payments()[0]!.amount, 1200); // fell back to inv.total
 });
 
-test("draft_vendor_reply sends an email to the Fake outbox", () => {
+test("draft_vendor_reply sends an email to the Fake outbox", async () => {
   const sinks = fakeSinks();
-  toolByName("draft_vendor_reply")!.execute({ subject: "Query", body: "Please confirm your tax id." }, inv, sinks);
+  await toolByName("draft_vendor_reply")!.execute({ subject: "Query", body: "Please confirm your tax id." }, inv, sinks);
   assert.equal(sinks.email.outbox().length, 1);
   assert.equal(sinks.email.outbox()[0]!.subject, "Query");
 });
 
-test("flag_for_review raises an escalation and clamps an invalid priority to normal", () => {
+test("flag_for_review raises an escalation and clamps an invalid priority to normal", async () => {
   const sinks = fakeSinks();
-  toolByName("flag_for_review")!.execute({ reason: "Suspected duplicate", priority: "bogus" }, inv, sinks);
+  await toolByName("flag_for_review")!.execute({ reason: "Suspected duplicate", priority: "bogus" }, inv, sinks);
   assert.equal(sinks.reviews.escalations().length, 1);
   assert.equal(sinks.reviews.escalations()[0]!.priority, "normal");
 });

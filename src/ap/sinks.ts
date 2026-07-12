@@ -2,10 +2,18 @@
 //
 // Executing an AP action has real consequences: a journal entry is posted to the
 // ledger, a payment is recorded, a reply is sent to the vendor, a review is
-// escalated. In this vertical slice those are STUB sinks that record what would
-// happen (in-memory, inspectable) rather than touching a real ERP / bank / SMTP.
-// Swapping in a real ledger client, payment rail, or SMTP transport later is a
-// drop-in replacement behind these interfaces — the workflow code is unchanged.
+// escalated. The ledger / payment-rail / review sinks here are in-memory Fakes
+// that record what WOULD happen (inspectable) rather than touching a real ERP or
+// bank. The email sink is different: `SmtpEmailSink` (smtp-sink.ts) is a REAL
+// transport that actually delivers a message over SMTP once a human approves —
+// still behind this same interface and the same human gate. Swapping in a real
+// ledger client or payment rail later is likewise a drop-in behind these
+// interfaces — the workflow code is unchanged.
+//
+// `EmailSink.send` is async because the real transport performs network I/O; the
+// awaited result surfaces a delivery FAILURE back at the approval call, so a failed
+// send leaves the work item pending for retry rather than being silently swallowed.
+// The other three sinks stay synchronous (pure in-memory record).
 
 export interface LedgerEntry {
   ref: string;
@@ -49,9 +57,10 @@ export interface PaymentSink {
   payments(): PaymentRecord[];
 }
 
-// The transport the autopilot "sends" vendor replies through.
+// The transport the autopilot sends vendor replies through. Async because a real
+// SMTP transport (SmtpEmailSink) performs network I/O; the Fake resolves immediately.
 export interface EmailSink {
-  send(email: Omit<OutboundEmail, "sentAt">): OutboundEmail;
+  send(email: Omit<OutboundEmail, "sentAt">): Promise<OutboundEmail>;
   outbox(): OutboundEmail[];
 }
 
@@ -96,7 +105,7 @@ export class FakePaymentSink implements PaymentSink {
 
 export class FakeEmailSink implements EmailSink {
   private rows: OutboundEmail[] = [];
-  send(email: Omit<OutboundEmail, "sentAt">): OutboundEmail {
+  async send(email: Omit<OutboundEmail, "sentAt">): Promise<OutboundEmail> {
     const row = { ...email, sentAt: new Date().toISOString() };
     this.rows.push(row);
     return row;

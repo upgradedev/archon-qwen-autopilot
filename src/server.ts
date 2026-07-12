@@ -130,8 +130,9 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
           "real, amend to edit then execute, or reject to discard. The full step trace is " +
           "persisted so a human can see HOW the agent decided. On approval the outcome is " +
           "written back to memory so the next decision for that vendor is better grounded. " +
-          "The execution sinks are simulated in-memory adapters (interfaces ready for real " +
-          "ledger / SMTP / payment adapters); the loop and the read/analyze tools + memory " +
+          "The vendor-reply sink delivers over real SMTP when configured; the ledger / " +
+          "payment sinks are simulated in-memory adapters (interfaces ready for real " +
+          "ledger / payment rails); the loop and the read/analyze tools + memory " +
           "grounding are real.",
         version: pkg.version,
       },

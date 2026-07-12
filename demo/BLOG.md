@@ -207,8 +207,10 @@ test pyramid → the demo smoke → the eval gate, all green on a bare clone.
 No overselling: the decision engine is a **real bounded multi-step ReAct loop** (the
 agent chains autonomous read/analyze tools — recall → validate → check_duplicate /
 compute_variance — before proposing one terminal action), and the **loop + memory
-grounding are real**. Only the **terminal execution sinks are simulated in-memory
-adapters** — they record what *would* post to a ledger / payment rail / SMTP, behind
+grounding are real** — and so is the email side-effect: `draft_vendor_reply` is a
+**real SMTP send** (`SmtpEmailSink`) once a human approves, when `SMTP_HOST` is
+configured (it cleanly simulates otherwise). The other **terminal sinks are simulated
+in-memory adapters** — they record what *would* post to a ledger / payment rail, behind
 real interfaces. No ERP or bank is contacted. Live Qwen is wired and verified; the
 offline path is deterministic Fakes.
 
