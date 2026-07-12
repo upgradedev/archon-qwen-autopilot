@@ -32,7 +32,7 @@ approval gate.
   vendor history; approved outcomes are written back, so recurring vendors get
   recognized over time.
 - **Two client surfaces** (HTTP + Approval UI and an **MCP server**, 7 tools),
-  a **9-skill custom catalog**, and a measured decision-quality eval (**21/22**).
+  a **9-skill custom catalog**, and a measured decision-quality eval (**22/22** offline).
 
 ### Qwen Cloud usage
 

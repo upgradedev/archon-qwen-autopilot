@@ -103,7 +103,7 @@ returns an MCP **error result**, not a false success.
 ```bash
 npm install
 npm run demo              # drives four invoices end to end through the whole loop
-npm run eval             # the measured decision-quality number (21/22 offline)
+npm run eval             # the measured decision-quality number (22/22 offline)
 npm run eval:corrections # the learning-from-corrections before/after delta
 npm test                 # the full offline pyramid — no key, no database
 ```

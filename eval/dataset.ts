@@ -240,11 +240,12 @@ export const EVAL_SET: EvalScenario[] = [
     label: "No payable total could be parsed (garbled amount, no subtotal/tax) — cannot post or pay; must query the vendor",
     invoice: { vendor: "Duff Beer Co", invoice_number: "DB-9", date: "2026-02-25", amount: "see attached", tax_id: "TX-2626", currency: "EUR" },
     expected: "draft_vendor_reply",
-    knownLimitation:
-      "validate_invoice now SURFACES R1 (no payable total) as an observation in the trace, but the deterministic offline " +
-      "policy has no routing branch for it: the Fake only acts on missing-required-fields, reconcile, duplicate and anomaly, " +
-      "so a no-total invoice falls through to draft_journal_entry. A human clerk (and, we expect, live qwen-plus reading the " +
-      "R1 FAIL observation) would instead query the vendor. This is a genuine gap the eval SURFACES rather than hides — a " +
-      "candidate improvement for the offline policy / a case where the LLM should beat the deterministic floor.",
+    // RESOLVED (was a known limitation): validate_invoice SURFACES R1 (no payable total)
+    // as an observation, and the deterministic offline policy now has an explicit routing
+    // branch for it (fake-chat.ts checks the `no_total` evidence flag) — a no-total invoice
+    // routes to draft_vendor_reply (query the vendor), exactly as a clerk and live qwen-plus
+    // would. This scenario originally failed offline (falling through to draft_journal_entry)
+    // and was shipped failing + documented before the branch was added; it now passes,
+    // bringing offline accuracy to 22/22.
   },
 ];

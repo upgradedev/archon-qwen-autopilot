@@ -6,7 +6,7 @@
 //            tool catalog EXCLUDES the human terminal actions approve/amend/reject).
 //   CHECK 2  Mermaid diagram ↔ modules — every code-component node maps to a real file.
 //   CHECK 3  A committed golden (claims.golden.json) pins the headline numbers (eval
-//            21/22, MCP tools, skill split, the security invariant) and asserts the
+//            22/22, MCP tools, skill split, the security invariant) and asserts the
 //            README's stated versions match, so future drift is caught.
 //
 // Direction of every check is chosen so it passes CLEAN on current main: a
@@ -316,7 +316,7 @@ test("CHECK 3 · golden: the eval numbers pinned in claims.golden.json match the
 
   // README anchor: it states the eval result as digits — parse and compare within tolerance.
   const m = README.match(/\*\*(\d+)\s*\/\s*(\d+)\s*\((\d+(?:\.\d+)?)%\)\*\*/);
-  assert.ok(m, "README should state the eval result as '**21 / 22 (95.5%)**'");
+  assert.ok(m, "README should state the eval result as '**22 / 22 (100.0%)**'");
   assert.equal(Number(m![1]), GOLDEN.eval.pass, "README eval pass count must match golden");
   assert.equal(Number(m![2]), GOLDEN.eval.total, "README eval total must match golden");
   assert.ok(Math.abs(Number(m![3]) - GOLDEN.eval.percent) < 0.1, "README eval % must match golden within 0.1");
