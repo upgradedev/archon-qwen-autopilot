@@ -89,9 +89,10 @@ const MCP_TOOLS: Tool[] = [
   {
     name: "approve",
     description:
-      "Approve a PENDING proposal by id → its terminal skill executes for real (simulated " +
-      "adapter) and the outcome is written back to memory. The human-in-the-loop gate: an " +
-      "unknown id errors, and an already-decided item errors (it can never re-execute).",
+      "Approve a PENDING proposal by id → its terminal skill executes for real (a vendor " +
+      "reply is a real SMTP send when configured; ledger/payment land on in-memory adapters) " +
+      "and the outcome is written back to memory. The human-in-the-loop gate: an unknown id " +
+      "errors, and an already-decided item errors (it can never re-execute).",
     inputSchema: {
       type: "object",
       additionalProperties: false,
