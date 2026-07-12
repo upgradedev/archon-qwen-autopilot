@@ -61,10 +61,12 @@ gets better at *your* vendors over time.
 **What it is, stated honestly:** the decision engine is a **genuine bounded ReAct
 loop** (observe → decide → act → observe) — the agent chains autonomous read/analyze
 tools (recall → validate → check_duplicate / compute_variance) before proposing one
-terminal action, and the loop + memory grounding are real. The terminal execution
-**sinks are simulated in-memory adapters** — they record what *would* post to a
-ledger / payment rail / SMTP, behind real interfaces; no ERP or bank is contacted.
-Live Qwen is wired; the whole loop is verified offline via deterministic Fakes.
+terminal action, and the loop + memory grounding are real. One terminal sink is real
+too: `draft_vendor_reply` delivers over **real SMTP** (`SmtpEmailSink`) once a human
+approves, when `SMTP_HOST` is set (simulating cleanly otherwise). The other **sinks are
+simulated in-memory adapters** — they record what *would* post to a ledger / payment
+rail, behind real interfaces; no ERP or bank is contacted. Live Qwen is wired; the whole
+loop is verified offline via deterministic Fakes.
 
 ## System Architecture
 
@@ -229,7 +231,8 @@ AP scenarios, each carrying the tool a human clerk would pick, graded against th
 - **Offline-first, reproducible with zero credentials.** The whole loop, the test
   pyramid, and the eval gate run in CI with no key and no spend, via deterministic
   Fakes — while the identical code runs live against Qwen + pgvector.
-- **Honest scope.** A real multi-step loop with **simulated** terminal sinks and a
+- **Honest scope.** A real multi-step loop with one **real** terminal sink (SMTP
+  email) and the rest **simulated**, and a
   small labelled eval — all stated plainly in the README, this story, and EVAL.md, so
   every claim that *is* strong is believable.
 
@@ -253,9 +256,9 @@ AP scenarios, each carrying the tool a human clerk would pick, graded against th
 
 ## What's next for Archon Autopilot
 
-- **Real sink adapters.** Swap the in-memory stubs for a ledger client, a payment
-  rail, and an SMTP transport behind the existing `Sinks` interfaces — no workflow
-  change.
+- **Real sink adapters.** The SMTP email sink is already real (`SmtpEmailSink`); the
+  remaining step is to swap the in-memory ledger / payment-rail stubs for a real ledger
+  client and payment rail behind the existing `Sinks` interfaces — no workflow change.
 - **Richer autonomous tools.** The bounded plan/act/observe loop now ships (recall →
   validate → check_duplicate / compute_variance → terminal action, human-gated); next
   is adding tools that fetch external context (e.g. a missing PO) mid-loop.

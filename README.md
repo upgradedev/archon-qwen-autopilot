@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-Alibaba%20Cloud-ff6a00?logo=alibabacloud&logoColor=white)](https://autopilot.43.106.13.19.sslip.io)
 [![Demo Video](https://img.shields.io/badge/Demo%20Video-watch-ff0000?logo=youtube)](demo/video/final/archon-autopilot-demo.mp4)
-[![Tests](https://img.shields.io/badge/Tests-177%20node%3Atest%20%2B%2025%20Playwright-brightgreen)](tests)
+[![Tests](https://img.shields.io/badge/Tests-186%20node%3Atest%20%2B%2025%20Playwright-brightgreen)](tests)
 [![Coverage](https://img.shields.io/badge/Coverage-95.94%25-brightgreen)](tests)
 [![Project Story](https://img.shields.io/badge/Project%20Story-Devpost-003e54)](demo/PROJECT_STORY.md)
 
@@ -94,9 +94,10 @@ correction) — see
    proposal. This "recommend, never auto-execute" gate is the core Track-4 story;
    the `/pending` payload and the approval UI show the **whole reasoning trace**, so
    a person sees *how* the agent decided, not just the final action.
-5. **Execute + remember** — on approval the chosen tool runs for real (simulated
-   adapters that post the journal entry / record the payment / "send" the vendor
-   reply / raise a review) and the outcome is **written back to memory**.
+5. **Execute + remember** — on approval the chosen tool runs for real: the vendor
+   reply is a **real SMTP send** (`SmtpEmailSink`) when `SMTP_HOST` is configured,
+   while the journal entry / payment / review land on inspectable in-memory adapters;
+   the outcome is **written back to memory**.
 
 ### Two tool tiers — this is what makes the loop both multi-step AND safe
 
@@ -114,7 +115,7 @@ external side-effect, so the agent can chain several of them):
 **Terminal, side-effecting actions — HUMAN-GATED** (choosing one STOPS the loop and
 persists a PENDING proposal; nothing runs until a human approves):
 
-| Tool | When the model picks it | Executed side-effect (simulated adapter) |
+| Tool | When the model picks it | Executed side-effect (on approval) |
 |---|---|---|
 | `draft_journal_entry` | Clean, validated invoice from a **new** vendor | Posts a balanced debit-expense / credit-AP entry to the ledger |
 | `draft_payment` | Clean invoice from a **known, recurring** vendor, amount in range | Records a scheduled payment on the payment rail |
@@ -165,7 +166,7 @@ flowchart TD
     PEND[("PENDING proposal<br/>+ full step trace")]:::pending
     GATE{{"HUMAN-IN-THE-LOOP GATE<br/>Approve &middot; Amend &middot; Reject"}}:::gate
     NOTE["Model tool catalog EXCLUDES<br/>approve / pay &mdash; no injection<br/>can reach a side-effect"]:::guard
-    EXE["Execute for real<br/>simulated sink adapters"]:::exec
+    EXE["Execute for real<br/>real SMTP email &middot; simulated ledger/payment"]:::exec
 
     MEM[("pgvector memory")]:::memory
     QWEN["Qwen Cloud / Model Studio &middot; DashScope<br/>vision &middot; decider &middot; embeddings"]:::ai
@@ -829,12 +830,15 @@ is worth more here than building it.
 
 Stated plainly (see also the Scope note up top):
 
-- **Terminal sinks are simulated adapters.** `draft_journal_entry` / `draft_payment`
-  / `draft_vendor_reply` / `flag_for_review` record what *would* happen to
-  inspectable in-memory Fakes behind real interfaces; the `Sinks` interfaces are the
-  drop-in seam for real ledger / payment-rail / SMTP adapters. No ERP, bank, or mail
-  server is contacted. **The loop and the autonomous read/analyze tools + memory
-  grounding are real** — only the terminal side-effects are simulated.
+- **One real terminal sink; the rest are simulated adapters.** `draft_vendor_reply`
+  is backed by a **real SMTP transport** (`SmtpEmailSink`): once a human approves, an
+  actual email is delivered when `SMTP_HOST` is configured (and it cleanly simulates,
+  sending nothing, when it is not) — behind the unchanged human gate. The other three
+  (`draft_journal_entry` / `draft_payment` / `flag_for_review`) still record what
+  *would* happen to inspectable in-memory Fakes behind the same `Sinks` interfaces —
+  the drop-in seam for real ledger / payment-rail adapters. No ERP or bank is
+  contacted. **The loop and the autonomous read/analyze tools + memory grounding are
+  real** — and now so is the email side-effect.
 - **Live on Alibaba Cloud.** The app is deployed on an Alibaba Cloud **ECS** box over
   HTTPS at **https://autopilot.43.106.13.19.sslip.io** — real Qwen (`qwen-plus` +
   `text-embedding-v4`) on Alibaba Cloud Model Studio, backed by pgvector on the box.
