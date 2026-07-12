@@ -264,7 +264,7 @@ export class AutopilotAgent {
     if (!spec) {
       throw new ConflictError(`unknown tool ${item.proposed.tool} on work item ${item.id}`);
     }
-    const execution = spec.execute(args, item.invoice, this.sinks);
+    const execution = await spec.execute(args, item.invoice, this.sinks);
 
     item.status = "approved";
     item.execution = execution;

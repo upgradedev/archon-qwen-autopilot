@@ -21,7 +21,9 @@ export interface ToolSpec {
   def: ToolDef;
   // Perform the real side-effect. `inv` is the invoice under decision; `args` are
   // the human-approved DOMAIN arguments (reasoning/confidence already stripped).
-  execute(args: Record<string, unknown>, inv: NormalizedInvoice, sinks: Sinks): ExecutionResult;
+  // Async because a terminal action may perform real I/O (the SMTP email sink); the
+  // ledger / payment / review sinks resolve synchronously.
+  execute(args: Record<string, unknown>, inv: NormalizedInvoice, sinks: Sinks): Promise<ExecutionResult>;
 }
 
 // Shared meta-fields injected into every tool schema (self-reported by the model).
@@ -74,7 +76,7 @@ const draftJournalEntry: ToolSpec = {
     },
     ["expense_account", "amount"]
   ),
-  execute(args, inv, sinks) {
+  async execute(args, inv, sinks) {
     const amount = num(args["amount"], inv.total ?? 0);
     const account = str(args["expense_account"], "Uncategorised Expense");
     const entry = sinks.ledger.post({
@@ -107,7 +109,7 @@ const draftPayment: ToolSpec = {
     },
     ["vendor", "amount"]
   ),
-  execute(args, inv, sinks) {
+  async execute(args, inv, sinks) {
     const payment = sinks.payments.record({
       ref: inv.invoice_id,
       vendor: str(args["vendor"], inv.vendor ?? "unknown vendor"),
@@ -136,8 +138,8 @@ const draftVendorReply: ToolSpec = {
     },
     ["subject", "body"]
   ),
-  execute(args, inv, sinks) {
-    const email = sinks.email.send({
+  async execute(args, inv, sinks) {
+    const email = await sinks.email.send({
       to: str(args["to"], inv.vendor ?? "vendor billing"),
       subject: str(args["subject"], `Query on invoice ${inv.vendor_ref ?? inv.invoice_id}`),
       body: str(args["body"], "We need a clarification before we can process this invoice."),
@@ -162,7 +164,7 @@ const flagForReview: ToolSpec = {
     },
     ["reason"]
   ),
-  execute(args, inv, sinks) {
+  async execute(args, inv, sinks) {
     const priorityRaw = str(args["priority"], "normal");
     const priority = (["low", "normal", "high"].includes(priorityRaw) ? priorityRaw : "normal") as
       | "low"

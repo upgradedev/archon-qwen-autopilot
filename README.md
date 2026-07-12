@@ -38,9 +38,12 @@ recommends; it never auto-executes.
 
 > **Scope, stated honestly.** The decision engine is a **genuine bounded ReAct
 > loop** (observe → decide → act → observe): the read/analyze tools and the
-> memory grounding are **real**. The terminal execution **sinks are simulated
-> in-memory adapters** (ledger / payment-rail / SMTP) behind real interfaces — no
-> ERP, bank, or mail server is contacted. **Live Qwen is wired** (real `qwen-plus`
+> memory grounding are **real**. The **email sink is real too** — once a human
+> approves a vendor reply, `SmtpEmailSink` delivers an actual message over SMTP
+> when `SMTP_HOST` is configured (and cleanly simulates, sending nothing, when it
+> is not), behind the unchanged human gate. The remaining terminal **sinks are
+> simulated in-memory adapters** (ledger / payment-rail) behind real interfaces —
+> no ERP or bank is contacted. **Live Qwen is wired** (real `qwen-plus`
 > function-calling + `text-embedding-v4`); the whole loop is **verified offline via
 > deterministic Fakes** so it runs in CI with no key. Decision quality is
 > **measured** — see [Decision-quality eval](#decision-quality-eval) and
@@ -115,7 +118,7 @@ persists a PENDING proposal; nothing runs until a human approves):
 |---|---|---|
 | `draft_journal_entry` | Clean, validated invoice from a **new** vendor | Posts a balanced debit-expense / credit-AP entry to the ledger |
 | `draft_payment` | Clean invoice from a **known, recurring** vendor, amount in range | Records a scheduled payment on the payment rail |
-| `draft_vendor_reply` | Required fields missing or the invoice does not reconcile | "Sends" a clarification request to the vendor (Fake email sink) |
+| `draft_vendor_reply` | Required fields missing or the invoice does not reconcile | Sends a clarification request to the vendor — a **real SMTP delivery** (`SmtpEmailSink`) when `SMTP_HOST` is set, else the simulated Fake sink |
 | `flag_for_review` | Confirmed **duplicate** or **anomalous amount** | Escalates the invoice to a human specialist |
 
 Each tool is a real OpenAI-compatible **function schema** handed to Qwen. On the

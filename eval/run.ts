@@ -69,7 +69,7 @@ async function runScenario(s: EvalScenario): Promise<Row> {
 
   const proposed = item.proposed.tool;
   const correct = proposed === s.expected;
-  const { argSane, argNote } = checkArgSanity(item);
+  const { argSane, argNote } = await checkArgSanity(item);
   // How many autonomous read/analyze steps the loop took before the terminal action.
   const steps = item.trace.length;
   return { scenario: s, proposed, correct, argSane, argNote, steps };
@@ -79,11 +79,11 @@ async function runScenario(s: EvalScenario): Promise<Row> {
 // We run the chosen tool's execute() against throwaway fake sinks and require a
 // truthy, non-empty result. This catches an action whose args cannot be carried
 // out, without penalising the model for omitting an arg execute() back-fills.
-function checkArgSanity(item: WorkItem): { argSane: boolean; argNote: string } {
+async function checkArgSanity(item: WorkItem): Promise<{ argSane: boolean; argNote: string }> {
   const spec = toolByName(item.proposed.tool);
   if (!spec) return { argSane: false, argNote: "unknown tool" };
   try {
-    const res = spec.execute(item.proposed.args, item.invoice, fakeSinks());
+    const res = await spec.execute(item.proposed.args, item.invoice, fakeSinks());
     if (res.ok && res.summary.trim().length > 0) return { argSane: true, argNote: res.summary };
     return { argSane: false, argNote: "execute returned not-ok / empty summary" };
   } catch (err) {
