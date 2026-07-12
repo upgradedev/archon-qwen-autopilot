@@ -176,16 +176,23 @@ The numbers:
 
 | Mode | Model | Tool-choice accuracy |
 |---|---|---:|
-| **Offline** (CI-gated) | deterministic Fakes | **21 / 22 (95.5%)** |
-| **Online** (with a key) | real `qwen-plus` | *captured live* |
+| **Offline** (CI-gated) | deterministic Fakes | **22 / 22 (100.0%)** |
+| **Online** (with a key) | real `qwen-plus` | *run with a key to capture* |
 
-We report **21 / 22, not 22 / 22**, on purpose. Scenario `s22` is an invoice with no
-parseable total; a clerk would query the vendor, but the deterministic policy has no
-signal for "no total" and falls through. We **keep it failing** and document it —
-because an eval that can't fail proves nothing, and because it's exactly the
-context-reading call we expect live `qwen-plus` to get right where the fixed policy
-doesn't. The offline gate is set at the measured floor (≥ 90%) so CI catches a real
-regression without pretending the policy is perfect.
+Two honesty points sit behind that offline number. First, it is produced by the
+**deterministic Fakes**, so it is a **policy / regression guard** over the real
+multi-step pipeline — *not* a decision-quality claim about the model. The real
+decision-quality number is the **online** row: live `qwen-plus` choosing freely
+against the same labels. That run needs a key and a few cents of spend, so we keep it
+separate rather than pass the Fake's result off as the model's. Second, that 22/22
+was **earned, not curated**: scenario `s22` (an invoice with no parseable total)
+originally *failed* offline, because the deterministic policy had no branch for "no
+total". We shipped it failing and documented it — an eval that can't fail proves
+nothing — and then **resolved it honestly** by adding the missing routing branch (a
+no-total invoice now routes to `draft_vendor_reply`, i.e. query the vendor, which is
+what a clerk does). The offline gate stays at the measured floor (≥ 90%), well below
+the value, so CI still catches a real regression rather than pretending the policy is
+perfect.
 
 ## Offline-first, so all of it runs in CI
 
@@ -210,7 +217,7 @@ offline path is deterministic Fakes.
 ```bash
 npm install
 npm run demo             # offline: four invoices through the whole loop, no key
-npm run eval            # offline: 22 labelled decisions graded, 21/22
+npm run eval            # offline: 22 labelled decisions graded, 22/22
 npm run eval -- --gate  # the CI gate
 npm test                # the full offline test pyramid
 npm start               # the API + Swagger UI at :9000/docs

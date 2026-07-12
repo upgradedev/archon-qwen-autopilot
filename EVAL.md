@@ -19,12 +19,22 @@ business-correct label.
 | Mode | Model seam | Tool-choice accuracy | What the number means |
 |---|---|---:|---|
 | **Offline** (CI, gated) | deterministic Fakes | **22 / 22 (100.0%)** | policy / regression guard over the real multi-step pipeline |
-| **Online** (with a key) | real `qwen-plus` | *captured live* | the actual decision quality of the model choosing freely |
+| **Online** (with a key) | real `qwen-plus` | *run with a key to capture* | the actual decision quality of the model choosing freely |
 
 ```bash
 npm run eval            # drive every scenario, print the table + accuracy N/M
 npm run eval -- --gate  # CI gate: fail if tool-choice accuracy < 90%
 ```
+
+> **What the offline 22/22 is — and is not.** The offline number is produced by the
+> **deterministic Fakes**, so it is a **policy / regression guard** over the real
+> multi-step pipeline, not a decision-quality claim about the model. The
+> **decision-quality** number is the **online** row — real `qwen-plus` choosing freely
+> against the same labels. That online run needs a DashScope key and a few cents of
+> spend, so it is **not bundled into this repo's number**; run `DASHSCOPE_API_KEY=sk-…
+> npm run eval` to capture it (the header self-labels the run `ONLINE`). We keep the
+> two numbers separate on purpose rather than presenting the Fake's result as the
+> model's.
 
 Because every scenario now runs the loop, the eval also reports **loop autonomy**:
 **all 22 scenarios take ≥2 autonomous read/analyze steps** (avg 2.3) before any
@@ -181,7 +191,7 @@ behaviour*, not a general online-learning claim.
 
 ```bash
 npm ci
-npm run eval            # offline: replays the deterministic pipeline, prints 21/22
+npm run eval            # offline: replays the deterministic pipeline, prints 22/22
 npm run eval -- --gate  # offline CI gate: accuracy ≥ 90%
 # live decision-quality number (needs a DashScope key, a few cents):
 cp .env.example .env    # set DASHSCOPE_API_KEY

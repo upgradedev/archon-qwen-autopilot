@@ -186,7 +186,7 @@ The biggest risk in "an agent that chooses actions" is that no one checks whethe
 choices are *good*. So we built an eval (`eval/`, [EVAL.md](../EVAL.md)): 22 labelled
 AP scenarios, each carrying the tool a human clerk would pick, graded against the
 **real decider path**. Offline (deterministic Fakes, gated in CI) it scores
-**21 / 22 (95.5%)** as a policy/regression guard; online with a key it grades real
+**22 / 22 (100.0%)** as a policy/regression guard; online with a key it grades real
 `qwen-plus` choosing freely — the actual decision-quality number.
 
 ## Challenges we ran into
@@ -206,10 +206,13 @@ AP scenarios, each carrying the tool a human clerk would pick, graded against th
   args through execution so the two can't diverge.
 - **Proving the decisions are good — honestly.** An offline eval over a deterministic
   policy risks being circular. We resolved it by labelling every scenario from
-  *business* ground truth (never from the Fake), leaning the offline weight on
-  precedence scenarios that grade the *order* of safety checks, and **keeping one
-  scenario the deterministic policy fails** (a no-total invoice) rather than labelling
-  around it — reporting 21/22, not a suspicious 22/22.
+  *business* ground truth (never from the Fake) and leaning the offline weight on
+  precedence scenarios that grade the *order* of safety checks. One scenario (a
+  no-total invoice, `s22`) originally *failed* the deterministic policy; we shipped it
+  failing and documented it — an eval that can't fail proves nothing — then resolved it
+  honestly by adding the missing routing branch (no-total → query the vendor), reaching
+  a clean 22/22 offline. The offline number stays a **policy/regression guard**; the
+  decision-quality claim is the separate online `qwen-plus` run.
 
 ## Accomplishments that we're proud of
 
@@ -217,8 +220,9 @@ AP scenarios, each carrying the tool a human clerk would pick, graded against th
   one of four AP actions per invoice; nothing touches the world until a human
   approves the exact args — and that guarantee is enforced and tested, not asserted.
 - **A measured decision-quality eval.** 22 labelled scenarios graded on the real
-  decider path — **21 / 22 (95.5%)** offline as a gated regression guard, with the
-  online `qwen-plus` number captured live. We report the one miss and why.
+  decider path — **22 / 22 (100.0%)** offline as a gated regression guard (a
+  deterministic-policy number, not a model-quality claim), with the online `qwen-plus`
+  decision-quality number captured by running with a key.
 - **The memory write-back loop, working end to end.** A vendor seen once is
   recognised next time; the new-vendor → recurring-vendor transition is demonstrable
   on screen and covered by tests.
@@ -242,9 +246,10 @@ AP scenarios, each carrying the tool a human clerk would pick, graded against th
 - **If you don't measure the decisions, you don't have an agent — you have a demo.**
   Building the eval changed the project: it forced business-truth labels, surfaced a
   real policy gap, and gave us a number to defend instead of a vibe.
-- **Honesty is a feature.** Reporting 21/22 (not 22/22), naming the simulated
-  terminal sinks, and separating the offline regression number from the online
-  decision-quality number makes the whole submission more credible, not less.
+- **Honesty is a feature.** Shipping the one hard scenario failing before we resolved
+  it, naming the simulated terminal sinks, and separating the offline
+  deterministic-policy number from the online decision-quality number makes the whole
+  submission more credible, not less.
 
 ## What's next for Archon Autopilot
 

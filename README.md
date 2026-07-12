@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-Alibaba%20Cloud-ff6a00?logo=alibabacloud&logoColor=white)](https://autopilot.43.106.13.19.sslip.io)
 [![Demo Video](https://img.shields.io/badge/Demo%20Video-watch-ff0000?logo=youtube)](demo/video/final/archon-autopilot-demo.mp4)
-[![Tests](https://img.shields.io/badge/Tests-168%20node%3Atest%20%2B%20Playwright-brightgreen)](tests)
+[![Tests](https://img.shields.io/badge/Tests-177%20node%3Atest%20%2B%2025%20Playwright-brightgreen)](tests)
 [![Coverage](https://img.shields.io/badge/Coverage-95.94%25-brightgreen)](tests)
 [![Project Story](https://img.shields.io/badge/Project%20Story-Devpost-003e54)](demo/PROJECT_STORY.md)
 
@@ -18,6 +18,24 @@ terminal AP action. **Nothing executes until a human approves the exact argument
 to a *proposed* action automatically, then stops and waits for a person. It
 recommends; it never auto-executes.
 
+**What makes Autopilot distinct** — four things a generic invoice classifier does not do:
+
+1. **A bounded ReAct decision loop over Qwen function-calling.** The agent chooses
+   its own next read/analyze tool each step (recall history → validate → check
+   duplicate → compute variance) and reasons over the accumulated observations before
+   proposing one action — not a single fixed prompt.
+2. **`qwen-vl-max` document vision on the intake path.** A photographed or scanned
+   invoice is read into structured fields, so the loop runs on real documents, not
+   only hand-typed JSON.
+3. **A human-in-the-loop money gate with a *structural* tool-attack defense.** Nothing
+   executes until a person approves the exact arguments — and the model's tool catalog
+   contains only *proposing* tools, so it literally cannot name `approve`/`pay`. A
+   prompt-injection buried in an untrusted invoice is therefore inert **by
+   construction**, not by a filter (proven by a multi-step tool-attack suite).
+4. **The accounts-payable domain, end to end.** Messy incoming invoice → normalize →
+   validate → triage (accrue / pay / query / escalate) → a *proposed* action — the
+   actual daily work of an AP clerk.
+
 > **Scope, stated honestly.** The decision engine is a **genuine bounded ReAct
 > loop** (observe → decide → act → observe): the read/analyze tools and the
 > memory grounding are **real**. The terminal execution **sinks are simulated
@@ -29,19 +47,22 @@ recommends; it never auto-executes.
 > [`EVAL.md`](EVAL.md).
 
 It is the **Track-4 (Autopilot Agent)** entry for the Global AI Hackathon Series
-with Qwen Cloud, and it is the **top layer on top of our Track-1 [Archon
-MemoryAgent](../qwen-memoryagent)**: the autopilot uses a persistent, queryable
-**pgvector memory** as its foundation, so every decision is grounded in what the
-agent has learned about a vendor across sessions. Crucially, **the approval gate is
-also a training signal** — a human's amendment or rejection is written back with
-structured metadata, and **read on the vendor's next decision**: an invoice that
-re-bills an amount a human previously corrected *down* is escalated for review
+with Qwen Cloud. Crucially, **the approval gate is also a training signal** — a
+human's amendment or rejection is written back to a persistent, queryable **pgvector
+memory** with structured metadata, and **read on the vendor's next decision**: an
+invoice that re-bills an amount a human previously corrected *down* is escalated for review
 instead of straight-through paid. The **mechanism is measured** — writeback → recall →
 the correction surfaced in the observation the model reads, with a before/after
 behavioural delta (the offline escalation is the deterministic policy guard, exactly
 as the eval's offline number is; online, `qwen-plus` reasons over the same recalled
 correction) — see
 [Learning from corrections](#learning-from-corrections-the-approval-gate-as-a-training-signal).
+
+> **Foundation, not re-submission.** The pgvector memory layer is shared with our
+> Track-1 [Archon MemoryAgent](../qwen-memoryagent). Autopilot is a distinct Track-4
+> agent — a bounded decision/action loop, a two-tier tool set, and a human approval
+> gate — that *builds on* that storage foundation; it is not a re-packaging of the
+> MemoryAgent.
 
 > **Positioning:** universal financial-intelligence terms only. `tax` / `tax_id`
 > are generic accounting fields, not tied to any national scheme or authority.
