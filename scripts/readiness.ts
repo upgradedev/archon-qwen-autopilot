@@ -42,6 +42,7 @@ import { fakeSinks, type Sinks } from "../src/ap/sinks.js";
 import { SmtpEmailSink, type MailTransport } from "../src/ap/smtp-sink.js";
 import { JsonlLedgerSink, type LedgerTransport } from "../src/ap/ledger-sink.js";
 import { defaultSinks } from "../src/deps.js";
+import type { ChatCreateArgs, ChatResponse, QwenChatClient, ToolCall } from "../src/qwen/client.js";
 
 // Offline: no key means the decider/embedder/extractor auto-select the deterministic Fakes.
 delete process.env.DASHSCOPE_API_KEY;
@@ -437,6 +438,102 @@ async function presentation(): Promise<CriterionSpec> {
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
+// SECURITY (25) — the application-security PEN-TEST layer, run as behavioral checks.
+//
+// Cross-cutting internal assurance BEYOND the four Track-4 rubric categories. Each check
+// DRIVES the real agent / real terminal sinks (mock transports) offline — the same
+// invariants the tests/pentest/ suite + the `pen-test` CI job pin — so the readiness
+// gate reports the live security posture, not a checklist. It deliberately covers the
+// categories the Innovation criterion does NOT (authz/HITL-bypass, sink-injection,
+// sensitive-data exposure, compromised-model agency); the SCA/CVE category is the CI
+// `dep-audit` job (network-bound), asserted here only as WIRED (offline-safe).
+// ════════════════════════════════════════════════════════════════════════════════
+
+// A stub decider (same seam as the real client) that always emits one canned tool_call
+// — a fully-compromised model. Drives the REAL loop to prove it has no execution agency.
+function compromisedModel(name: string, args: Record<string, unknown>): QwenChatClient {
+  const call: ToolCall = { id: `evil-${name}`, type: "function", function: { name, arguments: JSON.stringify(args) } };
+  return {
+    chat: { completions: { create: async (_a: ChatCreateArgs): Promise<ChatResponse> => ({ choices: [{ message: { content: null, tool_calls: [call] } }] }) } },
+  };
+}
+
+async function security(): Promise<CriterionSpec> {
+  const checks: Check[] = [];
+  const quiet = { log() {}, warn() {} };
+
+  // 1) Excessive agency — a compromised model calling a money-moving verb cannot execute.
+  {
+    const sinks = fakeSinks();
+    const agent = new AutopilotAgent(new FakeEmbedder(), new InMemoryStore(), new InMemoryWorkItemStore(), defaultLoop(compromisedModel("pay", { amount: 999999, confidence: 1 })), sinks);
+    const item = await agent.intake({ vendor: "Acme Co", invoice_number: "S-1", tax_id: "T-1", subtotal: 100, tax: 20, total: 120 });
+    const safe = item.status === "pending" && item.execution === undefined && item.proposed.tool === "flag_for_review" && sinksAreEmpty(sinks);
+    checks.push(assertCheck("pentest-excessive-agency", "Excessive agency: a compromised model calling 'pay' cannot execute (falls back to a human escalation)", safe,
+      `compromised model → status='${item.status}', proposed='${item.proposed.tool}', no sink fired`));
+  }
+
+  // 2) AuthZ / HITL — the AMENDED amount is exactly what the durable ledger records.
+  {
+    const lines: string[] = [];
+    const sinks = fakeSinks();
+    sinks.ledger = new JsonlLedgerSink({ transport: { append: (l) => lines.push(l) } as LedgerTransport, logger: quiet });
+    const agent = new AutopilotAgent(new FakeEmbedder(), new InMemoryStore(), new InMemoryWorkItemStore(), defaultLoop(), sinks);
+    const item = await agent.intake({ vendor: "Fabrikam", invoice_number: "S-2", tax_id: "T-2", subtotal: 100, tax: 20, total: 120 });
+    const before = lines.length;
+    await agent.amend(item.id, { args: { amount: 90 }, by: "reviewer" });
+    const row = lines.length === 1 ? JSON.parse(lines[0]!) : null;
+    const debit = row?.lines?.find((l: { debit?: number }) => typeof l.debit === "number")?.debit;
+    const enforced = item.proposed.tool === "draft_journal_entry" && before === 0 && lines.length === 1 && debit === 90;
+    checks.push(assertCheck("pentest-authz-hitl", "AuthZ/HITL: no sink without approval; the AMENDED args are exactly what executes", enforced,
+      `intake wrote ${before} line(s); after amend→approve the durable ledger debit=${debit} (amended 90, not billed 120)`));
+  }
+
+  // 3) SMTP header injection — a CRLF in the approved subject/to cannot inject a header.
+  {
+    const sent: Array<Record<string, string>> = [];
+    const sink = new SmtpEmailSink({ from: "ap@acme.test", transport: { async sendMail(m) { sent.push({ ...m }); return { messageId: "s" }; } } as MailTransport, logger: quiet });
+    await sink.send({ to: "v@x.test\r\nBcc: evil@x.test", subject: "Re\r\nContent-Type: x", body: "b\nb2" });
+    const clean = sent.length === 1 && !/[\r\n]/.test(sent[0]!.to!) && !/[\r\n]/.test(sent[0]!.subject!) && sent[0]!.text === "b\nb2";
+    checks.push(assertCheck("pentest-smtp-injection", "Sink injection: CRLF in the approved to/subject is stripped (no SMTP header injection)", clean,
+      `to/subject carry no CR/LF after sanitize; body newlines preserved`));
+  }
+
+  // 4) Ledger format injection — a newline/fake-JSON narrative cannot forge a 2nd row.
+  {
+    const lines: string[] = [];
+    const sink = new JsonlLedgerSink({ transport: { append: (l) => lines.push(l) } as LedgerTransport, logger: quiet });
+    sink.post({ ref: "S-4", narrative: 'ok\n{"ref":"FORGED","lines":[]}\n', lines: [{ account: "Expense", debit: 10 }, { account: "AP", credit: 10 }] });
+    const safe = lines.length === 1 && !/\n/.test(lines[0]!) && JSON.parse(lines[0]!).ref === "S-4";
+    checks.push(assertCheck("pentest-ledger-injection", "Sink injection: a newline/fake-JSON narrative cannot forge a second JSONL ledger row", safe,
+      `exactly ${lines.length} physical line, ref intact (JSON.stringify escaped the payload)`));
+  }
+
+  // 5) Sensitive-data exposure — the sink log never dumps the approved email body.
+  {
+    const logs: string[] = [];
+    const sinks = fakeSinks();
+    sinks.email = new SmtpEmailSink({ from: "ap@acme.test", logger: { log: (m: string) => logs.push(m), warn() {} } }); // SIMULATE
+    const agent = new AutopilotAgent(new FakeEmbedder(), new InMemoryStore(), new InMemoryWorkItemStore(), defaultLoop(), sinks);
+    const secret = "sk-live-READINESS-SECRET";
+    const item = await agent.intake({ vendor: "Northwind", invoice_number: "S-5", subtotal: 100, tax: 20, total: 200 });
+    await agent.amend(item.id, { args: { body: `ref ${secret}` }, by: "reviewer" });
+    const clean = item.proposed.tool === "draft_vendor_reply" && logs.length > 0 && logs.every((l) => !l.includes(secret));
+    checks.push(assertCheck("pentest-data-exposure", "Sensitive-data exposure: sink logs are templated summaries — the email body/secret is never logged", clean,
+      `${logs.length} log line(s), none echo the approved body's secret`));
+  }
+
+  // 6) SCA/CVE dependency gate — WIRED in CI (the network audit itself runs in dep-audit).
+  {
+    const ci = readFileSync(join(ROOT, ".github", "workflows", "ci.yml"), "utf8");
+    const wired = /npm audit --audit-level=high/.test(ci) && /run: npm run test:pentest/.test(ci);
+    checks.push(assertCheck("pentest-sca-wired", "SCA/CVE gate + pen-test job are wired in CI (dep-audit runs the network audit)", wired,
+      wired ? "ci.yml contains the dep-audit (npm audit --audit-level=high) gate and the pen-test job" : "CI is missing the dep-audit gate or the pen-test job"));
+  }
+
+  return { key: "security", name: "Security", weight: 25, checks };
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
 // scoring + report
 // ════════════════════════════════════════════════════════════════════════════════
 
@@ -458,7 +555,7 @@ function scoreCriterion(c: CriterionSpec) {
 
 async function main() {
   const quiet = process.argv.slice(2).includes("--json");
-  const criteria = [await technical(), await innovation(), await problem(), await presentation()];
+  const criteria = [await technical(), await innovation(), await problem(), await presentation(), await security()];
   const scored = criteria.map(scoreCriterion);
 
   const totalWeight = scored.reduce((s, c) => s + c.weight, 0);
@@ -473,7 +570,7 @@ async function main() {
 
   const report = {
     generatedAt: new Date().toISOString(),
-    rubric: "Track-4 Autopilot Agent — Technical 30 / Innovation 30 / Problem 25 / Presentation 15",
+    rubric: "Track-4 Autopilot Agent — Technical 30 / Innovation 30 / Problem 25 / Presentation 15 · Security 25 (cross-cutting app-sec assurance)",
     automatableCompletionPct: automatablePct,
     gateThresholdPct: GATE_THRESHOLD_PCT,
     gatePass,

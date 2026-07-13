@@ -36,6 +36,17 @@ export interface MailTransport {
   }): Promise<{ messageId?: string }>;
 }
 
+// Remove CR, LF and other C0/C1 control characters from an email HEADER field value.
+// SMTP headers are line-delimited, so an embedded CRLF in `to`/`subject` would let an
+// approved string inject an additional header (e.g. a hidden Bcc). Stripping the
+// control bytes neutralizes that; ordinary header text (which never contains control
+// characters) is returned unchanged, byte-for-byte — so the sanitizer is a strict no-op
+// on legitimate values.
+export function stripHeaderChars(value: string): string {
+  // eslint-disable-next-line no-control-regex
+  return value.replace(/[\x00-\x1F\x7F]/g, "");
+}
+
 export interface SmtpSinkOptions {
   // The envelope From address (SMTP_FROM). Required — a real MTA rejects a blank From.
   from: string;
@@ -79,10 +90,17 @@ export class SmtpEmailSink implements EmailSink {
 
     // REAL delivery. Awaited on purpose: a failure propagates to approve()/amend() so
     // the work item stays pending rather than being marked approved with no email sent.
+    // Defense-in-depth: the header fields (`to`, `subject`) are stripped of CR/LF and
+    // other control characters before they reach the transport, so an approved value
+    // like "Invoice\r\nBcc: attacker@evil" cannot smuggle an extra SMTP header (CRLF
+    // header injection). A real nodemailer transport already rejects such headers; this
+    // makes the sink safe regardless of the transport behind the seam. Clean values pass
+    // through byte-for-byte, and the body (`text`) is NOT a header, so its newlines are
+    // preserved verbatim.
     const info = await this.transport.sendMail({
       from: this.from,
-      to: row.to,
-      subject: row.subject,
+      to: stripHeaderChars(row.to),
+      subject: stripHeaderChars(row.subject),
       text: row.body,
     });
     this.logger.log(
