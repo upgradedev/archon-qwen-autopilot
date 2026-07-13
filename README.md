@@ -38,12 +38,15 @@ recommends; it never auto-executes.
 
 > **Scope, stated honestly.** The decision engine is a **genuine bounded ReAct
 > loop** (observe → decide → act → observe): the read/analyze tools and the
-> memory grounding are **real**. The **email sink is real too** — once a human
+> memory grounding are **real**. **Two terminal sinks are real**: once a human
 > approves a vendor reply, `SmtpEmailSink` delivers an actual message over SMTP
-> when `SMTP_HOST` is configured (and cleanly simulates, sending nothing, when it
-> is not), behind the unchanged human gate. The remaining terminal **sinks are
-> simulated in-memory adapters** (ledger / payment-rail) behind real interfaces —
-> no ERP or bank is contacted. **Live Qwen is wired** (real `qwen-plus`
+> when `SMTP_HOST` is configured; and once a human approves a journal entry,
+> `JsonlLedgerSink` appends the double-entry accrual to a **durable append-only
+> JSONL ledger** when `LEDGER_JSONL_PATH` is configured. Both cleanly simulate
+> (recording the intent, writing nothing) when unconfigured, behind the unchanged
+> human gate. The remaining terminal **sinks are simulated in-memory adapters**
+> (payment-rail / review) behind real interfaces — no ERP or bank is contacted.
+> **Live Qwen is wired** (real `qwen-plus`
 > function-calling + `text-embedding-v4`); the whole loop is **verified offline via
 > deterministic Fakes** so it runs in CI with no key. Decision quality is
 > **measured** — see [Decision-quality eval](#decision-quality-eval) and
@@ -117,7 +120,7 @@ persists a PENDING proposal; nothing runs until a human approves):
 
 | Tool | When the model picks it | Executed side-effect (on approval) |
 |---|---|---|
-| `draft_journal_entry` | Clean, validated invoice from a **new** vendor | Posts a balanced debit-expense / credit-AP entry to the ledger |
+| `draft_journal_entry` | Clean, validated invoice from a **new** vendor | Posts a balanced debit-expense / credit-AP entry — a **real durable JSONL append** (`JsonlLedgerSink`) when `LEDGER_JSONL_PATH` is set, else the simulated Fake sink |
 | `draft_payment` | Clean invoice from a **known, recurring** vendor, amount in range | Records a scheduled payment on the payment rail |
 | `draft_vendor_reply` | Required fields missing or the invoice does not reconcile | Sends a clarification request to the vendor — a **real SMTP delivery** (`SmtpEmailSink`) when `SMTP_HOST` is set, else the simulated Fake sink |
 | `flag_for_review` | Confirmed **duplicate** or **anomalous amount** | Escalates the invoice to a human specialist |
@@ -166,7 +169,7 @@ flowchart TD
     PEND[("PENDING proposal<br/>+ full step trace")]:::pending
     GATE{{"HUMAN-IN-THE-LOOP GATE<br/>Approve &middot; Amend &middot; Reject"}}:::gate
     NOTE["Model tool catalog EXCLUDES<br/>approve / pay &mdash; no injection<br/>can reach a side-effect"]:::guard
-    EXE["Execute for real<br/>real SMTP email &middot; simulated ledger/payment"]:::exec
+    EXE["Execute for real<br/>real SMTP email &middot; real JSONL ledger &middot; simulated payment/review"]:::exec
 
     MEM[("pgvector memory")]:::memory
     QWEN["Qwen Cloud / Model Studio &middot; DashScope<br/>vision &middot; decider &middot; embeddings"]:::ai
@@ -699,12 +702,38 @@ The suite is the full pyramid, offline-first:
   cannot see. It runs as its **own CI job** (a browser can't be measured under `c8`).
 - **Coverage** — the full unit + integration pyramid runs under **c8** with an **80%
   floor** (statements / branches / functions / lines) on `src/`, gated in CI.
+- **Readiness gate** — `scripts/readiness.ts` encodes the Track-4 rubric as **real
+  behavioral checks** and fails CI below **95%** automatable completion (see below).
 
 CI (`.github/workflows/ci.yml`): **gitleaks** (pinned v8.18.4) → **dep-audit**
 (`npm audit`, fails on high/critical) → **typecheck** → **build** (`tsc`) →
-**test** → **demo smoke** → **decision-quality eval gate**, with a parallel
-**coverage** gate and a dedicated **Playwright e2e** job — all with no
-`DASHSCOPE_API_KEY`, so the whole agent runs on the deterministic Fakes.
+**test** → **demo smoke** → **decision-quality eval gate**, with parallel
+**coverage**, **docs-consistency**, **readiness** gates and a dedicated
+**Playwright e2e** job — all with no `DASHSCOPE_API_KEY`, so the whole agent runs
+on the deterministic Fakes.
+
+### Readiness gate
+
+`scripts/readiness.ts` turns "is this submission ready?" into a **machine-checkable,
+weighted number** against the live code — not a checklist of file-existence booleans.
+It encodes the four judging criteria (**Technical 30 / Innovation 30 / Problem 25 /
+Presentation 15**) and, where a claim can be exercised offline, it **exercises** it: it
+runs the eval (22/22), measures the learning-from-corrections delta, drives a
+prompt-injection through the real agent (asserting no auto-execute + no forged gate),
+invokes **both real sinks** through their transport seams, and verifies the
+docs/video/architecture surface. Checks that need a human with credentials or a browser
+— a real SMTP send, a hosted video URL, a live-box redeploy — are reported
+`user-gated`, never auto-claimed.
+
+```bash
+npm run readiness       # print the per-criterion report + write readiness.json
+```
+
+It emits `readiness.json` (per-criterion breakdown + the user-gated list, uploaded as a
+CI artifact) and **exits non-zero** below the 95% floor, so a regressed check — a broken
+eval, a dropped sink, an MCP-count drift — fails the build. An e2e
+(`tests/integration/readiness.e2e.test.ts`) spawns the gate exactly as CI does and
+asserts it runs green offline.
 
 ---
 
@@ -831,15 +860,19 @@ is worth more here than building it.
 
 Stated plainly (see also the Scope note up top):
 
-- **One real terminal sink; the rest are simulated adapters.** `draft_vendor_reply`
+- **Two real terminal sinks; the rest are simulated adapters.** `draft_vendor_reply`
   is backed by a **real SMTP transport** (`SmtpEmailSink`): once a human approves, an
-  actual email is delivered when `SMTP_HOST` is configured (and it cleanly simulates,
-  sending nothing, when it is not) — behind the unchanged human gate. The other three
-  (`draft_journal_entry` / `draft_payment` / `flag_for_review`) still record what
-  *would* happen to inspectable in-memory Fakes behind the same `Sinks` interfaces —
-  the drop-in seam for real ledger / payment-rail adapters. No ERP or bank is
+  actual email is delivered when `SMTP_HOST` is configured. `draft_journal_entry` is
+  backed by a **real durable JSONL ledger** (`JsonlLedgerSink`): once a human approves,
+  the balanced double-entry accrual is appended (one JSON object per line) to
+  `LEDGER_JSONL_PATH`. Both cleanly simulate — recording the intent, writing nothing —
+  when unconfigured, behind the unchanged human gate; a write/delivery failure
+  *propagates* so a failed side-effect is never silently swallowed. The other two
+  (`draft_payment` / `flag_for_review`) still record what *would* happen to inspectable
+  in-memory Fakes behind the same `Sinks` interfaces — the drop-in seam for a real
+  payment-rail (or a Postgres ledger behind the same `LedgerTransport`). No bank is
   contacted. **The loop and the autonomous read/analyze tools + memory grounding are
-  real** — and now so is the email side-effect.
+  real** — and now so are the email and ledger side-effects.
 - **Live on Alibaba Cloud.** The app is deployed on an Alibaba Cloud **ECS** box over
   HTTPS at **https://autopilot.43.106.13.19.sslip.io** — real Qwen (`qwen-plus` +
   `text-embedding-v4`) on Alibaba Cloud Model Studio, backed by pgvector on the box.

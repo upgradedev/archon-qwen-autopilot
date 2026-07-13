@@ -115,6 +115,36 @@ jobs:
       - name: Docs-consistency fitness functions (offline — no key, no DB)
         run: npm run test:docs
 
+  # Stage 2c-readiness — the machine-checkable READINESS GATE. A DISTINCT job so it shows
+  # as its own check: it encodes the Track-4 rubric (Technical 30 / Innovation 30 /
+  # Problem 25 / Presentation 15) as REAL behavioral checks against the live code (runs
+  # the eval, measures the learning delta, drives an injection through the agent, invokes
+  # both real sinks through their transport seams, verifies the docs/video/diagram
+  # surface). It FAILS the build if automatable completion drops below 95%, and emits
+  # readiness.json (uploaded as an artifact). Fully OFFLINE (no key, no DB, no browser).
+  readiness:
+    needs: secret-scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the gate reads `git ls-files` for the tracked-mp4 allowlist
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install deps
+        run: npm ci
+      - name: Readiness gate (weighted rubric; fails below 95% automatable — offline)
+        run: npm run readiness
+      - name: Upload readiness.json
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: readiness-report
+          path: readiness.json
+          if-no-files-found: warn
+
   # Stage 2c — code-coverage measurement + gate. Runs the FULL node:test pyramid
   # (unit + integration) under c8 against a real pgvector service container, so the
   # DB seams (db/client.ts + the Pg stores) and the MCP stdio transport are measured
