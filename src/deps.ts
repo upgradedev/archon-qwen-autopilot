@@ -11,8 +11,10 @@
 //     absent → deterministic offline Fakes.
 //   • DATABASE_URL set → pgvector stores; absent → in-memory stores.
 //   • SMTP_HOST set → the vendor-reply email sink delivers over REAL SMTP (behind the
-//     unchanged human gate); absent → the in-memory Fake email sink. Ledger / payment
-//     / review sinks are always the in-memory Fakes.
+//     unchanged human gate); absent → the in-memory Fake email sink.
+//   • LEDGER_JSONL_PATH set → the journal-entry sink appends approved accruals to a
+//     REAL durable JSONL ledger file (behind the same human gate); absent → the
+//     in-memory Fake ledger sink. Payment / review sinks are always the in-memory Fakes.
 
 import { defaultEmbedder, type Embedder } from "./memory/embeddings.js";
 import { InMemoryStore, PgVectorStore, type MemoryStore } from "./memory/store.js";
@@ -20,16 +22,20 @@ import { InMemoryWorkItemStore, PgWorkItemStore, type WorkItemStore } from "./ap
 import { defaultLoop, type AutopilotLoop } from "./ap/loop.js";
 import { fakeSinks, type Sinks } from "./ap/sinks.js";
 import { SmtpEmailSink } from "./ap/smtp-sink.js";
+import { JsonlLedgerSink } from "./ap/ledger-sink.js";
 import { hasDatabase } from "./db/client.js";
 import { AutopilotAgent } from "./agents/autopilot-agent.js";
 
-// The default sink bundle: in-memory Fakes for ledger / payment / reviews, plus a
-// REAL SMTP email sink when SMTP_HOST is configured (otherwise the Fake email sink).
-// Only the email sink varies — the human gate in front of every sink is identical.
+// The default sink bundle: in-memory Fakes for payment / reviews, plus TWO real sinks
+// when configured — a REAL SMTP email sink (SMTP_HOST) and a REAL durable JSONL ledger
+// sink (LEDGER_JSONL_PATH). Each falls back to its in-memory Fake when unconfigured, and
+// the human gate in front of every sink is identical whether it is real or a Fake.
 export function defaultSinks(): Sinks {
   const sinks = fakeSinks();
   const smtp = SmtpEmailSink.fromEnv();
   if (smtp) sinks.email = smtp;
+  const ledger = JsonlLedgerSink.fromEnv();
+  if (ledger) sinks.ledger = ledger;
   return sinks;
 }
 
