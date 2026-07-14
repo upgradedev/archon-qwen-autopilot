@@ -13,16 +13,16 @@
 // SMTP sink so the two real sinks read the same):
 //   • REAL     — `LEDGER_JSONL_PATH` is set → a file-append transport is built and the
 //                entry is actually written to disk. A write error PROPAGATES (it is not
-//                swallowed), so a failed append surfaces at the approval call and the
-//                work item stays pending for retry instead of being silently lost.
+//                swallowed), so a failed append leaves the work item `executing` for
+//                explicit reconciliation; it is never automatically retried.
 //   • SIMULATE — no transport (no path / CI / tests without a mock) → the entry is
 //                recorded to the inspectable in-memory list and logged as "simulated",
 //                and NOTHING is written. This is the clean no-op the offline path relies
 //                on (identical to the in-memory FakeLedgerSink's observable behaviour).
 //
 // The transport is an injectable seam (`LedgerTransport`) so tests drive it with a mock
-// and never touch the filesystem, while the single real-fs line (`appendFileSync`) is
-// isolated in one factory. Unlike SMTP (which needs a network + a mock), a file append
+// and never touch the filesystem, while the real fsync-backed append is isolated in
+// one factory. Unlike SMTP (which needs a network + a mock), a file append
 // is cheap to exercise for real, so the fs transport is unit-tested against a temp file.
 //
 // `LedgerSink.post` is synchronous by contract (a durable append is a synchronous,
@@ -30,8 +30,19 @@
 // `LedgerTransport` seam. A write failure throws synchronously and therefore still
 // propagates through the async tool `execute()` exactly like the SMTP delivery failure.
 
-import { appendFileSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import {
+  closeSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
+import { createHash } from "node:crypto";
+import { dirname, join } from "node:path";
 import type { LedgerEntry, LedgerSink } from "./sinks.js";
 
 // The minimal transport contract the sink needs — append one already-serialized line.
@@ -39,6 +50,9 @@ import type { LedgerEntry, LedgerSink } from "./sinks.js";
 // appender satisfies it directly and a test supplies a tiny recording mock.
 export interface LedgerTransport {
   append(line: string): void;
+  // Durable transports can atomically reserve a work-item ref before append.
+  // false means that ref is already present and no second line was written.
+  appendOnce?(ref: string, line: string): boolean;
 }
 
 export interface LedgerSinkOptions {
@@ -51,6 +65,7 @@ export interface LedgerSinkOptions {
 
 export class JsonlLedgerSink implements LedgerSink {
   private rows: LedgerEntry[] = [];
+  private completedRefs = new Set<string>();
   private readonly transport?: LedgerTransport;
   private readonly logger: Pick<typeof console, "log" | "warn">;
 
@@ -65,6 +80,9 @@ export class JsonlLedgerSink implements LedgerSink {
   }
 
   post(entry: Omit<LedgerEntry, "postedAt">): LedgerEntry {
+    if (this.completedRefs.has(entry.ref)) {
+      return this.rows.find((r) => r.ref === entry.ref)!;
+    }
     const row: LedgerEntry = { ...entry, postedAt: new Date().toISOString() };
     // Record the intent FIRST so `entries()` reflects what a human approved even if the
     // append below throws (the caller sees the failure and can retry) — same ordering
@@ -76,13 +94,24 @@ export class JsonlLedgerSink implements LedgerSink {
       this.logger.log(
         `[JsonlLedgerSink] SIMULATED (no LEDGER_JSONL_PATH configured) — would append entry ${row.ref} (${row.lines.length} lines)`
       );
+      this.completedRefs.add(row.ref);
       return row;
     }
 
-    // REAL append. NOT swallowed: a failure propagates to the tool execute() → approve()
-    // so the work item stays pending rather than being marked approved with no entry written.
-    this.transport.append(JSON.stringify(row));
-    this.logger.log(`[JsonlLedgerSink] appended entry ${row.ref} to the JSONL ledger (${row.lines.length} lines)`);
+    // REAL append. The fs transport persists an exclusive idempotency marker keyed
+    // by the server work-item UUID, so a new process cannot append the same effect
+    // after restart. Custom transports without appendOnce retain the narrow legacy
+    // append seam and should provide their own idempotency in production.
+    const serialized = JSON.stringify(row);
+    const appended = this.transport.appendOnce
+      ? this.transport.appendOnce(row.ref, serialized)
+      : (this.transport.append(serialized), true);
+    this.completedRefs.add(row.ref);
+    this.logger.log(
+      appended
+        ? `[JsonlLedgerSink] appended entry ${row.ref} to the JSONL ledger (${row.lines.length} lines)`
+        : `[JsonlLedgerSink] deduplicated already-persisted entry ${row.ref}`
+    );
     return row;
   }
 
@@ -102,18 +131,133 @@ export class JsonlLedgerSink implements LedgerSink {
 }
 
 // The single real-fs seam: turn a file path into an append-only JSONL transport. Each
-// call writes one line (`<json>\n`) with `appendFileSync`, so the ledger is durable and
-// crash-safe (append-only, no read-modify-write). The parent directory is created once
-// on first append if missing. Exercised for real in the unit test against a temp file.
+// call writes and fsyncs one line (`<json>\n`), so the ledger is durable and
+// crash-safe (append-only, no read-modify-write). `appendOnce` adds a sidecar directory
+// of exclusive, SHA-256-named markers and a bounded legacy-tail scan. Marker creation
+// happens before append; a normal write failure removes it, while a crash in between
+// leaves an explicitly uncertain marker rather than risking a duplicate retry.
 export function createJsonlTransport(path: string): LedgerTransport {
   let ensuredDir = false;
+  const markerDir = `${path}.refs`;
+  const scanBytes = boundedEnvInt("LEDGER_DEDUPE_SCAN_BYTES", 8 * 1024 * 1024, 64 * 1024, 64 * 1024 * 1024);
+  const ensureDirs = () => {
+    if (ensuredDir) return;
+    mkdirSync(dirname(path), { recursive: true });
+    mkdirSync(markerDir, { recursive: true });
+    ensuredDir = true;
+  };
   return {
     append(line: string): void {
-      if (!ensuredDir) {
-        mkdirSync(dirname(path), { recursive: true });
-        ensuredDir = true;
+      ensureDirs();
+      durableAppend(path, line);
+    },
+    appendOnce(ref: string, line: string): boolean {
+      ensureDirs();
+      const marker = join(markerDir, createHash("sha256").update(ref, "utf8").digest("hex"));
+
+      // Migration path for rows written before sidecar markers existed.
+      if (tailContainsRef(path, ref, scanBytes)) {
+        createMarkerIfMissing(marker, ref);
+        return false;
       }
-      appendFileSync(path, line + "\n", "utf8");
+
+      let fd: number | undefined;
+      try {
+        fd = openSync(marker, "wx", 0o600);
+        writeFileSync(fd, ref, "utf8");
+        fsyncSync(fd);
+      } catch (err) {
+        if (isAlreadyExists(err)) {
+          // A completed prior append is a safe duplicate. A marker without a row
+          // is an interrupted/active write and must be reconciled, never guessed.
+          if (tailContainsRef(path, ref, scanBytes)) return false;
+          throw new Error(`ledger idempotency marker exists without a confirmed row for ref ${ref}`);
+        }
+        throw err;
+      } finally {
+        if (fd !== undefined) closeSync(fd);
+      }
+
+      try {
+        durableAppend(path, line);
+        return true;
+      } catch (err) {
+        try {
+          unlinkSync(marker);
+        } catch {
+          // If cleanup itself fails, the durable marker correctly forces manual
+          // reconciliation instead of permitting a potentially duplicate retry.
+        }
+        throw err;
+      }
     },
   };
+}
+
+function createMarkerIfMissing(path: string, ref: string): void {
+  let fd: number | undefined;
+  try {
+    fd = openSync(path, "wx", 0o600);
+    writeFileSync(fd, ref, "utf8");
+    fsyncSync(fd);
+  } catch (err) {
+    if (!isAlreadyExists(err)) throw err;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+function tailContainsRef(path: string, ref: string, maxBytes: number): boolean {
+  let size: number;
+  try {
+    size = statSync(path).size;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") return false;
+    throw err;
+  }
+  if (size === 0) return false;
+  const start = Math.max(0, size - maxBytes);
+  // Bounded read: old ledgers cannot turn a retry check into unbounded memory use.
+  const length = size - start;
+  const buffer = Buffer.alloc(length);
+  const fd = openSync(path, "r");
+  try {
+    readSync(fd, buffer, 0, length, start);
+  } finally {
+    closeSync(fd);
+  }
+  let text = buffer.toString("utf8");
+  if (start > 0) {
+    const firstNewline = text.indexOf("\n");
+    text = firstNewline >= 0 ? text.slice(firstNewline + 1) : "";
+  }
+  for (const raw of text.split("\n")) {
+    if (!raw) continue;
+    try {
+      if ((JSON.parse(raw) as { ref?: unknown }).ref === ref) return true;
+    } catch {
+      // A malformed historical row is not proof that this ref completed.
+    }
+  }
+  return false;
+}
+
+function durableAppend(path: string, line: string): void {
+  const fd = openSync(path, "a", 0o600);
+  try {
+    writeSync(fd, line + "\n", undefined, "utf8");
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function isAlreadyExists(err: unknown): boolean {
+  return (err as NodeJS.ErrnoException)?.code === "EEXIST";
+}
+
+function boundedEnvInt(name: string, fallback: number, min: number, max: number): number {
+  const parsed = Number(process.env[name]);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, Math.trunc(parsed)));
 }

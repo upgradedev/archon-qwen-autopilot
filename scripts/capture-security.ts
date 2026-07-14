@@ -29,13 +29,14 @@ const security = {
   injectionDetected: scan.detected,
   injectionCount: scan.count,
   matches: scan.matches,
-  neutralized: true as const,
+  autonomousExecutionBlocked: true as const,
 };
 
 // The exact banner text the live SSE `security` event + approval UI render.
 const banner =
   `⚠️ This document contained ${security.injectionCount} suspected injected ` +
-  `instruction(s) — shown as data, never followed.`;
+  `instruction(s) — labeled as untrusted data; autonomous execution remains ` +
+  `blocked by the human gate.`;
 
 const out = { security, banner };
 const dest = join(ASSETS, "live_intake_attack_security.json");

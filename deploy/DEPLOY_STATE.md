@@ -1,127 +1,138 @@
-# DEPLOY_STATE — Archon Autopilot → Alibaba Cloud
+# DEPLOY_STATE — Archon Autopilot on Alibaba Cloud
 
-Crash-recoverable checkpoint / runbook. Secrets **MASKED** — never commit the real
-`DASHSCOPE_API_KEY` or any AccessKey.
+Authoritative production checkpoint and crash-recovery runbook. Secrets are never
+printed or committed.
 
-> **Status: LIVE.** Deployed on Alibaba Cloud ECS and served over HTTPS at
-> **https://autopilot.43.106.13.19.sslip.io** (the container's host port `9100` is
-> fronted by a TLS-terminating reverse proxy; `sslip.io` maps the hostname to the
-> box IP). This documents the deploy SHAPE + the one-command script
-> ([`redeploy.sh`](redeploy.sh)) used to (re)deploy it.
+> **Status: LIVE over HTTPS.**
+> https://autopilot.43.106.13.19.sslip.io
+>
+> The public reverse proxy is the only **application** network entry point. The
+> Autopilot container is bound to **`127.0.0.1:9100`**, not a public security-group
+> port.
 
-## Target
+## Current production topology
 
-- **Region:** `ap-southeast-1` (Singapore / international)
-- **Box:** the SAME Alibaba Cloud **ECS** instance that already runs the Track-1
-  MemoryAgent — public IP **`43.106.13.19`** (see the MemoryAgent's
-  `deploy/DEPLOY_STATE.md`). SSH user `root`, key `C:/tools/aliyun/archon-mem-kp.pem`
-  (not committed).
-- **Host port:** **9100** (container `9000` → host `9100`). Port `9000` is taken by
-  the MemoryAgent, so the Autopilot lives on `9100`.
-- **App:** Node/TS Fastify HTTP server. Endpoints: `/` + `/ui` (approval UI),
-  `/health`, `/intake`, `/pending`, `/approve/:id`, `/amend/:id`, `/reject/:id`,
-  `/docs`.
-- **DASHSCOPE_API_KEY:** in a `.env` next to `docker-compose.yml` (masked). Without
-  it the app runs the deterministic offline Fakes.
+| Layer | Current state |
+|---|---|
+| Alibaba resource | ECS `i-t4ngalzjr5nwtuowbv7y`, region `ap-southeast-1`, public IP `43.106.13.19` |
+| Public edge | HTTPS reverse proxy on the ECS host → `http://127.0.0.1:9100` |
+| Autopilot runtime | Container `archon-autopilot`, internal port `9000`, restart `unless-stopped`, read-only root filesystem |
+| Internet egress | Existing MemoryAgent Compose **edge** network, used for DashScope/Qwen |
+| Database traffic | Existing MemoryAgent Compose internal **data** network, where DNS name `db` resolves |
+| PostgreSQL | The MemoryAgent's existing pgvector/PostgreSQL container and credentials are reused |
+| Data isolation | Separate logical database `autopilot` on that shared PostgreSQL service; it owns `agent_memory`, `ap_workitems`, and `ap_daily_quota` |
+| Durable ledger | Host `/var/lib/archon-autopilot/ledger` bind-mounted at `/var/lib/archon-ledger`; `LEDGER_JSONL_PATH=/var/lib/archon-ledger/ledger.jsonl` |
+| Secrets | `/root/autopilot/.env`: real `DASHSCOPE_API_KEY`, 32+ character `REVIEWER_TOKEN`, readiness settings; `/root/memoryagent/.env`: shared PostgreSQL credentials |
+| Human decisions | Bearer-authenticated HTTP/UI only; MCP is local stdio with four proposal/read tools and no decision capability |
 
-## Reuse-pgvector decision (why no second Postgres)
+The dual-network attachment is required. The `data` network is internal and can reach
+PostgreSQL but not DashScope; the `edge` network provides egress but intentionally
+cannot resolve `db`. Migration joins only `data`; the running backend joins **both**,
+with Docker gateway priority `1` on `edge` so outbound Qwen traffic has a deterministic
+default route instead of depending on network-name/order selection.
 
-The MemoryAgent already runs `pgvector/pgvector:pg16` on the box. Starting a second
-Postgres would waste the box and split the data. Instead the Autopilot **reuses the
-MemoryAgent's running pgvector container**, with two guards against collision:
+## Why the database is shared this way
 
-1. **Distinct host port** — the Autopilot backend is served on **9100**, not 9000.
-2. **Separate database** — both apps define an `agent_memory` table, so they must
-   NOT share one database. The Autopilot gets its **own `autopilot` database** on
-   the same Postgres server (its own `agent_memory` + `ap_workitems` tables). The
-   MemoryAgent keeps the default `postgres` database untouched.
+Starting a second PostgreSQL container would waste the small ECS host. Sharing the same
+physical pgvector service keeps operations simple, while a separate `autopilot`
+database prevents collisions with MemoryAgent's tables and memories. The runtime URL
+is constructed in memory as:
 
-**Wiring choice:** the backend is launched with **`docker run`** joined to the
-MemoryAgent's docker network (`--network <memoryagent_net>`), NOT via
-`docker compose`. Reasons: (a) the repo's `docker-compose.yml` stays a clean,
-self-contained LOCAL-DEV stack (its own throwaway pgvector on 5432); (b) joining an
-external network + suppressing the compose `db` service would make the compose file
-conditional and fragile. `docker run` reuses the existing network + container
-cleanly and is fully scripted in `deploy/redeploy.sh`. Inside the container the DB is
-reached at `postgresql://postgres:****@db:5432/autopilot` (`db` is the MemoryAgent
-pgvector service's network alias).
-
-## ⚡ TURNKEY REDEPLOY (one command)
-
-On the box, in the app dir (default `/root/autopilot`):
-
-```bash
-ssh -i C:/tools/aliyun/archon-mem-kp.pem root@43.106.13.19
-cd /root/autopilot && git pull                 # or rsync latest code in
-bash deploy/redeploy.sh                         # --no-smoke to skip the round-trip
+```text
+postgresql://<shared-user>:<masked-password>@db:5432/autopilot
 ```
 
-`redeploy.sh` is idempotent and fail-closed. In order it:
+Credentials are read from `/root/memoryagent/.env` and never echoed. Schema migration
+runs before replacement of the serving container and fails closed.
 
-1. **Preflight** — docker + curl present; auto-detects the MemoryAgent docker
-   network (`*memoryagent*`) and its pgvector container.
-2. **Ensure the `autopilot` database** exists (`CREATE DATABASE` if missing — guarded,
-   since Postgres has no `CREATE DATABASE IF NOT EXISTS`).
-3. **Build** the backend image.
-4. **Apply the schema FIRST** to the `autopilot` DB (`agent_memory` + `ap_workitems`
-   + `vector` extension) — aborts if this fails (would otherwise 500 on every
-   `/intake`).
-5. **Run** the backend: `docker run -d --restart unless-stopped --network
-   <memoryagent_net> -p 9100:9000 -e DATABASE_URL=…/autopilot [--env-file .env]`.
-6. **Health** poll on `http://localhost:9100/health`.
-7. **Smoke** — `POST /intake` (a universal invoice) → `GET /pending`, then delete the
-   smoke rows so the demo queue is untouched.
+## Authoritative redeploy
 
-Env-overridable: `APP_DIR · IMAGE · CONTAINER · HOST_PORT · CONTAINER_PORT · NETWORK ·
-DB_CONTAINER · DB_HOST · DB_PORT · DB_USER · DB_PASSWORD · DB_NAME · BASE_URL`.
-
-## ⚠️ Security-group rule that MUST be opened (human step)
-
-Port **9100** must be allowed inbound on the box's security group (the MemoryAgent
-only opened 22 + 9000). Run once (human — this script does NOT touch the SG):
+Run on the ECS host from the final repository checkout:
 
 ```bash
-aliyun ecs AuthorizeSecurityGroup \
-  --RegionId ap-southeast-1 \
-  --SecurityGroupId sg-t4n2trq33br7znmgs2yf \
-  --IpProtocol tcp --PortRange 9100/9100 --SourceCidrIp 0.0.0.0/0
+cd /root/autopilot
+git pull --ff-only
+bash deploy/redeploy.sh
 ```
 
-(Security group `sg-t4n2trq33br7znmgs2yf` is the one the MemoryAgent box already uses.)
+Optional `--no-smoke` skips only the intake/pending round-trip; it still runs health
+and readiness probes. A normal release should not skip the smoke.
 
-## Smoke commands (manual, after the SG rule is open)
+`deploy/redeploy.sh` performs, in order:
+
+1. Verify Docker/curl, repository path, both MemoryAgent networks, pgvector container,
+   production Qwen credential, reviewer token, and shared DB password.
+2. Provision `/var/lib/archon-autopilot/ledger` as a private persistent directory for
+   the image's uid/gid 1000.
+3. Create the isolated `autopilot` database if absent.
+4. Build the final backend image.
+5. Run the compiled migration on the **data** network before serving new code.
+6. Replace `archon-autopilot` with:
+   - `--network <memoryagent>_data`, then connect `<memoryagent>_edge`;
+   - `-p 127.0.0.1:9100:9000`;
+   - read-only root, `/tmp` tmpfs, all Linux capabilities dropped, and
+     `no-new-privileges`;
+   - durable ledger host bind mount;
+   - explicit `DATABASE_URL`, `PORT`, and `LEDGER_JSONL_PATH` overrides after `.env`.
+7. Poll local `/health` and dependency-aware `/ready`.
+8. Submit a dedicated smoke invoice, read `/pending` with the private Bearer token,
+   then delete only the smoke vendor's work-item/memory rows.
+
+Useful overrides are documented in the script header: `APP_DIR`, `IMAGE`, `CONTAINER`,
+`HOST_PORT`, `DATA_NETWORK`, `EDGE_NETWORK`, `DB_CONTAINER`, `DB_HOST`, `DB_PORT`,
+`DB_USER`, `DB_PASSWORD`, `DB_NAME`, `MEMORY_ENV_FILE`, `BASE_URL`,
+`LEDGER_HOST_DIR`, and `LEDGER_CONTAINER_PATH`.
+
+## Verification after every release
+
+On the ECS host:
 
 ```bash
-# From anywhere once port 9100 is open:
-curl -s http://43.106.13.19:9100/health
-
-curl -s -X POST http://43.106.13.19:9100/intake \
-  -H 'content-type: application/json' \
-  -d '{"invoice":{"vendor":"Globex","invoice_number":"GX-1","tax_id":"T","subtotal":500,"tax":100,"total":600}}'
-
-curl -s http://43.106.13.19:9100/pending
-# then open http://43.106.13.19:9100/ in a browser to approve/amend/reject.
+curl -fsS http://127.0.0.1:9100/health
+curl -fsS http://127.0.0.1:9100/ready
+docker inspect archon-autopilot --format '{{json .NetworkSettings.Networks}}'
+docker inspect archon-autopilot --format '{{json .HostConfig.PortBindings}}'
+test -d /var/lib/archon-autopilot/ledger
 ```
 
-## Resource IDs (shared with the MemoryAgent box)
+From outside the host:
 
-- ECS instance: `i-t4ngalzjr5nwtuowbv7y` (ap-southeast-1c, `ecs.e-c1m2.large`)
-- Security group: `sg-t4n2trq33br7znmgs2yf` · Key pair: `archon-mem-kp`
-  (pem `C:/tools/aliyun/archon-mem-kp.pem`, not committed)
-- VPC/vSwitch: `vpc-t4n52ldyprw3c6s7c0x5o` / `vsw-t4nkxqnrrmnl8sxpijtno`
-- MemoryAgent pgvector container + network: auto-detected by `redeploy.sh`
-- Autopilot DATABASE_URL (masked): `postgresql://postgres:****@db:5432/autopilot`
-- **Live URL: https://autopilot.43.106.13.19.sslip.io/** (HTTPS; direct box access
-  is container `9000` → host `9100`).
+```bash
+curl -fsS https://autopilot.43.106.13.19.sslip.io/health
+curl -fsS https://autopilot.43.106.13.19.sslip.io/ready
+```
 
-## Done (live)
+For an authenticated queue smoke, load the token without printing it and call the
+public HTTPS `/pending` endpoint. Never paste the token into shell history, logs,
+screenshots, or public documentation.
 
-- SSH deploy + `redeploy.sh` executed on the box — backend live, schema applied,
-  intake/pending round-trip verified.
-- Security-group inbound for port `9100` opened; HTTPS fronting via a
-  TLS-terminating reverse proxy + the `sslip.io` hostname.
-- Real `DASHSCOPE_API_KEY` set in `/root/autopilot/.env` (real Qwen).
+## Network/security invariant
 
-## Follow-ups (human, cost/hygiene)
+**Do not open TCP 9100 in the Alibaba security group.** The backend publishes only to
+host loopback. Public traffic terminates on HTTPS and reaches the backend through the
+reverse proxy. This removes direct clear-text access and prevents bypassing edge/TLS
+policy.
 
-- Stop/release the ECS box after the demo window to cap cost.
+The MCP process is not a network listener. Its four local stdio tools are
+`intake_invoice`, `list_pending`, `recall_vendor`, and `list_skills`; no MCP client can
+approve, amend, reject, recover, or execute.
+
+## Local development is intentionally different
+
+`docker-compose.yml` is a self-contained local stack with its own throwaway pgvector,
+loopback ports, deterministic-provider opt-in, and local credentials. It is **not** the
+production deployment mechanism. Production uses `deploy/redeploy.sh` to join the
+already-running MemoryAgent data + edge networks and shared PostgreSQL service.
+
+## Historical note — obsolete topology
+
+Earlier drafts described choosing one arbitrary MemoryAgent network and publishing
+`0.0.0.0:9100`, including a security-group rule for direct access. That design is
+obsolete and unsafe: one network cannot provide both internal DB DNS and egress, and a
+public 9100 binding bypasses HTTPS. The authoritative topology is the dual-network,
+localhost-only design above.
+
+## Cost hygiene
+
+After the judging/demo window, stop or release the ECS resources according to the
+team's retention plan. Preserve any required ledger/audit artifact before teardown.

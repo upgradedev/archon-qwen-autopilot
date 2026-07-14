@@ -39,9 +39,9 @@ export interface EvalSummary {
   multiStep: number; // scenarios that took ≥2 autonomous steps
 }
 
-// Run ONE scenario end to end through a fresh, hermetic agent. Seeds are intaken first
-// (writing their invoices into this agent's memory) so the scenario invoice is judged
-// with the vendor history a real cross-session agent would recall.
+// Run ONE scenario end to end through a fresh, hermetic agent. Seeds are intaken AND
+// approved first, because only completed work is valid R5/R6 history; pending or
+// rejected uploads must never poison the vendor baseline.
 export async function runScenario(s: EvalScenario): Promise<EvalRow> {
   const agent = new AutopilotAgent(
     defaultEmbedder(),
@@ -51,7 +51,10 @@ export async function runScenario(s: EvalScenario): Promise<EvalRow> {
     fakeSinks()
   );
 
-  for (const seed of s.seed ?? []) await agent.intake(seed as RawInvoice);
+  for (const seed of s.seed ?? []) {
+    const seeded = await agent.intake(seed as RawInvoice);
+    await agent.approve(seeded.id);
+  }
   const item = await agent.intake(s.invoice as RawInvoice);
 
   const proposed = item.proposed.tool;

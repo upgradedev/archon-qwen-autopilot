@@ -24,13 +24,13 @@ test("R1 fails on a missing or non-positive total", () => {
   assert.equal(find(validateInvoice(normalizeInvoice({ vendor: "A", total: 100 })), "R1").passed, true);
 });
 
-test("R2 fails when vendor / vendor_ref / tax_id are missing", () => {
+test("R2 fails when vendor / vendor_ref / date / currency / tax_id are missing", () => {
   const missing = validateInvoice(normalizeInvoice({ total: 100 }));
   assert.equal(find(missing, "R2").passed, false);
   assert.equal(find(missing, "R2").severity, "error");
 
   const complete = validateInvoice(
-    normalizeInvoice({ vendor: "Acme", invoice_number: "A-1", tax_id: "TX-1", total: 100 })
+    normalizeInvoice({ vendor: "Acme", invoice_number: "A-1", date: "2026-01-01", currency: "EUR", tax_id: "TX-1", total: 100 })
   );
   assert.equal(find(complete, "R2").passed, true);
 });
@@ -53,10 +53,42 @@ test("R4 fails when line items do not sum to the subtotal/total", () => {
   assert.equal(find(good, "R4").passed, true);
 });
 
+test("R4 fails closed when even one line-item amount is missing", () => {
+  const partial = validateInvoice(
+    normalizeInvoice({
+      vendor: "A",
+      total: 60,
+      line_items: [
+        { description: "parseable", amount: 60 },
+        { description: "missing amount" },
+      ],
+    })
+  );
+  const finding = find(partial, "R4");
+  assert.equal(finding.passed, false);
+  assert.match(finding.message, /Only 1 of 2/);
+});
+
+test("R2 blocks missing or conflicting currency and missing invoice date", () => {
+  const missing = find(
+    validateInvoice(normalizeInvoice({ vendor: "A", invoice_number: "1", tax_id: "T", total: 100 })),
+    "R2"
+  );
+  assert.equal(missing.passed, false);
+  assert.match(missing.message, /invoice_date, currency/);
+
+  const conflicting = find(
+    validateInvoice(normalizeInvoice({ vendor: "A", invoice_number: "1", date: "2026-01-01", tax_id: "T", currency: "EUR", total: "USD 100" })),
+    "R2"
+  );
+  assert.equal(conflicting.passed, false);
+  assert.match(conflicting.message, /currency/);
+});
+
 test("hasBlockingError is true only when a hard error is present", () => {
   assert.equal(hasBlockingError(validateInvoice(normalizeInvoice({ total: 100 }))), true); // R2 error
   assert.equal(
-    hasBlockingError(validateInvoice(normalizeInvoice({ vendor: "A", invoice_number: "1", tax_id: "T", subtotal: 80, tax: 20, total: 100 }))),
+    hasBlockingError(validateInvoice(normalizeInvoice({ vendor: "A", invoice_number: "1", date: "2026-01-01", currency: "EUR", tax_id: "T", subtotal: 80, tax: 20, total: 100 }))),
     false
   );
 });
@@ -74,7 +106,10 @@ test("R5 flags a duplicate by same vendor + vendor_ref", () => {
 
 test("R5 flags a duplicate by same vendor + total + date even with a different ref", () => {
   const inv = normalizeInvoice({ vendor: "Northwind", invoice_number: "NW-9999", tax_id: "T", total: 1200, date: "2026-02-03" });
-  assert.equal(detectDuplicate(inv, priors).passed, false);
+  const finding = detectDuplicate(inv, priors);
+  assert.equal(finding.passed, false);
+  assert.match(finding.message, /Suspected duplicate fingerprint/);
+  assert.match(finding.message, /does not merge/);
 });
 
 test("R5 does not flag a genuinely new invoice from the same vendor", () => {
@@ -82,10 +117,11 @@ test("R5 does not flag a genuinely new invoice from the same vendor", () => {
   assert.equal(detectDuplicate(inv, priors).passed, true);
 });
 
-test("R5 never matches a re-read of the same invoice_id against itself", () => {
+test("R5 cannot be bypassed by reusing a caller-supplied invoice_id", () => {
   const self: PriorInvoice[] = [{ invoiceId: "inv-x", vendor: "Acme", vendorRef: "A-1", total: 50, date: "2026-01-01" }];
   const inv = normalizeInvoice({ id: "inv-x", vendor: "Acme", invoice_number: "A-1", tax_id: "T", total: 50, date: "2026-01-01" });
-  assert.equal(detectDuplicate(inv, self).passed, true);
+  assert.notEqual(inv.invoice_id, "inv-x");
+  assert.equal(detectDuplicate(inv, self).passed, false);
 });
 
 test("R6 flags an amount well above the vendor's usual, but not an in-range one", () => {

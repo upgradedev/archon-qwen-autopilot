@@ -8,6 +8,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { FakeEmbedder } from "../../src/memory/embeddings.js";
 import { InMemoryStore } from "../../src/memory/store.js";
+import { remember } from "../../src/memory/memory.js";
 import { InMemoryWorkItemStore } from "../../src/ap/workitem-store.js";
 import { defaultLoop } from "../../src/ap/loop.js";
 import { fakeSinks, type Sinks } from "../../src/ap/sinks.js";
@@ -17,10 +18,12 @@ import { callAutopilotTool } from "../../src/mcp/server.js";
 // Force the offline Fake even if a maintainer has DASHSCOPE_API_KEY exported.
 delete process.env.DASHSCOPE_API_KEY;
 
-function makeAgent(): { agent: AutopilotAgent; sinks: Sinks } {
+function makeAgent(): { agent: AutopilotAgent; sinks: Sinks; embedder: FakeEmbedder; memory: InMemoryStore } {
   const sinks = fakeSinks();
-  const agent = new AutopilotAgent(new FakeEmbedder(), new InMemoryStore(), new InMemoryWorkItemStore(), defaultLoop(), sinks);
-  return { agent, sinks };
+  const embedder = new FakeEmbedder();
+  const memory = new InMemoryStore();
+  const agent = new AutopilotAgent(embedder, memory, new InMemoryWorkItemStore(), defaultLoop(), sinks);
+  return { agent, sinks, embedder, memory };
 }
 
 // Parse the JSON text payload an ok() tool result carries.
@@ -33,7 +36,7 @@ function firstText(res: any): string {
   return String(res.content[0]?.text ?? "");
 }
 
-const cleanInvoice = { vendor: "Acme", invoice_number: "A-1", tax_id: "T", subtotal: 100, tax: 20, total: 120, date: "2026-01-01" };
+const cleanInvoice = { vendor: "Acme", invoice_number: "A-1", tax_id: "T", subtotal: 100, tax: 20, total: 120, date: "2026-01-01", currency: "EUR" };
 
 test("intake_invoice → PENDING with a trace, and NOTHING executes (the gate over MCP)", async () => {
   const { agent, sinks } = makeAgent();
@@ -52,7 +55,7 @@ test("intake_invoice → PENDING with a trace, and NOTHING executes (the gate ov
   assert.equal(sinks.reviews.escalations().length, 0);
 });
 
-test("intake → list_pending → approve round-trip through the MCP surface", async () => {
+test("intake → list_pending stays proposal-only; MCP cannot approve", async () => {
   const { agent, sinks } = makeAgent();
   const intake = payload(await callAutopilotTool(agent, "intake_invoice", { invoice: cleanInvoice }));
 
@@ -62,52 +65,54 @@ test("intake → list_pending → approve round-trip through the MCP surface", a
   // Still nothing executed just by listing.
   assert.equal(sinks.ledger.entries().length, 0);
 
-  const approved = payload(await callAutopilotTool(agent, "approve", { id: intake.id }));
-  assert.equal(approved.status, "approved");
-  assert.ok(approved.execution.ok);
-  assert.equal(sinks.ledger.entries().length, 1, "approve executed the terminal skill for real");
+  const forbidden = await callAutopilotTool(agent, "approve", { id: intake.id });
+  assert.equal(forbidden.isError, true);
+  assert.match(firstText(forbidden), /unknown tool: approve/i);
+  assert.equal(sinks.ledger.entries().length, 0, "an MCP client cannot fire a sink");
   const after = payload(await callAutopilotTool(agent, "list_pending", {}));
-  assert.equal(after.pending.length, 0, "the item left the queue");
+  assert.equal(after.pending.length, 1, "the item remains for the authenticated human reviewer");
 });
 
-test("the gate is OBSERVABLE over MCP: re-approving a decided item returns isError", async () => {
-  const { agent } = makeAgent();
+test("approve/amend/reject are all absent from the MCP dispatcher", async () => {
+  const { agent, sinks } = makeAgent();
   const intake = payload(await callAutopilotTool(agent, "intake_invoice", { invoice: cleanInvoice }));
-  await callAutopilotTool(agent, "approve", { id: intake.id });
-
-  const again = await callAutopilotTool(agent, "approve", { id: intake.id });
-  assert.equal(again.isError, true, "a decided item can never re-execute");
-  const reReject = await callAutopilotTool(agent, "reject", { id: intake.id });
-  assert.equal(reReject.isError, true);
-  const reAmend = await callAutopilotTool(agent, "amend", { id: intake.id, args: {} });
-  assert.equal(reAmend.isError, true);
+  for (const name of ["approve", "amend", "reject"]) {
+    const result = await callAutopilotTool(agent, name, { id: intake.id, args: {} });
+    assert.equal(result.isError, true, `${name} must not be callable over MCP`);
+    assert.match(firstText(result), new RegExp(`unknown tool: ${name}`, "i"));
+  }
+  assert.equal(sinks.ledger.entries().length, 0);
+  assert.equal(sinks.payments.payments().length, 0);
+  assert.equal(sinks.email.outbox().length, 0);
 });
 
-test("an unknown id returns isError (404 → not found), not a false success", async () => {
+test("an unknown or guessed execution tool returns isError, not a false success", async () => {
   const { agent } = makeAgent();
-  const res = await callAutopilotTool(agent, "approve", { id: "does-not-exist" });
+  const res = await callAutopilotTool(agent, "execute_payment", { id: "does-not-exist" });
   assert.equal(res.isError, true);
-  assert.match(firstText(res), /not found/i);
+  assert.match(firstText(res), /unknown tool/i);
 });
 
-test("amend over MCP: the amended args are EXACTLY what execute", async () => {
+test("forged amendment args cannot reach a sink over MCP", async () => {
   const { agent, sinks } = makeAgent();
   const intake = payload(await callAutopilotTool(agent, "intake_invoice", { invoice: cleanInvoice }));
   assert.equal(intake.proposed.tool, "draft_journal_entry");
-  const amended = payload(
-    await callAutopilotTool(agent, "amend", { id: intake.id, args: { expense_account: "Professional Fees", amount: 120 }, reason: "reclassified" })
-  );
-  assert.equal(amended.status, "approved");
-  assert.equal(amended.amended, true);
-  const entry = sinks.ledger.entries()[0]!;
-  assert.equal(entry.lines.find((l) => l.debit)!.account, "Professional Fees");
+  const amended = await callAutopilotTool(agent, "amend", {
+    id: intake.id,
+    args: { expense_account: "Professional Fees", amount: 120 },
+    reason: "reclassified",
+  });
+  assert.equal(amended.isError, true);
+  assert.equal(sinks.ledger.entries().length, 0);
 });
 
 test("recall_vendor surfaces a vendor's remembered history (read-only, no execution)", async () => {
-  const { agent, sinks } = makeAgent();
-  // Intake + approve one invoice so the vendor's history is written to memory.
-  const first = payload(await callAutopilotTool(agent, "intake_invoice", { invoice: cleanInvoice }));
-  await callAutopilotTool(agent, "approve", { id: first.id });
+  const { agent, sinks, embedder, memory } = makeAgent();
+  await remember(embedder, memory, {
+    kind: "vendor",
+    vendor: "Acme",
+    content: "Acme is an established supplier with monthly professional-services invoices.",
+  });
   const ledgerBefore = sinks.ledger.entries().length;
 
   const recalled = payload(await callAutopilotTool(agent, "recall_vendor", { vendor: "Acme" }));

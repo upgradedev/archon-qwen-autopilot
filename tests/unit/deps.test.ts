@@ -8,7 +8,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { defaultSinks } from "../../src/deps.js";
+import { defaultSinks, resolveDeps } from "../../src/deps.js";
 import { FakeEmailSink, FakeLedgerSink } from "../../src/ap/sinks.js";
 import { SmtpEmailSink } from "../../src/ap/smtp-sink.js";
 import { JsonlLedgerSink } from "../../src/ap/ledger-sink.js";
@@ -50,6 +50,27 @@ test("defaultSinks(): only SMTP_HOST set → real email, Fake ledger (each sink 
     const s = defaultSinks();
     assert.ok(s.email instanceof SmtpEmailSink, "SMTP_HOST set → real email sink");
     assert.ok(s.ledger instanceof FakeLedgerSink, "no LEDGER_JSONL_PATH → Fake ledger sink");
+  } finally {
+    process.env = saved;
+  }
+});
+
+test("production fails closed instead of silently selecting Fake Qwen or in-memory stores", () => {
+  const saved = { ...process.env };
+  try {
+    process.env.NODE_ENV = "production";
+    delete process.env.DASHSCOPE_API_KEY;
+    delete process.env.DATABASE_URL;
+    delete process.env.ALLOW_FAKE_QWEN;
+    delete process.env.ALLOW_IN_MEMORY_STORE;
+    assert.throws(() => resolveDeps(), /production requires DASHSCOPE_API_KEY/);
+
+    process.env.ALLOW_FAKE_QWEN = "true";
+    assert.throws(() => resolveDeps(), /production requires DATABASE_URL/);
+
+    process.env.ALLOW_IN_MEMORY_STORE = "true";
+    const resolved = resolveDeps();
+    assert.match(resolved.embedder.modelId, /fake/i);
   } finally {
     process.env = saved;
   }

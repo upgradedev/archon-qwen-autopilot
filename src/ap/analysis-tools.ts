@@ -40,6 +40,7 @@ import type {
   RecalledFact,
   ValidationFinding,
 } from "../types.js";
+import { canonicalReference, canonicalVendorKey } from "./normalize.js";
 
 // The names of the autonomous tools (the read/analyze tier).
 export const ANALYSIS_TOOL_NAMES = [
@@ -159,26 +160,36 @@ async function runRecall(state: LoopState, { embedder, memory }: AnalysisDeps): 
   const query =
     `${inv.vendor ?? "vendor"} invoice ${inv.vendor_ref ?? ""} ` +
     `${inv.total ?? ""} ${inv.currency}`.trim();
-  const hits = inv.vendor
-    ? await recall(embedder, memory, query, { vendor: inv.vendor, limit: 8 })
-    : [];
+  const [hits, deterministicHistory] = inv.vendor
+    ? await Promise.all([
+        recall(embedder, memory, query, { vendor: inv.vendor, limit: 8 }),
+        memory.invoiceHistory(inv.vendor),
+      ])
+    : [[], []];
   state.recalled = hits.map(toRecalledFact);
-  state.priors = priorInvoicesFromRecall(hits);
+  // R5/R6 run over deterministic vendor history, not whichever eight semantic
+  // results happened to rank highest. Semantic hits remain the reviewer-facing
+  // evidence and correction-recall channel.
+  state.priors = priorInvoicesFromRecall(deterministicHistory);
 
   // Derive raw FACTS from the recalled priors — NOT decisions. The R5/R6 verdicts
   // are produced later by check_duplicate / compute_variance, so this stays honest.
   const vendorPriors = state.priors.filter(
-    (p) => !!inv.vendor && norm(p.vendor) === norm(inv.vendor) && p.invoiceId !== inv.invoice_id
+    (p) => !!inv.vendor && canonicalVendorKey(p.vendor) === canonicalVendorKey(inv.vendor)
   );
   state.priorCount = vendorPriors.length;
   state.knownVendor = vendorPriors.length > 0;
   state.refMatch =
-    !!inv.vendor_ref && vendorPriors.some((p) => !!p.vendorRef && norm(p.vendorRef) === norm(inv.vendor_ref));
+    !!inv.vendor_ref &&
+    vendorPriors.some(
+      (p) => !!p.vendorRef && canonicalReference(p.vendorRef) === canonicalReference(inv.vendor_ref)
+    );
   state.amountDateMatch = vendorPriors.some(
     (p) =>
       inv.total != null &&
       p.total != null &&
       Math.abs(p.total - inv.total) <= 0.01 &&
+      (!p.currency || p.currency === inv.currency) &&
       !!inv.invoice_date &&
       !!p.date &&
       p.date === inv.invoice_date
@@ -385,9 +396,6 @@ export function analysisToolDefs(): ToolDef[] {
   ];
 }
 
-function norm(s: string | null | undefined): string {
-  return (s ?? "").trim().toLowerCase();
-}
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }

@@ -6,7 +6,7 @@
 // or reject.
 //
 // The page is a plain .html file next to this module (no build step, no bundler).
-// The Dockerfile's `COPY src ./src` ships it, and it is read once at startup.
+// The production image copies it beside the compiled module, and it is read once at startup.
 
 import { readFileSync } from "node:fs";
 

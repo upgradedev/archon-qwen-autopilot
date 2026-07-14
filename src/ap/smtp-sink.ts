@@ -1,7 +1,7 @@
-// SmtpEmailSink — the ONE real terminal-action sink.
+// SmtpEmailSink — one of two configurable real terminal-action sinks.
 //
-// Every other side-effect sink (ledger / payment-rail / reviews) is an in-memory
-// Fake. This one is real: once a human approves a `draft_vendor_reply`, the agent's
+// JsonlLedgerSink is the other durable transport; payment-rail and specialist-review
+// adapters remain inspectable in-memory simulations. This sink is real: once a human approves a `draft_vendor_reply`, the agent's
 // approved arguments are handed to a real SMTP transport and an actual email is
 // delivered. Nothing about the human-in-the-loop gate changes — `send()` is still
 // only ever reached from a tool `execute()`, which only runs from `AutopilotAgent`'s
@@ -11,8 +11,8 @@
 // Two modes, chosen by environment, so it is safe everywhere:
 //   • REAL     — `SMTP_HOST` is set → a nodemailer transport is built and the message
 //                is actually delivered. A delivery error PROPAGATES (it is awaited),
-//                so a failed send surfaces at the approval call and the work item
-//                stays pending for retry instead of being silently lost.
+//                so a failed send leaves the work item `executing` for explicit
+//                reconciliation; it is never automatically retried.
 //   • SIMULATE — no transport (no creds / CI / tests without a mock) → the message is
 //                recorded to the inspectable outbox and logged as "simulated", and
 //                NOTHING is sent. This is the clean no-op the offline path relies on.
@@ -33,6 +33,7 @@ export interface MailTransport {
     to: string;
     subject: string;
     text: string;
+    messageId?: string;
   }): Promise<{ messageId?: string }>;
 }
 
@@ -59,6 +60,7 @@ export interface SmtpSinkOptions {
 
 export class SmtpEmailSink implements EmailSink {
   private rows: OutboundEmail[] = [];
+  private completedRefs = new Set<string>();
   private readonly from: string;
   private readonly transport?: MailTransport;
   private readonly logger: Pick<typeof console, "log" | "warn">;
@@ -75,9 +77,12 @@ export class SmtpEmailSink implements EmailSink {
   }
 
   async send(email: Omit<OutboundEmail, "sentAt">): Promise<OutboundEmail> {
+    if (email.ref && this.completedRefs.has(email.ref)) {
+      return this.rows.find((r) => r.ref === email.ref)!;
+    }
     const row: OutboundEmail = { ...email, sentAt: new Date().toISOString() };
     // Record the intent FIRST so the outbox reflects what a human approved even if the
-    // network delivery below throws (the caller sees the failure and can retry).
+    // network delivery below throws (the caller sees an uncertain outcome to reconcile).
     this.rows.push(row);
 
     if (!this.transport) {
@@ -85,11 +90,12 @@ export class SmtpEmailSink implements EmailSink {
       this.logger.log(
         `[SmtpEmailSink] SIMULATED (no SMTP transport configured) — would send to ${row.to}: "${row.subject}"`
       );
+      if (row.ref) this.completedRefs.add(row.ref);
       return row;
     }
 
-    // REAL delivery. Awaited on purpose: a failure propagates to approve()/amend() so
-    // the work item stays pending rather than being marked approved with no email sent.
+    // REAL delivery. Awaited on purpose: a failure propagates to approve()/amend() and
+    // leaves the item executing for reconciliation rather than claiming success.
     // Defense-in-depth: the header fields (`to`, `subject`) are stripped of CR/LF and
     // other control characters before they reach the transport, so an approved value
     // like "Invoice\r\nBcc: attacker@evil" cannot smuggle an extra SMTP header (CRLF
@@ -97,12 +103,21 @@ export class SmtpEmailSink implements EmailSink {
     // makes the sink safe regardless of the transport behind the seam. Clean values pass
     // through byte-for-byte, and the body (`text`) is NOT a header, so its newlines are
     // preserved verbatim.
-    const info = await this.transport.sendMail({
+    const message: Parameters<MailTransport["sendMail"]>[0] = {
       from: this.from,
       to: stripHeaderChars(row.to),
       subject: stripHeaderChars(row.subject),
       text: row.body,
-    });
+    };
+    // Stable across a manually-authorized retry; many mail systems use this
+    // standard id as an additional duplicate-delivery signal. This protects the
+    // application intent but SMTP cannot promise exactly-once recipient delivery.
+    // Omit the optional
+    // field entirely when no execution key exists so direct sink callers retain
+    // an exact transport payload.
+    if (row.ref) message.messageId = `<${row.ref}@archon-autopilot>`;
+    const info = await this.transport.sendMail(message);
+    if (row.ref) this.completedRefs.add(row.ref);
     this.logger.log(
       `[SmtpEmailSink] delivered to ${row.to}: "${row.subject}"${info.messageId ? ` (id ${info.messageId})` : ""}`
     );

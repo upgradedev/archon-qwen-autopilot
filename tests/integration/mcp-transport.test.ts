@@ -39,14 +39,14 @@ function payload(res: any): any {
   return JSON.parse(res.content[0].text);
 }
 
-const cleanInvoice = { vendor: "Acme", invoice_number: "A-1", tax_id: "T", subtotal: 100, tax: 20, total: 120, date: "2026-01-01" };
+const cleanInvoice = { vendor: "Acme", invoice_number: "A-1", tax_id: "T", subtotal: 100, tax: 20, total: 120, date: "2026-01-01", currency: "EUR" };
 
 test("MCP client can list the agent-driving tools", async () => {
   const { client, close } = await connect();
   try {
     const { tools } = await client.listTools();
     const names = tools.map((t) => t.name).sort();
-    assert.deepEqual(names, ["amend", "approve", "intake_invoice", "list_pending", "list_skills", "recall_vendor", "reject"]);
+    assert.deepEqual(names, ["intake_invoice", "list_pending", "list_skills", "recall_vendor"]);
     // Every tool advertises an object input schema (the JSON-Schema contract).
     for (const t of tools) assert.equal((t.inputSchema as any).type, "object");
   } finally {
@@ -54,7 +54,7 @@ test("MCP client can list the agent-driving tools", async () => {
   }
 });
 
-test("intake → pending → approve round-trip over a real MCP Client, gate preserved", async () => {
+test("intake → pending round-trip over MCP remains proposal-only", async () => {
   const { client, sinks, close } = await connect();
   try {
     const intake = payload(await client.callTool({ name: "intake_invoice", arguments: { invoice: cleanInvoice } }));
@@ -68,13 +68,12 @@ test("intake → pending → approve round-trip over a real MCP Client, gate pre
     assert.equal(queue.pending.length, 1);
     assert.equal(queue.pending[0].id, intake.id);
 
-    const approved = payload(await client.callTool({ name: "approve", arguments: { id: intake.id } }));
-    assert.equal(approved.status, "approved");
-    assert.equal(sinks.ledger.entries().length, 1);
-
-    // Gate: re-approving the decided item returns an MCP error result.
-    const again: any = await client.callTool({ name: "approve", arguments: { id: intake.id } });
-    assert.equal(again.isError, true);
+    // Even a client that guesses the old decision-tool name cannot reach it.
+    const forbidden: any = await client.callTool({ name: "approve", arguments: { id: intake.id } });
+    assert.equal(forbidden.isError, true);
+    assert.equal(sinks.ledger.entries().length, 0);
+    const stillPending = payload(await client.callTool({ name: "list_pending", arguments: {} }));
+    assert.equal(stillPending.pending.length, 1);
   } finally {
     await close();
   }

@@ -37,7 +37,7 @@ npm run eval -- --gate  # CI gate: fail if tool-choice accuracy < 90%
 > model's.
 
 Because every scenario now runs the loop, the eval also reports **loop autonomy**:
-**all 22 scenarios take ≥2 autonomous read/analyze steps** (avg 2.3) before any
+**all 22 scenarios take ≥2 autonomous read/analyze steps** (avg **2.5**) before any
 terminal, human-gated action — the multi-step reasoning is measured, not asserted.
 Arg-sanity (does the proposed action execute cleanly against the simulated sinks) is
 reported alongside — **22 / 22** — but **not gated**, because the model may
@@ -203,24 +203,26 @@ DASHSCOPE_API_KEY=sk-... npm run eval   # header self-labels ONLINE; grades real
 > ~3× the API calls the old single-shot path did. Still cents overall, but budget
 > for it. The offline gate is free (zero credentials, zero spend).
 
-## MCP integration & custom skills — the same graded agent, a second surface
+## MCP integration & custom skills — the same graded core, a narrower surface
 
 The number above grades the **agent**, not a transport. The agent is now reachable
 two ways — the HTTP routes and an **MCP server** (`src/mcp/server.ts`,
 `@modelcontextprotocol/sdk`) — both wired from the same `resolveDeps()` helper to the
-**same injectable `AutopilotAgent`**. So `intake_invoice` over MCP runs the *identical*
-multi-step loop this eval measures; there is no second decision path to grade.
+**same injectable `AutopilotAgent`**. `intake_invoice` over MCP runs the *identical*
+multi-step loop this eval measures, but MCP intentionally stops at proposal/read.
+Authenticated HTTP/UI is the only decision surface.
 
 What the eval's discipline is complemented by, on the MCP side, is a **behavioural**
 guarantee proven by tests rather than a scored number:
 
 - **Round-trip through the real MCP surface** — `tests/integration/mcp-transport.test.ts`
   stands up a real MCP `Client ↔ Server` over an in-memory transport and drives
-  `intake_invoice → list_pending → approve`, fully offline.
-- **The human-in-the-loop gate is preserved — and observable — over MCP.** `intake`
-  executes nothing (sinks empty, status `pending`); `approve` needs an explicit call
-  naming the id; a decided item can never re-execute — a second `approve`/`amend`/`reject`
-  returns an MCP `isError` result, asserted in `tests/unit/mcp.test.ts`.
+  `intake_invoice → list_pending`, fully offline.
+- **The human gate is unreachable from MCP.** The server advertises exactly four
+  proposal/read tools (`intake_invoice`, `list_pending`, `recall_vendor`,
+  `list_skills`). Decision and execution verbs are absent and dispatcher-rejected;
+  `intake` executes nothing and returns a PENDING item. Approval/amendment/rejection
+  tests run through the authenticated HTTP/UI boundary instead.
 - **Custom-skills catalog is faithful** — `tests/unit/skills.test.ts` proves the
   `GET /skills` / `list_skills` catalog is derived from the live function schemas
   (every skill once, correct tier/gate/rule, parameters equal to what Qwen sees), so

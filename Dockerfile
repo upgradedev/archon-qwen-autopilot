@@ -1,44 +1,44 @@
-# Archon Autopilot HTTP backend — the service that runs ON ALIBABA CLOUD
-# (Function Compute custom container, or ECS / Container Service).
-#
-# Function Compute listens on the container's CAPort; we expose 9000 (PORT).
-# Build for linux/amd64 when pushing from an ARM machine:
-#   docker build --platform linux/amd64 -t archon-qwen-autopilot .
-
-FROM node:20-slim
+# Reproducible production image: compile TypeScript once, then run only emitted
+# JavaScript and production dependencies as an unprivileged user.
+FROM node:24.18.0-bookworm-slim AS build
 
 WORKDIR /app
-
-# poppler-utils provides `pdftoppm`, used to rasterize an uploaded PDF invoice to
-# page images before Qwen-VL vision extraction (POST /intake/document). PNG/JPG
-# uploads and the offline test path need no system deps; this is only for PDFs.
-#
-# The version is PINNED for reproducible builds (node:20-slim tracks Debian 12
-# "bookworm", whose poppler-utils is 22.12.0-2+deb12u1). If a security update rolls
-# the suffix (deb12u2, …), bump this pin deliberately rather than letting the build
-# float. `POPPLER_VERSION` is overridable for a controlled upgrade.
-ARG POPPLER_VERSION=22.12.0-2+deb12u2
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends "poppler-utils=${POPPLER_VERSION}" \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install dependencies first for layer caching. tsx is a runtime dependency so
-# the container runs the TypeScript entrypoint directly (no separate build step).
-COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev || npm install --omit=dev
+COPY package.json package-lock.json ./
+RUN npm ci --ignore-scripts
 
 COPY tsconfig.json ./
 COPY src ./src
-# scripts/apply-schema.ts is the entrypoint for `npm run db:schema`
-# (it reads ../src/db/schema.sql, already copied above).
-COPY scripts ./scripts
-# The bundled sample invoice document, served by GET /sample-document so the UI's
-# "Use sample document" button can exercise the real Qwen-VL vision path.
-COPY demo ./demo
+COPY scripts/apply-schema.ts ./scripts/apply-schema.ts
+RUN npm run build
+
+FROM node:24.18.0-bookworm-slim AS runtime
 
 ENV NODE_ENV=production
 ENV PORT=9000
-EXPOSE 9000
+WORKDIR /app
 
-# HTTP server on 0.0.0.0:$PORT (Function Compute CAPort).
-CMD ["npx", "tsx", "src/server.ts"]
+# pdftoppm rasterizes uploaded PDFs for Qwen-VL. The pinned base image fixes the
+# Debian release; apt supplies security-patched bookworm packages at build time.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates poppler-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts \
+    && npm cache clean --force
+
+COPY --from=build --chown=node:node /app/dist/src ./dist/src
+COPY --from=build --chown=node:node /app/dist/scripts/apply-schema.js ./dist/scripts/apply-schema.js
+# Runtime assets deliberately live beside their compiled consumers.
+COPY --chown=node:node src/ui.html ./dist/src/ui.html
+COPY --chown=node:node src/db/schema.sql ./dist/src/db/schema.sql
+COPY --chown=node:node demo/sample-invoice.png ./dist/demo/sample-invoice.png
+COPY --chown=node:node package.json ./dist/package.json
+
+EXPOSE 9000
+USER node
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:9000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+
+CMD ["node", "dist/src/server.js"]

@@ -15,6 +15,8 @@ import { fakeSinks, type Sinks } from "../../src/ap/sinks.js";
 
 let app: FastifyInstance;
 let sinks: Sinks;
+const REVIEWER_TOKEN = "integration-reviewer-token-32-chars";
+const AUTH = { authorization: `Bearer ${REVIEWER_TOKEN}` };
 
 before(async () => {
   delete process.env.DASHSCOPE_API_KEY;
@@ -25,6 +27,8 @@ before(async () => {
     workitems: new InMemoryWorkItemStore(),
     loop: defaultLoop(),
     sinks,
+    reviewerToken: REVIEWER_TOKEN,
+    reviewerName: "integration-clerk",
   };
   app = await buildServer(deps);
   await app.ready();
@@ -39,7 +43,7 @@ test("intake → pending → approve → executed, end to end over HTTP", async 
   const intake = await app.inject({
     method: "POST",
     url: "/intake",
-    payload: { invoice: { vendor: "Globex", invoice_number: "GX-100", tax_id: "TX-1", subtotal: 500, tax: 100, total: 600, date: "2026-04-01" } },
+    payload: { invoice: { vendor: "Globex", invoice_number: "GX-100", tax_id: "TX-1", subtotal: 500, tax: 100, total: 600, date: "2026-04-01", currency: "EUR" } },
   });
   assert.equal(intake.statusCode, 200);
   const item = intake.json();
@@ -59,14 +63,14 @@ test("intake → pending → approve → executed, end to end over HTTP", async 
 
   // 2. It appears in the approval queue — WITH its full step trace (so a human can
   //    see HOW the agent decided, not just the final action).
-  const pending = await app.inject({ method: "GET", url: "/pending" });
+  const pending = await app.inject({ method: "GET", url: "/pending", headers: AUTH });
   assert.equal(pending.json().pending.length, 1);
   assert.equal(pending.json().pending[0].id, item.id);
   assert.ok(Array.isArray(pending.json().pending[0].trace));
   assert.equal(pending.json().pending[0].trace.length, item.trace.length);
 
   // 3. A human approves → the tool executes for real.
-  const approve = await app.inject({ method: "POST", url: `/approve/${item.id}` });
+  const approve = await app.inject({ method: "POST", url: `/approve/${item.id}`, headers: AUTH });
   assert.equal(approve.statusCode, 200);
   const approved = approve.json();
   assert.equal(approved.status, "approved");
@@ -74,7 +78,7 @@ test("intake → pending → approve → executed, end to end over HTTP", async 
   assert.equal(sinks.ledger.entries().length, 1); // the real side-effect fired
 
   // 4. The queue is now empty.
-  const after = await app.inject({ method: "GET", url: "/pending" });
+  const after = await app.inject({ method: "GET", url: "/pending", headers: AUTH });
   assert.equal(after.json().pending.length, 0);
 });
 
@@ -82,13 +86,14 @@ test("amend over HTTP: the human's edited args are exactly what execute", async 
   const intake = await app.inject({
     method: "POST",
     url: "/intake",
-    payload: { invoice: { vendor: "Initech", invoice_number: "IT-7", tax_id: "TX-9", subtotal: 800, tax: 160, total: 960, date: "2026-04-02" } },
+    payload: { invoice: { vendor: "Initech", invoice_number: "IT-7", tax_id: "TX-9", subtotal: 800, tax: 160, total: 960, date: "2026-04-02", currency: "EUR" } },
   });
   const id = intake.json().id;
 
   const amend = await app.inject({
     method: "POST",
     url: `/amend/${id}`,
+    headers: AUTH,
     payload: { args: { expense_account: "Software Licenses", amount: 960 }, reason: "reclassify to licenses" },
   });
   assert.equal(amend.statusCode, 200);
@@ -100,9 +105,9 @@ test("amend over HTTP: the human's edited args are exactly what execute", async 
 });
 
 test("memory grounds the next decision: a re-sent invoice is flagged as a duplicate", async () => {
-  const payload = { invoice: { vendor: "Umbrella", invoice_number: "UM-1", tax_id: "TX-2", subtotal: 300, tax: 60, total: 360, date: "2026-04-03" } };
+  const payload = { invoice: { vendor: "Umbrella", invoice_number: "UM-1", tax_id: "TX-2", subtotal: 300, tax: 60, total: 360, date: "2026-04-03", currency: "EUR" } };
   const first = await app.inject({ method: "POST", url: "/intake", payload });
-  await app.inject({ method: "POST", url: `/approve/${first.json().id}` });
+  await app.inject({ method: "POST", url: `/approve/${first.json().id}`, headers: AUTH });
 
   const second = await app.inject({ method: "POST", url: "/intake", payload });
   const item = second.json();
@@ -110,7 +115,7 @@ test("memory grounds the next decision: a re-sent invoice is flagged as a duplic
   assert.ok(item.findings.some((f: { rule: string; passed: boolean }) => f.rule === "R5" && !f.passed));
 
   // Rejecting the duplicate discards it — no escalation is auto-actioned beyond the flag.
-  const reject = await app.inject({ method: "POST", url: `/reject/${item.id}`, payload: { reason: "duplicate" } });
+  const reject = await app.inject({ method: "POST", url: `/reject/${item.id}`, headers: AUTH, payload: { reason: "duplicate" } });
   assert.equal(reject.json().status, "rejected");
 });
 
@@ -118,7 +123,7 @@ test("amend audit trail: BOTH the proposed args and the amended args are persist
   const intake = await app.inject({
     method: "POST",
     url: "/intake",
-    payload: { invoice: { vendor: "Wonka", invoice_number: "WK-1", tax_id: "TX-3", subtotal: 700, tax: 140, total: 840, date: "2026-05-01" } },
+    payload: { invoice: { vendor: "Wonka", invoice_number: "WK-1", tax_id: "TX-3", subtotal: 700, tax: 140, total: 840, date: "2026-05-01", currency: "EUR" } },
   });
   const id = intake.json().id;
   const proposedArgs = intake.json().proposed.args;
@@ -126,7 +131,8 @@ test("amend audit trail: BOTH the proposed args and the amended args are persist
   const amend = await app.inject({
     method: "POST",
     url: `/amend/${id}`,
-    payload: { args: { expense_account: "Consulting", amount: 840 }, reason: "reclassify", by: "clerk@demo" },
+    headers: AUTH,
+    payload: { args: { expense_account: "Consulting", amount: 840 }, reason: "reclassify" },
   });
   const item = amend.json();
   assert.equal(item.status, "approved");
@@ -135,7 +141,7 @@ test("amend audit trail: BOTH the proposed args and the amended args are persist
   assert.ok(item.amendment, "amendment audit must be present");
   assert.deepEqual(item.amendment.proposedArgs, proposedArgs); // prev preserved, not overwritten
   assert.equal(item.amendment.amendedArgs.expense_account, "Consulting"); // new
-  assert.equal(item.amendment.amendedBy, "clerk@demo");
+  assert.equal(item.amendment.amendedBy, "integration-clerk");
   assert.equal(item.amendment.reason, "reclassify");
   // The amended args are exactly what the approved proposal now carries (== what ran).
   assert.equal(item.proposed.args.expense_account, "Consulting");
@@ -149,15 +155,17 @@ test("GET /decided returns approved/amended/rejected items with outcome + timest
     workitems: new InMemoryWorkItemStore(),
     loop: defaultLoop(),
     sinks: fakeSinks(),
+    reviewerToken: REVIEWER_TOKEN,
+    reviewerName: "integration-clerk",
   });
   await local.ready();
   try {
-    const a = await local.inject({ method: "POST", url: "/intake", payload: { invoice: { vendor: "Aperture", invoice_number: "AP-1", tax_id: "T", subtotal: 100, tax: 20, total: 120 } } });
-    const b = await local.inject({ method: "POST", url: "/intake", payload: { invoice: { vendor: "Black Mesa", invoice_number: "BM-1", tax_id: "T", subtotal: 200, tax: 40, total: 240 } } });
-    await local.inject({ method: "POST", url: `/approve/${a.json().id}` });
-    await local.inject({ method: "POST", url: `/reject/${b.json().id}`, payload: { reason: "not ours" } });
+    const a = await local.inject({ method: "POST", url: "/intake", payload: { invoice: { vendor: "Aperture", invoice_number: "AP-1", date: "2026-06-01", currency: "EUR", tax_id: "T", subtotal: 100, tax: 20, total: 120 } } });
+    const b = await local.inject({ method: "POST", url: "/intake", payload: { invoice: { vendor: "Black Mesa", invoice_number: "BM-1", date: "2026-06-02", currency: "EUR", tax_id: "T", subtotal: 200, tax: 40, total: 240 } } });
+    await local.inject({ method: "POST", url: `/approve/${a.json().id}`, headers: AUTH });
+    await local.inject({ method: "POST", url: `/reject/${b.json().id}`, headers: AUTH, payload: { reason: "not ours" } });
 
-    const decided = (await local.inject({ method: "GET", url: "/decided" })).json().decided;
+    const decided = (await local.inject({ method: "GET", url: "/decided", headers: AUTH })).json().decided;
     assert.equal(decided.length, 2);
     const statuses = decided.map((d: { status: string }) => d.status).sort();
     assert.deepEqual(statuses, ["approved", "rejected"]);
@@ -165,7 +173,7 @@ test("GET /decided returns approved/amended/rejected items with outcome + timest
       assert.ok(d.decidedAt, "each decided item carries a decision timestamp");
     }
     // Decided items are gone from the pending queue.
-    assert.equal((await local.inject({ method: "GET", url: "/pending" })).json().pending.length, 0);
+    assert.equal((await local.inject({ method: "GET", url: "/pending", headers: AUTH })).json().pending.length, 0);
   } finally {
     await local.close();
   }
@@ -178,6 +186,7 @@ test("gate invariant through the STREAM path: /intake/stream proposes only; appr
     workitems: new InMemoryWorkItemStore(),
     loop: defaultLoop(),
     sinks,
+    reviewerToken: REVIEWER_TOKEN,
   });
   await local.ready();
   try {
@@ -185,23 +194,23 @@ test("gate invariant through the STREAM path: /intake/stream proposes only; appr
     const stream = await local.inject({
       method: "POST",
       url: "/intake/stream",
-      payload: { invoice: { vendor: "Cyberdyne", invoice_number: "CY-1", tax_id: "T", subtotal: 100, tax: 20, total: 120 } },
+      payload: { invoice: { vendor: "Cyberdyne", invoice_number: "CY-1", date: "2026-06-03", currency: "EUR", tax_id: "T", subtotal: 100, tax: 20, total: 120 } },
     });
     assert.equal(stream.statusCode, 200);
     // Nothing side-effecting fired during the streamed loop.
     assert.equal(sinks.ledger.entries().length, ledgerBefore);
 
-    const pending = (await local.inject({ method: "GET", url: "/pending" })).json().pending;
+    const pending = (await local.inject({ method: "GET", url: "/pending", headers: AUTH })).json().pending;
     assert.equal(pending.length, 1);
     const id = pending[0].id;
 
-    const approve = await local.inject({ method: "POST", url: `/approve/${id}` });
+    const approve = await local.inject({ method: "POST", url: `/approve/${id}`, headers: AUTH });
     assert.equal(approve.statusCode, 200);
     assert.equal(sinks.ledger.entries().length, ledgerBefore + 1); // executed exactly once
 
     // It now shows in /decided and can NEVER re-execute (the gate).
-    assert.ok((await local.inject({ method: "GET", url: "/decided" })).json().decided.some((d: { id: string }) => d.id === id));
-    const reapprove = await local.inject({ method: "POST", url: `/approve/${id}` });
+    assert.ok((await local.inject({ method: "GET", url: "/decided", headers: AUTH })).json().decided.some((d: { id: string }) => d.id === id));
+    const reapprove = await local.inject({ method: "POST", url: `/approve/${id}`, headers: AUTH });
     assert.equal(reapprove.statusCode, 409);
     assert.equal(sinks.ledger.entries().length, ledgerBefore + 1); // still exactly once — no double-execute
   } finally {

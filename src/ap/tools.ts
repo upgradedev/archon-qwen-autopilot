@@ -23,8 +23,15 @@ export interface ToolSpec {
   // the human-approved DOMAIN arguments (reasoning/confidence already stripped).
   // Async because a terminal action may perform real I/O (the SMTP email sink); the
   // ledger / payment / review sinks resolve synchronously.
-  execute(args: Record<string, unknown>, inv: NormalizedInvoice, sinks: Sinks): Promise<ExecutionResult>;
+  execute(
+    args: Record<string, unknown>,
+    inv: NormalizedInvoice,
+    sinks: Sinks,
+    executionKey?: string
+  ): Promise<ExecutionResult>;
 }
+
+export class InvalidToolArgsError extends Error {}
 
 // Shared meta-fields injected into every tool schema (self-reported by the model).
 const META_PROPS = {
@@ -76,11 +83,11 @@ const draftJournalEntry: ToolSpec = {
     },
     ["expense_account", "amount"]
   ),
-  async execute(args, inv, sinks) {
+  async execute(args, inv, sinks, executionKey = inv.invoice_id) {
     const amount = num(args["amount"], inv.total ?? 0);
     const account = str(args["expense_account"], "Uncategorised Expense");
     const entry = sinks.ledger.post({
-      ref: inv.invoice_id,
+      ref: executionKey,
       narrative: str(args["memo"], `Accrual for ${inv.vendor ?? "vendor"} invoice ${inv.vendor_ref ?? inv.invoice_id}`),
       lines: [
         { account, debit: amount },
@@ -109,9 +116,9 @@ const draftPayment: ToolSpec = {
     },
     ["vendor", "amount"]
   ),
-  async execute(args, inv, sinks) {
+  async execute(args, inv, sinks, executionKey = inv.invoice_id) {
     const payment = sinks.payments.record({
-      ref: inv.invoice_id,
+      ref: executionKey,
       vendor: str(args["vendor"], inv.vendor ?? "unknown vendor"),
       amount: num(args["amount"], inv.total ?? 0),
       currency: str(args["currency"], inv.currency),
@@ -138,8 +145,9 @@ const draftVendorReply: ToolSpec = {
     },
     ["subject", "body"]
   ),
-  async execute(args, inv, sinks) {
+  async execute(args, inv, sinks, executionKey = inv.invoice_id) {
     const email = await sinks.email.send({
+      ref: executionKey,
       to: str(args["to"], inv.vendor ?? "vendor billing"),
       subject: str(args["subject"], `Query on invoice ${inv.vendor_ref ?? inv.invoice_id}`),
       body: str(args["body"], "We need a clarification before we can process this invoice."),
@@ -164,14 +172,14 @@ const flagForReview: ToolSpec = {
     },
     ["reason"]
   ),
-  async execute(args, inv, sinks) {
+  async execute(args, inv, sinks, executionKey = inv.invoice_id) {
     const priorityRaw = str(args["priority"], "normal");
     const priority = (["low", "normal", "high"].includes(priorityRaw) ? priorityRaw : "normal") as
       | "low"
       | "normal"
       | "high";
     const escalation = sinks.reviews.raise({
-      ref: inv.invoice_id,
+      ref: executionKey,
       reason: str(args["reason"], "Flagged for human review."),
       priority,
     });
@@ -190,6 +198,93 @@ const BY_NAME = new Map<ToolName, ToolSpec>(TOOLS.map((t) => [t.name, t]));
 
 export function toolByName(name: string): ToolSpec | undefined {
   return BY_NAME.get(name as ToolName);
+}
+
+// Runtime validation at the reviewer boundary. Function schemas guide Qwen, but
+// they are not a security control; no terminal sink sees malformed, negative,
+// unbounded, header-injected, or tool-inappropriate arguments.
+export function assertValidToolArgs(
+  tool: ToolName,
+  args: Record<string, unknown>,
+  _invoice: NormalizedInvoice
+): void {
+  const allowed: Record<ToolName, readonly string[]> = {
+    draft_journal_entry: ["expense_account", "amount", "memo"],
+    draft_payment: ["vendor", "amount", "currency", "pay_on"],
+    draft_vendor_reply: ["to", "subject", "body"],
+    flag_for_review: ["reason", "priority"],
+  };
+  if (!Object.prototype.hasOwnProperty.call(allowed, tool)) {
+    throw new InvalidToolArgsError(`unknown terminal tool "${String(tool)}"`);
+  }
+  for (const key of Object.keys(args)) {
+    if (!allowed[tool].includes(key)) {
+      throw new InvalidToolArgsError(`${tool}: unsupported argument "${key}"`);
+    }
+  }
+  switch (tool) {
+    case "draft_journal_entry":
+      requireText(args, "expense_account", 120);
+      requireAmount(args, "amount");
+      optionalText(args, "memo", 2000);
+      return;
+    case "draft_payment":
+      requireText(args, "vendor", 200);
+      requireAmount(args, "amount");
+      optionalText(args, "currency", 3);
+      if (args["currency"] !== undefined && !/^[A-Za-z]{3}$/.test(String(args["currency"]))) {
+        throw new InvalidToolArgsError("draft_payment: currency must be a 3-letter ISO code");
+      }
+      optionalText(args, "pay_on", 10);
+      if (args["pay_on"] !== undefined && !isIsoDate(String(args["pay_on"]))) {
+        throw new InvalidToolArgsError("draft_payment: pay_on must be an ISO date (YYYY-MM-DD)");
+      }
+      return;
+    case "draft_vendor_reply":
+      optionalText(args, "to", 320);
+      requireText(args, "subject", 300);
+      requireText(args, "body", 10_000);
+      for (const field of ["to", "subject"] as const) {
+        if (typeof args[field] === "string" && /[\r\n\0]/.test(args[field])) {
+          throw new InvalidToolArgsError(`draft_vendor_reply: ${field} contains forbidden header controls`);
+        }
+      }
+      return;
+    case "flag_for_review":
+      requireText(args, "reason", 2000);
+      optionalText(args, "priority", 6);
+      if (args["priority"] !== undefined && !["low", "normal", "high"].includes(String(args["priority"]))) {
+        throw new InvalidToolArgsError("flag_for_review: priority must be low, normal, or high");
+      }
+  }
+}
+
+function requireAmount(args: Record<string, unknown>, key: string): void {
+  const value = args[key];
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0 || value > 1_000_000_000) {
+    throw new InvalidToolArgsError(`${key} must be a finite positive number no greater than 1,000,000,000`);
+  }
+}
+
+function requireText(args: Record<string, unknown>, key: string, max: number): void {
+  const value = args[key];
+  if (typeof value !== "string" || value.trim() === "" || value.length > max) {
+    throw new InvalidToolArgsError(`${key} must be a non-empty string of at most ${max} characters`);
+  }
+}
+
+function optionalText(args: Record<string, unknown>, key: string, max: number): void {
+  if (args[key] === undefined) return;
+  const value = args[key];
+  if (typeof value !== "string" || value.length > max) {
+    throw new InvalidToolArgsError(`${key} must be a string of at most ${max} characters`);
+  }
+}
+
+function isIsoDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 
 // These are the TERMINAL, side-effecting actions. When the multi-step loop's model

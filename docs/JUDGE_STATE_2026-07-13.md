@@ -1,94 +1,93 @@
-# Judge State — 2026-07-13
+# Judge state — final engineering refresh, 2026-07-15
 
-> **Purpose.** A durable snapshot of where Archon Autopilot stands against the
-> Qwen (Alibaba Cloud) Hackathon judging bar, after the 2026-07-12/13 judgment
-> pass and the three harmonization PRs it produced (#28, #29, #30). It records
-> the current judged score per rubric criterion, the discrepancies those PRs
-> fixed, and the ranked, still-open path to push the score **above the target
-> bar (> 9.5 / 10)**.
->
-> **Out of scope here (already done / user-owned submission mechanics).** The
-> **demo video** is re-rendered and current, and the **blog / project story** are
-> written and ready to submit — neither is a gap and neither is listed as an
-> action below. Publishing to Devpost and the live-hosting console clicks are the
-> user's submission step, not an engineering gap.
+> The filename preserves the original 2026-07-13 review artifact; this content is the
+> refreshed final engineering state. It deliberately separates automated evidence,
+> live/configurable capabilities, and human publication work.
 
-## 1 · Challenge + target
+## Challenge target
 
-| | |
+| Item | State |
 |---|---|
-| **Challenge** | Alibaba Cloud / Qwen Hackathon — **Track 4 (Autopilot)** |
-| **Deadline** | **2026-07-20, 2 PM PDT** |
-| **Rubric** | Technical Depth & Engineering **30%** · Innovation & AI Creativity **30%** · Problem Value & Impact **25%** · Presentation & Documentation **15%** |
-| **Target bar to exceed** | **> 9.5 / 10** |
-| **Current judged score** | **~8.7 / 10** — lifted by the merged PRs #28–#30 (see §3) |
+| Challenge | Alibaba Cloud / Qwen Hackathon — **Track 4 (Autopilot Agent)** |
+| Deadline | **2026-07-20, 2:00 PM PDT** |
+| Rubric | Innovation & AI Creativity **30%** · Technical Depth & Engineering **30%** · Problem Value & Impact **25%** · Presentation **15%** |
+| Submission essentials | Public repository + license, description, Alibaba deployment proof, architecture diagram, public hosted video under three minutes, selected track |
+| Optional lift | Published technical blog or social post |
 
-## 2 · Current judge score — per criterion
+## Verified engineering state
 
-| Criterion (weight) | Score | Why |
-|---|---|---|
-| **Technical Depth & Engineering (30%)** | **9** | Bounded multi-step ReAct loop over `qwen-plus` function-calling (the agent picks its own next read/analyze tool each step: recall history → validate → check duplicate → compute variance, avg 2.3 autonomous steps before proposing one action); `qwen-vl-max` document vision on the intake path; a 7-tool MCP server + a 9-skill custom-skill catalog (5 autonomous / 4 human-gated); 186 `node:test` + 25 Playwright tests at 97.73% coverage (CI, with DB). |
-| **Innovation & AI Creativity (30%)** | **8.5–9** | The human-in-the-loop money gate carries a **structural** tool-attack defense: the model-facing tool catalog contains only *proposing* tools, so the model literally cannot name `approve` / `amend` / `reject` / `pay`. A prompt-injection buried in an untrusted invoice — or in poisoned recalled memory — is therefore **inert by construction**, not by a filter. Plus the approval gate doubles as a **training signal**: human corrections at the gate are written back to pgvector as vendor memory for future recall. |
-| **Problem Value & Impact (25%)** | **8–8.5** | Accounts-payable, end to end (messy incoming invoice → normalize → validate → triage → a *proposed* action — the real daily work of an AP clerk). Strong, but the one **real** terminal action (SMTP email) is currently **coded + tested**, not yet **demonstrated landing** on the live box — the biggest single lift available here (see §4). |
-| **Presentation & Documentation (15%)** | **9** | README leads with the four differentiators; EVAL.md, demo BLOG and PROJECT_STORY all state a consistent **22/22**; the demo video is re-rendered (21 beats); an offline `docs-consistency` CI job pins README claims to the code. Devpost/hosting is the user's submission step. |
+| Evidence | Verified result |
+|---|---:|
+| Node test suite | **246 total · 240 pass · 0 fail · 6 real-Postgres skips** when `DATABASE_URL` is absent |
+| Browser end to end | **25/25 Playwright** |
+| Coverage | **92.42% statements · 84.28% branches · 91.26% functions · 92.42% lines** |
+| Decision eval | **22/22 tool choice · 22/22 argument sanity · 22/22 autonomy**, average **2.5** autonomous steps |
+| Readiness | **22 pass · 0 fail · 3 user-gated**, 100% automatable completion |
+| Adversarial suite | **30/30** |
+| Dependency audits | **0 vulnerabilities** in production and all-dependency audits |
 
-**Weighted center** lands at **~8.7**, consistent with the headline above.
+The six skipped Node cases are explicit real-Postgres integration cases, not silent
+passes. CI supplies PostgreSQL/pgvector for that tier; a bare clone without
+`DATABASE_URL` reports the skips visibly.
 
-## 3 · Discrepancies fixed this session (merged PRs)
+## Rubric view
 
-All three verified merged to `main` on 2026-07-12.
+| Criterion | Evidence-backed final assessment |
+|---|---|
+| **Innovation & AI Creativity (30%)** | Strong. A bounded `qwen-plus` function-calling loop gathers vendor-memory and validation evidence before one proposal. The human gate is also a measured correction signal. Prompt-injection safety is structural: the model catalog contains no approval/execution capability. |
+| **Technical Depth & Engineering (30%)** | Strong. Authenticated HTTP/UI is the exclusive decision surface, while a four-tool MCP proposal/read surface shares the injectable intake/memory core without exposing decisions; `qwen-vl-max` handles document intake; pgvector grounds decisions; atomic work-item claims, explicit uncertain-outcome recovery, persistent production quotas, strict auth, two configurable real transports, and the verified quality gates above materially exceed a thin hackathon wrapper. |
+| **Problem Value & Impact (25%)** | Strong and honest. The agent removes AP triage work while retaining human control. SMTP vendor replies and a durable JSONL double-entry ledger are real when configured; payment and specialist-review adapters remain simulated, so no bank/ERP integration is implied. |
+| **Presentation (15%)** | Engineering artifacts are ready: README, architecture, evidence matrix, judge guide, Devpost copy, project story, blog draft, and media plan. The score on this axis still depends on the human-owned final screenshots, refreshed <3-minute recording, public video host, and published post. |
 
-| PR | Title | What it fixed |
-|---|---|---|
-| **[#28](https://github.com/upgradedev/archon-qwen-autopilot/pull/28)** | *reconcile eval number to truthful 22/22, correct test badge, lead README with differentiators* | Reconciled the eval to a truthful **22/22**, corrected the test badge, and re-led the README with the four differentiators. |
-| **[#29](https://github.com/upgradedev/archon-qwen-autopilot/pull/29)** | *real SMTP email sink behind the human gate + poisoned-memory injection guarantee* | Added a **real SMTP email sink** (`src/ap/smtp-sink.ts`, nodemailer) reached only from the human-approval chokepoint. Delivery is **awaited**, so a failed send *propagates* to `approve()`/`amend()` and the work item stays **pending** for retry rather than being marked approved with no email sent. Added a **poisoned-memory injection test** (`tests/security/injection-poisoned-memory.test.ts`) proving the structural defense holds even when the attack is *recalled* from long-term memory. |
-| **[#30](https://github.com/upgradedev/archon-qwen-autopilot/pull/30)** | *harmonize demo/docs to 22/22 + real-SMTP & poisoned-memory proofs; re-render 21-beat video* | Harmonized demo + docs to **22/22**, documented the real-SMTP and poisoned-memory proofs, and re-rendered the 21-beat video. |
+## Security and reliability invariants now closed
 
-**Net effect:** the eval is **22/22 everywhere**, and the prior **21/22-vs-22/22
-self-contradiction is fully resolved** — no `21/22` remains in any tracked file
-(only in local worktree scratch, which is not part of the repo).
+- HTTP reviewer queue reads and mutations require a private Bearer credential;
+  production refuses to start without a sufficiently long token. Intake remains public for judge
+  access but is bounded by persistent per-client and global quotas.
+- A model can analyze and propose but cannot approve, amend, reject, pay, or execute.
+  The only side-effect path is an authenticated human decision followed by an atomic
+  `PENDING → EXECUTING` claim.
+- Approved tool arguments are schema-validated. A tool change requires explicit
+  confirmation and a reason, and the proposed→approved diff is retained.
+- Concurrent approvals and replay are rejected. Uncertain sink failures stay visibly
+  executing for audited reconciliation; there is no unsafe automatic retry.
+- The JSONL ledger fsyncs the row and a per-work-item idempotency marker, and dedupes
+  a completed ref after restart. SMTP uses a stable application `Message-ID`, while
+  honestly not claiming recipient-level exactly-once semantics.
+- Unknown/conflicting currency, missing or invalid dates, incomplete line items, and
+  low/unknown Qwen-VL extraction confidence fail toward human review instead of a
+  straight-through payment.
+- Uploaded PDF/PNG/JPG files are bounded and magic-byte checked; PDF pages and model
+  calls have caps/timeouts. Recognized injection patterns and non-invoice relevance
+  are surfaced to the reviewer.
 
-## 4 · Path to exceed the target (> 9.5) — ranked
+## Claims that remain intentionally bounded
 
-Excludes the video and the blog/post (both done — see the top note). Each item
-is tagged **[CODE/buildable]** (this repo can ship it) or **[USER-only]** (needs
-credentials / a deploy the agent cannot perform).
+- The **22/22 offline eval** is a deterministic policy/regression measurement over the
+  real loop. It is not presented as live-model accuracy. Keyed Qwen traces are separate.
+- The advisory injection scanner recognizes a documented generic pattern set; it is
+  not a universal detector. The safety invariant rests on tool separation + human
+  authorization, not scanner recall.
+- Vision extraction is limited to PDF/PNG/JPG, 10 MiB by default, and the first three
+  PDF pages by default. Magic-byte sniffing is not antivirus/content disarm, relevance
+  is advisory, and there is no claim of benchmarked accuracy on arbitrary complex
+  multi-page tables.
+- The MCP server is local stdio and exposes only intake/list-pending/recall/catalog
+  operations. It can create proposals but cannot approve, amend, reject, recover, or
+  execute. Authenticated HTTP/UI is the exclusive reviewer boundary.
+- SMTP and JSONL are real **configurable** transports with real implementation tests.
+  A delivered mailbox receipt and live persistent-volume proof must be shown only if
+  they are actually captured; the docs do not fabricate either.
 
-1. **[USER-only] Send ONE real email through the human gate on the live box** —
-   *highest leverage.* This converts the SMTP sink from "coded + tested" into
-   **demonstrated, not simulated** — a real terminal action a judge can watch
-   land. It is the single biggest lift for the **Problem Value & Impact (25%)**
-   axis. It is a short **dependency chain**, not a standalone step:
-   1. **[USER-only] Redeploy the live box** so the SMTP-capable build (post-#29)
-      is actually served. The live `deploy/DEPLOY_STATE.md` predates #29 (no
-      `SMTP_*` env, no mail surface in its endpoint list), so the current live
-      container does **not** yet serve the SMTP adapter — run `deploy/redeploy.sh`
-      with the latest code.
-   2. **[USER-only] Set the `SMTP_*` creds** in `/root/autopilot/.env`
-      (`SMTP_HOST` · `SMTP_PORT` · `SMTP_SECURE` · `SMTP_USER` · `SMTP_PASS` ·
-      `SMTP_FROM`) so `SmtpEmailSink.fromEnv()` builds a REAL transport.
-   3. **[USER-only] Approve one `draft_vendor_reply`** in the live approval UI and
-      confirm the email is delivered (the sink logs `delivered … (id …)`).
-2. **[CODE/buildable] Add a 2nd real terminal sink** behind the same human gate —
-   e.g. a ledger / payment-adapter that performs a genuine (sandbox) side-effect
-   on approval. Broadens the "real actions, not simulations" story and
-   strengthens both **Problem Value** and **Technical Depth**. Buildable in-repo
-   with a Fake→Real seam identical to `SmtpEmailSink` (mode chosen by env), so
-   the offline path stays a clean no-op.
+## Only human media/publication work remains
 
-> The redeploy in item 1(a) is also the gating prerequisite for any live demo of
-> the current code — worth doing regardless of the email step.
+1. Capture fresh screenshots without exposing the reviewer token.
+2. Refresh the 21-beat video so it says **two real configurable sinks** and **avg 2.5
+   steps**, verify runtime remains below three minutes, and host it publicly.
+3. Publish one supplied blog/social draft and save the public URL.
+4. Paste the supplied Devpost description, architecture, repository, Alibaba proof,
+   public video URL, track, and private reviewer credential into the correct fields;
+   test every public link in an incognito window before submission.
 
-## 5 · Verified-harmonized (no action needed)
-
-- **Eval is 22/22 everywhere** — README, EVAL.md, demo BLOG, and PROJECT_STORY
-  all agree; the 21/22-vs-22/22 contradiction is gone from every tracked file.
-- **Test badge corrected** — README badge reads **186 node:test + 25 Playwright**,
-  coverage **97.73% (CI, with DB)**.
-- **README leads with the four differentiators** — ReAct loop over Qwen
-  function-calling; `qwen-vl-max` intake vision; structural tool-attack defense at
-  the money gate; the AP domain end to end.
-- **Structural-defense proofs documented** — both the real-SMTP sink (awaited,
-  fail-leaves-pending) and the poisoned-memory injection guarantee are in code and
-  described in the docs; the `docs-consistency` CI job pins the security invariant
-  (terminal actions excluded from the model catalog) to the code.
+The exact shot list is [`../demo/FINAL_MEDIA_CHECKLIST.md`](../demo/FINAL_MEDIA_CHECKLIST.md),
+and ready-to-publish copy is [`../demo/POST_DRAFTS.md`](../demo/POST_DRAFTS.md).

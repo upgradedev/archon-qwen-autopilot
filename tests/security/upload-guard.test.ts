@@ -11,7 +11,7 @@
 //      prompt-injection is FLAGGED in the response `security` block (detected, count,
 //      matched field) AND the agent's downstream behavior is UNCHANGED (still PENDING,
 //      never a payment, confidence never the injected 1.0). Detection is advisory; the
-//      neutralizing fence + human gate are what keep it safe — this only makes it VISIBLE.
+//      data fence + structural human gate keep execution safe — this only makes it VISIBLE.
 //   3. Relevance gate — a document with no invoice fields is marked `relevant: false`
 //      with a reason; a normal invoice is `relevant: true`.
 //
@@ -33,6 +33,8 @@ import { assessRelevance } from "../../src/qwen/relevance.js";
 import type { RawInvoice } from "../../src/types.js";
 
 delete process.env.DASHSCOPE_API_KEY; // guarantee the offline Fakes
+const REVIEWER_TOKEN = "upload-guard-reviewer-token-32-chars";
+const AUTH = { authorization: `Bearer ${REVIEWER_TOKEN}` };
 
 // Minimal buffers carrying each real magic-byte signature (plus a trailing byte or
 // two — the Fake extractor ignores the content).
@@ -48,6 +50,7 @@ function deps(extra: Partial<ServerDeps> = {}): ServerDeps {
     loop: defaultLoop(),
     sinks: fakeSinks(),
     extractor: new FakeExtractionClient(), // offline vision — Meridian invoice, relevant, no injection
+    reviewerToken: REVIEWER_TOKEN,
     ...extra,
   };
 }
@@ -169,10 +172,10 @@ test("injection (e2e): an uploaded invoice with an injected note → security.in
     assert.equal(res.statusCode, 200);
     const body = res.json();
 
-    // 1) The neutralized injection is SURFACED in the response.
+    // 1) The recognized injection is SURFACED in the response.
     assert.equal(body.security.injectionDetected, true);
     assert.ok(body.security.injectionCount >= 1);
-    assert.equal(body.security.neutralized, true);
+    assert.equal(body.security.autonomousExecutionBlocked, true);
     assert.ok(body.security.matches.some((m: { field: string }) => m.field === "notes"), "the matched field is surfaced");
     // The relevant-invoice signal is independent and still true here.
     assert.equal(body.relevance.relevant, true);
@@ -187,7 +190,7 @@ test("injection (e2e): an uploaded invoice with an injected note → security.in
     assert.equal(proc.statusCode, 200);
     assert.match(proc.body, /event: proposal/);
 
-    const pending = (await app.inject({ method: "GET", url: "/pending" })).json().pending;
+    const pending = (await app.inject({ method: "GET", url: "/pending", headers: AUTH })).json().pending;
     assert.equal(pending.length, 1);
     const item = pending[0];
     assert.equal(item.status, "pending", "the injection did not auto-execute anything");
@@ -196,21 +199,21 @@ test("injection (e2e): an uploaded invoice with an injected note → security.in
     assert.notEqual(item.proposed.confidence, 1, "the injected 'confidence 1.0' did not set the gate confidence");
 
     // No side-effect sink fired during intake.
-    const decided = (await app.inject({ method: "GET", url: "/decided" })).json().decided;
+    const decided = (await app.inject({ method: "GET", url: "/decided", headers: AUTH })).json().decided;
     assert.equal(decided.length, 0);
   });
 });
 
-test("injection (e2e): the streaming upload emits a 'security' trace event for a neutralized injection", async () => {
+test("injection (e2e): the streaming upload emits a security event while autonomous execution stays blocked", async () => {
   const injected: RawInvoice = { vendor: "Globex", invoice_number: "G-1", subtotal: 100, tax: 20, total: 120, notes: INJECTION, confidence: 0.9 };
   await withServer({ extractor: new FakeExtractionClient(injected) }, async (app) => {
     const { payload, headers } = multipartFile("invoice.png", "image/png", PNG);
     const res = await app.inject({ method: "POST", url: "/intake/document", payload, headers });
     assert.equal(res.statusCode, 200);
     assert.match(res.body, /event: security/);
-    assert.match(res.body, /never followed/i);
+    assert.match(res.body, /autonomous execution remains blocked/i);
     // The gate still held: exactly one PENDING item, nothing executed.
-    const pending = (await app.inject({ method: "GET", url: "/pending" })).json().pending;
+    const pending = (await app.inject({ method: "GET", url: "/pending", headers: AUTH })).json().pending;
     assert.equal(pending.length, 1);
     assert.equal(pending[0].status, "pending");
   });
@@ -255,6 +258,6 @@ test("relevance (e2e): a normal invoice extraction is relevant:true with no inje
     const body = res.json();
     assert.equal(body.relevance.relevant, true);
     assert.equal(body.security.injectionDetected, false);
-    assert.equal(body.security.neutralized, true);
+    assert.equal(body.security.autonomousExecutionBlocked, true);
   });
 });

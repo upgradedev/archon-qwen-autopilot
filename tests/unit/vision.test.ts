@@ -148,6 +148,7 @@ test("QwenVisionExtractionClient.extract maps a model completion (image path) �
   assert.equal(out.invoice.invoice_number, "NW-77");
   assert.equal(out.invoice.total, 1240);
   assert.equal(out.invoice.subtotal, "€1,000.00"); // string amount preserved for the normalizer
+  assert.equal(out.invoice.confidence, 0.9, "Qwen-VL confidence reaches the review/relevance layer");
   assert.ok(Array.isArray(out.invoice.line_items));
   // The request carried the image as a data URL plus the extraction text prompt.
   const content = seen.messages[1].content;
@@ -156,11 +157,25 @@ test("QwenVisionExtractionClient.extract maps a model completion (image path) �
   assert.equal(content[content.length - 1].type, "text");
 });
 
-test("QwenVisionExtractionClient.extract tolerates a non-JSON / empty completion → an empty invoice (no throw)", async () => {
+test("QwenVisionExtractionClient.extract treats missing/invalid confidence as untrusted", async () => {
   const client = new QwenVisionExtractionClient("qwen-vl-max", fakeVisionChat("sorry, I could not read it"));
   const out = await client.extract({ buffer: Buffer.from("img"), filename: "invoice.jpg", mimetype: "image/jpeg" });
-  assert.deepEqual(out.invoice, {}); // safeParseJson → {} → toRawInvoice → {}
+  assert.deepEqual(out.invoice, { confidence: 0 });
   assert.equal(out.sourceType, "image");
+
+  const missing = new QwenVisionExtractionClient(
+    "qwen-vl-max",
+    fakeVisionChat(JSON.stringify({ vendor: "Looks Complete", total: 100, currency: "EUR" }))
+  );
+  const missingOut = await missing.extract({ buffer: Buffer.from("img"), filename: "invoice.jpg", mimetype: "image/jpeg" });
+  assert.equal(missingOut.invoice.confidence, 0);
+
+  const invalid = new QwenVisionExtractionClient(
+    "qwen-vl-max",
+    fakeVisionChat(JSON.stringify({ vendor: "Looks Complete", total: 100, confidence: 7 }))
+  );
+  const invalidOut = await invalid.extract({ buffer: Buffer.from("img"), filename: "invoice.jpg", mimetype: "image/jpeg" });
+  assert.equal(invalidOut.invoice.confidence, 0);
 });
 
 test("QwenVisionExtractionClient PDF path surfaces a clear 'poppler not installed' error when the binary is missing", async () => {

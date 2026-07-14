@@ -9,7 +9,7 @@
 //   • A PDF is rasterized to page PNG(s) with poppler's `pdftoppm` (installed in the
 //     Docker image via apt). An image passes through unchanged.
 //   • The page image(s) are sent to a Qwen vision model (qwen-vl-max by default,
-//     VISION_MODEL to override) with a strict, injection-hardened structured-
+//     VISION_MODEL to override) with strict untrusted-data labeling and structured-
 //     extraction prompt → a raw invoice object with canonical keys.
 //   • That raw object is handed to the EXISTING normalizeInvoice + AutopilotLoop —
 //     nothing about the decision path changes; only the input source is new.
@@ -43,8 +43,10 @@ function pdftoppmBin(): string {
 
 // Upload guardrails. 10 MB is generous for a single invoice while bounding memory
 // and the vision spend; only the first few PDF pages are ever rasterized.
-export const MAX_DOCUMENT_BYTES = Number(process.env.MAX_DOCUMENT_BYTES || 10 * 1024 * 1024);
-const MAX_PDF_PAGES = Number(process.env.MAX_PDF_PAGES || 3);
+export const MAX_DOCUMENT_BYTES = boundedEnvInt("MAX_DOCUMENT_BYTES", 10 * 1024 * 1024, 1024, 25 * 1024 * 1024);
+const MAX_PDF_PAGES = boundedEnvInt("MAX_PDF_PAGES", 3, 1, 10);
+const VISION_TIMEOUT_MS = boundedEnvInt("VISION_TIMEOUT_MS", 45_000, 1_000, 120_000);
+const POPPLER_TIMEOUT_MS = boundedEnvInt("POPPLER_TIMEOUT_MS", 20_000, 1_000, 60_000);
 
 // The accepted document types, keyed by extension → mime, so validation can check
 // BOTH the filename and the declared content-type (defence in depth).
@@ -168,8 +170,9 @@ export function validateMagicBytes(buffer: Buffer, ext: string): ValidationOk | 
 }
 
 // ── The structured-extraction prompt ──────────────────────────────────────────
-// Injection-hardened: any imperative text inside the document is DATA, never an
-// instruction. Canonical keys match the normalizer's primary aliases so the raw
+// Input isolation: imperative text inside the document is labeled as untrusted DATA,
+// not promoted into the surrounding instruction block. Canonical keys match the
+// normalizer's primary aliases so the raw
 // object drops straight into normalizeInvoice().
 
 const SYSTEM_PROMPT =
@@ -232,15 +235,19 @@ export class QwenVisionExtractionClient implements ExtractionClient {
 
     // The vision surface is the SAME OpenAI-compatible chat-completions API; the
     // multi-part user content (image_url + text) is what qwen-vl-max expects.
-    const res = await this.client.chat.completions.create({
-      model: this.modelId,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content },
-      ],
-      max_tokens: 2048,
-      temperature: 0.1,
-    });
+    const res = await withTimeout(
+      this.client.chat.completions.create({
+        model: this.modelId,
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          { role: "user", content },
+        ],
+        max_tokens: 2048,
+        temperature: 0.1,
+      }),
+      VISION_TIMEOUT_MS,
+      "Qwen vision extraction"
+    );
 
     const raw = res.choices?.[0]?.message?.content ?? "{}";
     const data = safeParseJson(cleanJson(raw));
@@ -326,18 +333,31 @@ async function renderPdfToImages(pdf: Buffer): Promise<Array<{ b64: string; mime
 function runPdftoppm(args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
     let stderr = "";
-    let proc: ReturnType<typeof spawn>;
+    let proc: ReturnType<typeof spawn> | undefined;
+    let settled = false;
+    let timer: NodeJS.Timeout;
+    const finish = (err?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      err ? reject(err) : resolve();
+    };
+    timer = setTimeout(() => {
+      proc?.kill("SIGKILL");
+      finish(new Error(`pdftoppm timed out after ${POPPLER_TIMEOUT_MS}ms`));
+    }, POPPLER_TIMEOUT_MS);
     try {
       proc = spawn(pdftoppmBin(), args, { stdio: ["ignore", "ignore", "pipe"] });
     } catch (err) {
-      return reject(wrapPopplerError(err));
+      finish(wrapPopplerError(err));
+      return;
     }
-    proc.on("error", (err) => reject(wrapPopplerError(err)));
+    proc.on("error", (err) => finish(wrapPopplerError(err)));
     proc.stderr?.on("data", (d) => (stderr += String(d)));
     proc.on("close", (code) =>
       code === 0
-        ? resolve()
-        : reject(new Error(`pdftoppm exited with code ${code}${stderr ? `: ${stderr.trim()}` : ""}`))
+        ? finish()
+        : finish(new Error(`pdftoppm exited with code ${code}${stderr ? `: ${stderr.trim()}` : ""}`))
     );
   });
 }
@@ -413,8 +433,38 @@ function toRawInvoice(data: Record<string, unknown>): RawInvoice {
   num("subtotal");
   num("tax");
   num("total");
+  // Confidence is a required trust signal on the Qwen-VL seam. Missing, invalid,
+  // or out-of-range confidence is not neutral: it means the extraction quality is
+  // unknown, so emit 0 and let the source-confidence guard require human review.
+  const confidence =
+    typeof data["confidence"] === "number"
+      ? data["confidence"]
+      : typeof data["confidence"] === "string" && data["confidence"].trim() !== ""
+        ? Number(data["confidence"])
+        : Number.NaN;
+  out["confidence"] = Number.isFinite(confidence) && confidence >= 0 && confidence <= 1 ? confidence : 0;
   if (Array.isArray(data["line_items"])) out["line_items"] = data["line_items"];
   return out;
+}
+
+function boundedEnvInt(name: string, fallback: number, min: number, max: number): number {
+  const parsed = Number(process.env[name]);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, Math.trunc(parsed)));
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 // Minimal shape of the OpenAI-compatible vision chat call we use — the real
