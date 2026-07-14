@@ -1,71 +1,92 @@
-# Deploy note — Archon Autopilot → Alibaba Cloud
+# Deploy note — Archon Autopilot on Alibaba Cloud
 
-> **Status: LIVE.** Archon Autopilot is deployed on Alibaba Cloud **ECS** and served
-> over HTTPS at **https://autopilot.43.106.13.19.sslip.io** (approval UI, `/health`,
-> `/docs`). It reuses the Track-1 MemoryAgent box's pgvector in its own isolated
-> `autopilot` database and talks to real Qwen (`qwen-plus` + `text-embedding-v4`) on
-> Alibaba Cloud Model Studio. This note captures the target shape + runbook; the
-> one-command deploy/redeploy is [`redeploy.sh`](redeploy.sh), and the live
-> checkpoint is [`DEPLOY_STATE.md`](DEPLOY_STATE.md).
+> **Current production:** Alibaba ECS, real Qwen Model Studio, shared MemoryAgent
+> pgvector service, dual data/edge Docker networks, and a localhost-only backend behind
+> HTTPS at https://autopilot.43.106.13.19.sslip.io.
 
-## Target shape
+The one-command production release is [`redeploy.sh`](redeploy.sh). Exact resource,
+recovery, and verification details are in [`DEPLOY_STATE.md`](DEPLOY_STATE.md).
 
-Same topology as the Track-1 Archon MemoryAgent:
+## Current deployment shape
 
-- **Compute:** an Alibaba Cloud **ECS** instance running `docker compose up -d`
-  (backend + pgvector), OR **Function Compute** custom-container (the backend
-  image listens on CAPort 9000). The backend is a single Node/TS Fastify service.
-- **Memory + queue store:** the `pgvector/pgvector:pg16` container for a self-
-  contained box, or managed **ApsaraDB RDS for PostgreSQL** / **AnalyticDB for
-  PostgreSQL** (pgvector extension) — same pg-wire, same SQL, so the app code is
-  unchanged. Two tables: `agent_memory` (vector recall) + `ap_workitems` (the
-  approval queue).
-- **Model:** **Qwen** on Alibaba Cloud Model Studio (DashScope) via the OpenAI-
-  compatible endpoint — `qwen-plus` for the function-calling decision,
-  `text-embedding-v4` for memory. Set `DASHSCOPE_API_KEY` in a `.env` next to
-  `docker-compose.yml`; without it the app runs the deterministic offline Fakes.
+```text
+Internet
+   │ HTTPS :443
+   ▼
+ECS reverse proxy
+   │ http://127.0.0.1:9100
+   ▼
+archon-autopilot (container :9000, read-only root)
+   ├── MemoryAgent edge network ──► DashScope / Qwen
+   ├── MemoryAgent data network ──► shared pgvector service
+   │                                  └── separate database: autopilot
+   └── host bind mount ───────────► /var/lib/archon-autopilot/ledger
+```
 
-## Runbook (ECS + docker compose)
+- The shared PostgreSQL container avoids a duplicate database service; the separate
+  `autopilot` database isolates memory, work items, and durable quota tables.
+- Runtime needs both networks: `data` for `db:5432`, `edge` for Qwen egress.
+- Host port 9100 is bound to `127.0.0.1` only. Do **not** add a public 9100
+  security-group rule; the HTTPS reverse proxy is the sole public path.
+- The durable JSONL ledger directory survives container replacement and is mounted
+  into an otherwise read-only container.
+- Production fails closed without real Qwen, PostgreSQL, and a 32+ character reviewer
+  token. Reviewer decisions are Bearer-authenticated HTTP/UI operations only.
+- MCP is a local stdio proposal/read surface with four tools and no decision or
+  execution capability.
+
+## Production runbook
+
+Prerequisites already present on the ECS host:
+
+- `/root/memoryagent` running its `db`, data network, and edge network;
+- `/root/memoryagent/.env` containing the rotated PostgreSQL credentials;
+- `/root/autopilot/.env` containing the real DashScope key and reviewer token;
+- TLS reverse proxy routing the Autopilot hostname to `127.0.0.1:9100`.
+
+Release:
 
 ```bash
-# On the box (Node not required — docker only):
-git clone https://github.com/upgradedev/archon-qwen-autopilot && cd archon-qwen-autopilot
+cd /root/autopilot
+git pull --ff-only
+bash deploy/redeploy.sh
+```
 
-# Real Qwen: drop a .env with DASHSCOPE_API_KEY next to docker-compose.yml.
-# (Omit it to run the offline Fakes.)
-printf 'DASHSCOPE_API_KEY=sk-...\n' > .env
+The script creates/migrates the isolated database, builds and replaces the container,
+attaches both networks, mounts the durable ledger, runs `/health` + `/ready`, and
+performs an authenticated intake→pending smoke with cleanup.
 
-# Apply the schema first (creates agent_memory + ap_workitems), then serve.
-docker compose run --rm backend npm run db:schema
+Post-release external checks:
+
+```bash
+curl -fsS https://autopilot.43.106.13.19.sslip.io/health
+curl -fsS https://autopilot.43.106.13.19.sslip.io/ready
+```
+
+## Local development — not production
+
+For a self-contained local clone, `docker-compose.yml` starts its own loopback-only
+pgvector, migration job, and backend:
+
+```bash
 docker compose up -d --build
-
-# Smoke:
-curl -s localhost:9000/health
-curl -s -X POST localhost:9000/intake \
-  -H 'content-type: application/json' \
-  -d '{"invoice":{"vendor":"Globex","invoice_number":"GX-1","tax_id":"T","subtotal":500,"tax":100,"total":600}}'
-curl -s localhost:9000/pending
+curl -fsS http://127.0.0.1:9000/health
+curl -fsS http://127.0.0.1:9000/ready
 ```
 
-## Function Compute (alternative)
+Local compose may opt into deterministic providers. Do not use its default local
+credentials or topology as a production runbook.
 
-```bash
-docker build --platform linux/amd64 -t <registry>/archon-qwen-autopilot:latest .
-docker push <registry>/archon-qwen-autopilot:latest
-# Create an FC custom-container function, port 9000, env DATABASE_URL +
-# DASHSCOPE_API_KEY, pointed at ApsaraDB RDS for PostgreSQL (pgvector).
-```
+## Alternatives — not the current deployment
 
-## Done (live)
+The container can target Function Compute plus managed ApsaraDB/RDS in a future
+topology because it speaks standard HTTP and PostgreSQL/pgvector. Those are documented
+design options only. The hackathon deployment currently runs on ECS as described
+above.
 
-- ECS provisioned + Model Studio (`DASHSCOPE_API_KEY`) wired — live at
-  **https://autopilot.43.106.13.19.sslip.io**.
-- TLS in front of the backend (HTTPS via a reverse proxy + `sslip.io` hostname).
-- The web approval UI over `/pending` + `/approve` + `/amend` + `/reject` (served by
-  the backend itself at `/` and `/ui`).
+## Historical correction
 
-## Deferred (alternatives, not blockers)
-
-- Managed **ApsaraDB RDS for PostgreSQL** as an alternative to the on-box pgvector.
-- **Function Compute** custom-container as an alternative to the ECS topology.
-- A custom (non-`sslip.io`) domain.
+Previous notes mentioned a single MemoryAgent network, direct public port 9100, and a
+security-group opening. Those instructions are superseded. Production now uses both
+the isolated data network and egress edge network, binds 9100 to localhost, and exposes
+the service only through HTTPS.

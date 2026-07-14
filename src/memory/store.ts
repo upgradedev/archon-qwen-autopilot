@@ -18,23 +18,7 @@
 
 import { randomUUID } from "node:crypto";
 import { query, toVectorLiteral } from "../db/client.js";
-import { Pool } from "pg";
-
-let memoryAgentPool: Pool | null = null;
-
-function getMemoryAgentPool(): Pool | null {
-  const url = process.env.DATABASE_URL;
-  if (!url) return null;
-  if (memoryAgentPool) return memoryAgentPool;
-
-  const postgresUrl = url.replace(/\/([^\/]+)$/, "/postgres");
-  memoryAgentPool = new Pool({
-    connectionString: postgresUrl,
-    max: 2,
-    application_name: "archon-qwen-autopilot-sync",
-  });
-  return memoryAgentPool;
-}
+import { canonicalVendorKey } from "../ap/normalize.js";
 
 // The kinds of durable fact the autopilot remembers. `vendor` = a learned vendor
 // profile, `invoice` = a processed invoice (for duplicate detection), `action` =
@@ -81,13 +65,25 @@ export interface MemoryStore {
   remember(m: StoredMemory): Promise<string>;
   recall(queryVec: number[], opts?: RecallOptions): Promise<RecallHit[]>;
   count(vendor?: string): Promise<number>;
+  // Deterministic invoice history used by R5/R6. This is deliberately separate
+  // from semantic top-k recall: a duplicate must not disappear because it ranked
+  // ninth, and case/Unicode/whitespace variants share the same vendor key. Only
+  // approved/executed invoice facts qualify; pending/rejected uploads never become
+  // amount baselines or durable duplicate evidence.
+  invoiceHistory(vendor: string, limit?: number): Promise<MemoryRecord[]>;
   clear(): Promise<void>;
 }
 
 // ── pgvector-backed store (production + CI + Alibaba Cloud) ────────────────────
 export class PgVectorStore implements MemoryStore {
+  constructor(private readonly runQuery: typeof query = query) {}
+
   async remember(m: StoredMemory): Promise<string> {
-    const rows = await query<{ id: string }>(
+    const metadata = {
+      ...(m.metadata ?? {}),
+      vendor_key: canonicalVendorKey(m.vendor ?? "_global"),
+    };
+    const rows = await this.runQuery<{ id: string }>(
       `INSERT INTO agent_memory
          (kind, vendor, source_ref, content, metadata, embedding, embed_model, importance)
        VALUES ($1, $2, $3, $4, $5, $6::vector, $7, $8)
@@ -97,41 +93,13 @@ export class PgVectorStore implements MemoryStore {
         m.vendor ?? "_global",
         m.sourceRef ?? null,
         m.content,
-        m.metadata ? JSON.stringify(m.metadata) : null,
+        JSON.stringify(metadata),
         toVectorLiteral(m.embedding),
         m.embedModel,
         clampImportance(m.importance),
       ]
     );
-    const localId = rows[0]!.id;
-
-    // Double-write to MemoryAgent DB (postgres) so it shows up in the memory app!
-    try {
-      const maPool = getMemoryAgentPool();
-      if (maPool) {
-        const company = m.vendor ?? "_global";
-        await maPool.query(
-          `INSERT INTO agent_memory
-             (kind, company, source_ref, content, metadata, embedding, embed_model, importance)
-           VALUES ($1, $2, $3, $4, $5, $6::vector, $7, $8)
-           ON CONFLICT DO NOTHING`,
-          [
-            m.kind,
-            company,
-            m.sourceRef ?? null,
-            m.content,
-            m.metadata ? JSON.stringify(m.metadata) : null,
-            toVectorLiteral(m.embedding),
-            m.embedModel,
-            clampImportance(m.importance),
-          ]
-        );
-      }
-    } catch (err) {
-      console.warn("Could not sync memory to MemoryAgent DB:", err);
-    }
-
-    return localId;
+    return rows[0]!.id;
   }
 
   async recall(queryVec: number[], opts: RecallOptions = {}): Promise<RecallHit[]> {
@@ -143,12 +111,14 @@ export class PgVectorStore implements MemoryStore {
       filters.push(`kind = $${params.length}`);
     }
     if (opts.vendor) {
-      params.push(opts.vendor);
-      filters.push(`vendor = $${params.length}`);
+      params.push(canonicalVendorKey(opts.vendor));
+      filters.push(
+        `COALESCE(metadata->>'vendor_key', lower(regexp_replace(trim(vendor), '\\s+', ' ', 'g'))) = $${params.length}`
+      );
     }
     const where = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
     params.push(limit);
-    const rows = await query<PgRow>(
+    const rows = await this.runQuery<PgRow>(
       `SELECT id, kind, vendor, source_ref, content, metadata, created_at,
               (embedding <=> $1::vector) AS distance
          FROM agent_memory
@@ -162,16 +132,44 @@ export class PgVectorStore implements MemoryStore {
 
   async count(vendor?: string): Promise<number> {
     const rows = vendor
-      ? await query<{ n: string }>(
-          `SELECT count(*) AS n FROM agent_memory WHERE vendor = $1`,
-          [vendor]
+      ? await this.runQuery<{ n: string }>(
+          `SELECT count(*) AS n FROM agent_memory
+            WHERE lower(regexp_replace(trim(vendor), '\\s+', ' ', 'g')) = $1`,
+          [canonicalVendorKey(vendor)]
         )
-      : await query<{ n: string }>(`SELECT count(*) AS n FROM agent_memory`);
+      : await this.runQuery<{ n: string }>(`SELECT count(*) AS n FROM agent_memory`);
     return Number(rows[0]!.n);
   }
 
+  async invoiceHistory(vendor: string, limit = 1000): Promise<MemoryRecord[]> {
+    const vendorKey = canonicalVendorKey(vendor);
+    const bounded = Math.max(1, Math.min(limit, 5000));
+    const rows = await this.runQuery<Omit<PgRow, "distance">>(
+      `SELECT id, kind, vendor, source_ref, content, metadata, created_at, embed_model
+         FROM agent_memory
+        WHERE kind = 'invoice'
+          AND metadata->>'processing_status' IN ('approved', 'executed')
+          AND COALESCE(
+                metadata->>'vendor_key',
+                lower(regexp_replace(trim(COALESCE(metadata->>'vendor', vendor)), '\\s+', ' ', 'g'))
+              ) = $1
+        ORDER BY created_at DESC
+        LIMIT $2`,
+      [vendorKey, bounded]
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      kind: r.kind,
+      vendor: r.vendor,
+      sourceRef: r.source_ref,
+      content: r.content,
+      metadata: r.metadata,
+      createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
+    }));
+  }
+
   async clear(): Promise<void> {
-    await query(`DELETE FROM agent_memory`);
+    await this.runQuery(`DELETE FROM agent_memory`);
   }
 }
 
@@ -184,6 +182,7 @@ interface PgRow {
   metadata: Record<string, unknown> | null;
   created_at: string | Date;
   distance: string | number;
+  embed_model?: string;
 }
 
 function rowToHit(r: PgRow): RecallHit {
@@ -237,7 +236,9 @@ export class InMemoryStore implements MemoryStore {
     const limit = Math.max(1, Math.min(opts.limit ?? 5, 50));
     return this.rows
       .filter((r) => (opts.kind ? r.kind === opts.kind : true))
-      .filter((r) => (opts.vendor ? r.vendor === opts.vendor : true))
+      .filter((r) =>
+        opts.vendor ? canonicalVendorKey(r.vendor) === canonicalVendorKey(opts.vendor) : true
+      )
       .map((r) => {
         const distance = 1 - cosineSimilarity(queryVec, r.embedding);
         const { embedding, importance, ...rec } = r;
@@ -248,7 +249,35 @@ export class InMemoryStore implements MemoryStore {
   }
 
   async count(vendor?: string): Promise<number> {
-    return this.rows.filter((r) => (vendor ? r.vendor === vendor : true)).length;
+    return this.rows.filter((r) =>
+      vendor ? canonicalVendorKey(r.vendor) === canonicalVendorKey(vendor) : true
+    ).length;
+  }
+
+  async invoiceHistory(vendor: string, limit = 1000): Promise<MemoryRecord[]> {
+    const key = canonicalVendorKey(vendor);
+    const bounded = Math.max(1, Math.min(limit, 5000));
+    return this.rows
+      .filter((r) => r.kind === "invoice")
+      .filter(
+        (r) =>
+          r.metadata?.["processing_status"] === "approved" ||
+          r.metadata?.["processing_status"] === "executed"
+      )
+      .filter((r) => {
+        const fromMetadata =
+          r.metadata && typeof r.metadata["vendor_key"] === "string"
+            ? (r.metadata["vendor_key"] as string)
+            : canonicalVendorKey(
+                r.metadata && typeof r.metadata["vendor"] === "string"
+                  ? (r.metadata["vendor"] as string)
+                  : r.vendor
+              );
+        return fromMetadata === key;
+      })
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, bounded)
+      .map(({ embedding: _embedding, importance: _importance, ...record }) => structuredClone(record));
   }
 
   async clear(): Promise<void> {

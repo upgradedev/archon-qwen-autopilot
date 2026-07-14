@@ -158,9 +158,55 @@ export class AutopilotLoop {
 
       // TERMINAL action → stop the loop and hand back the proposal (nothing executes).
       if (call && isTerminalTool(name) && toolByName(name)) {
+        const missingEvidence = requiredEvidence(state);
+        if (missingEvidence.length > 0) {
+          const reasoning = typeof parsed["reasoning"] === "string" ? String(parsed["reasoning"]) : "";
+          const traceStep: TraceStep = {
+            step,
+            tool: name,
+            args: stripMeta(parsed),
+            observation:
+              `Terminal proposal withheld: required evidence has not run (${missingEvidence.join(", ")}). ` +
+              `Gather that evidence before proposing an action.`,
+            reasoning,
+          };
+          trace.push(traceStep);
+          input.onStep?.(traceStep);
+          noProgress++;
+          if (noProgress >= MAX_NO_PROGRESS) {
+            return this.fallback(
+              state,
+              trace,
+              "no_progress_fallback",
+              `the model repeatedly proposed a terminal action before required evidence (${missingEvidence.join(", ")})`
+            );
+          }
+          continue;
+        }
+
         const { reasoning, confidence, args } = splitMeta(parsed);
+        const completeArgs = completeDomainArgs(name as ToolName, args, input.invoice);
+        const override = proposalSafetyOverride(name as ToolName, state);
+        if (override) {
+          const guardStep: TraceStep = {
+            step,
+            tool: "proposal_policy_guard",
+            args: { proposedTool: name, replacementTool: override.tool },
+            observation: override.observation,
+            reasoning: "Deterministic AP policy prevents a money action that conflicts with validated evidence.",
+          };
+          trace.push(guardStep);
+          input.onStep?.(guardStep);
+          return {
+            proposed: override.proposed,
+            trace,
+            findings: state.findings,
+            recalled: state.recalled,
+            stopReason: "terminal_action",
+          };
+        }
         return {
-          proposed: { tool: name as ToolName, args, reasoning, confidence, modelId: this.modelId },
+          proposed: { tool: name as ToolName, args: completeArgs, reasoning, confidence, modelId: this.modelId },
           trace,
           findings: state.findings,
           recalled: state.recalled,
@@ -388,6 +434,93 @@ function stripMeta(parsed: Record<string, unknown>): Record<string, unknown> {
     args[k] = v;
   }
   return args;
+}
+
+function requiredEvidence(state: LoopState): string[] {
+  const missing: string[] = [];
+  if (!state.didRecall) missing.push("recall_vendor_history");
+  if (!state.didValidate) missing.push("validate_invoice");
+  const duplicateCandidate = state.refMatch || state.amountDateMatch;
+  if (state.didRecall && duplicateCandidate && !state.didCheckDuplicate) missing.push("check_duplicate");
+  const anomalyCandidate = state.amountRatio != null && state.amountRatio > 3;
+  if (state.didRecall && anomalyCandidate && !state.didComputeVariance) {
+    missing.push("compute_variance_vs_history");
+  }
+  return missing;
+}
+
+function proposalSafetyOverride(
+  tool: ToolName,
+  state: LoopState
+): { tool: ToolName; proposed: ProposedAction; observation: string } | null {
+  if (tool !== "draft_payment" && tool !== "draft_journal_entry") return null;
+
+  if (state.duplicate || state.anomaly) {
+    const causes = [state.duplicate ? "confirmed duplicate" : null, state.anomaly ? "confirmed amount anomaly" : null]
+      .filter(Boolean)
+      .join(" and ");
+    const observation =
+      `Blocked ${tool}: the gathered evidence contains a ${causes}. ` +
+      `The proposal was deterministically replaced with human review.`;
+    return {
+      tool: "flag_for_review",
+      observation,
+      proposed: {
+        tool: "flag_for_review",
+        args: { reason: observation, priority: "high" },
+        reasoning: "Validated duplicate/anomaly evidence cannot produce a money action.",
+        confidence: 0,
+        modelId: "policy:proposal-safety-guard",
+      },
+    };
+  }
+
+  if (state.missingFields || state.reconcileIssue || state.noTotal) {
+    const causes = [
+      state.noTotal ? "no payable total" : null,
+      state.missingFields ? "missing or ambiguous required fields" : null,
+      state.reconcileIssue ? "figures that do not fully reconcile" : null,
+    ]
+      .filter(Boolean)
+      .join(", ");
+    const observation =
+      `Blocked ${tool}: structural validation found ${causes}. ` +
+      `The proposal was deterministically replaced with a clarification draft.`;
+    return {
+      tool: "draft_vendor_reply",
+      observation,
+      proposed: {
+        tool: "draft_vendor_reply",
+        args: {
+          subject: "Clarification needed before we can process your invoice",
+          body: "Required invoice details are missing, ambiguous, or do not reconcile. Please send a corrected invoice before payment or posting.",
+        },
+        reasoning: "Structural validation blocks a money action until the source is corrected.",
+        confidence: 0,
+        modelId: "policy:proposal-safety-guard",
+      },
+    };
+  }
+  return null;
+}
+
+// Fill only deterministic invoice-derived fields before the proposal is shown.
+// This keeps the HITL promise literal: every fallback value is visible in the
+// persisted args a reviewer approves, rather than being invented inside a sink.
+function completeDomainArgs(
+  tool: ToolName,
+  args: Record<string, unknown>,
+  invoice: NormalizedInvoice
+): Record<string, unknown> {
+  const out = { ...args };
+  if ((tool === "draft_journal_entry" || tool === "draft_payment") && out["amount"] === undefined && invoice.total != null) {
+    out["amount"] = invoice.total;
+  }
+  if (tool === "draft_payment") {
+    if (out["vendor"] === undefined && invoice.vendor) out["vendor"] = invoice.vendor;
+    if (out["currency"] === undefined) out["currency"] = invoice.currency;
+  }
+  return out;
 }
 
 function safeParseArgs(raw: string): Record<string, unknown> {

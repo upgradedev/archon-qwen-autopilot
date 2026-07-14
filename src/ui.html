@@ -41,6 +41,16 @@
     header h1 { font-size: 18px; margin: 0; font-weight: 600; letter-spacing: .2px; }
     header .sub { color: var(--muted); font-size: 13px; }
     header .spacer { flex: 1; }
+    .token-input {
+      width: 190px;
+      padding: 7px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--panel-2);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 12px;
+    }
     .pill {
       font-family: var(--mono);
       font-size: 12px;
@@ -392,6 +402,7 @@
     <span class="sub">Human-gated accounts-payable agent on Qwen — it proposes, you approve.</span>
     <span class="spacer"></span>
     <span class="pill" id="model">decider …</span>
+    <input class="token-input" id="reviewerToken" type="password" autocomplete="off" placeholder="Judge reviewer token" aria-label="Reviewer token" title="Required to read or act on the approval queue; stored only in this browser tab" />
     <button class="primary" id="loadSample" title="Queue a realistic sample vendor invoice">Load sample invoice</button>
     <button class="ghost" id="tourBtn" title="Replay the guided tour">Take the tour</button>
     <button class="ghost" id="refresh" title="Reload the queue">Refresh</button>
@@ -404,7 +415,7 @@
          the agent reason step-by-step as it streams (SSE). -->
     <section class="upload" id="uploadPanel" data-tour="upload">
       <div class="section-label">Upload an invoice — watch the agent work in real time</div>
-      <div class="hint">Upload a real <code>PDF</code>, <code>PNG</code>, or <code>JPG</code> invoice — it is read by <b>Qwen-VL</b> vision extraction — or paste invoice JSON below. The agent then streams each reasoning step live and proposes one action for your approval. <b>Uploads are limited to 20/day</b> (open demo — the cap protects the Qwen API budget).</div>
+      <div class="hint">Upload a real <code>PDF</code>, <code>PNG</code>, or <code>JPG</code> invoice — it is read by <b>Qwen-VL</b> vision extraction — or paste invoice JSON below. The agent then streams each reasoning step live and proposes one action for your approval. <b>Uploads are rate-limited per visitor and globally</b> (the durable cap protects the Qwen API budget).</div>
       <div class="dropzone">
         <div class="row">
           <label class="filebtn" for="fileInput">Choose file</label>
@@ -542,9 +553,15 @@
     }
 
     async function api(method, path, body) {
+      const reviewerPath = /^\/(pending|decided)(?:\/|$)/.test(path) || /^\/(approve|amend|reject|recover)\//.test(path);
+      const headers = body ? { 'content-type': 'application/json' } : {};
+      if (reviewerPath) {
+        const token = ($('#reviewerToken') && $('#reviewerToken').value) || sessionStorage.getItem('archonReviewerToken') || '';
+        if (token) headers.authorization = 'Bearer ' + token;
+      }
       const res = await fetch(path, {
         method,
-        headers: body ? { 'content-type': 'application/json' } : undefined,
+        headers,
         body: body ? JSON.stringify(body) : undefined,
       });
       const text = await res.text();
@@ -626,6 +643,8 @@
     function card(item) {
       const inv = item.invoice || {};
       const p = item.proposed || {};
+      const originalTool = p.tool || 'flag_for_review';
+      let selectedTool = originalTool;
       const c = el('div', { class: 'card' });
 
       const head = el('div', { class: 'card-head' }, [
@@ -634,7 +653,10 @@
         el('span', { class: 'ref', text: (inv.vendor_ref || inv.invoice_id || '') }),
       ]);
 
-      const conf = typeof p.confidence === 'number' ? ' · confidence ' + Math.round(p.confidence * 100) + '%' : '';
+      const conf = typeof p.confidence === 'number' ? ' · decision confidence ' + Math.round(p.confidence * 100) + '%' : '';
+      const extractionConf = typeof inv.extraction_confidence === 'number'
+        ? Math.round(inv.extraction_confidence * 100) + '%'
+        : null;
       // A model-self-reported confidence below the review threshold gets a visible
       // "review carefully" nudge. This is the model's own number (clamped 0..1), not a
       // calibrated probability — a prompt to look closer, nothing more.
@@ -648,6 +670,11 @@
         el('span', { class: 'conf', text: (p.modelId ? p.modelId : '') + conf }),
         (item.stopReason ? el('span', { class: 'stopreason', text: 'stop: ' + item.stopReason }) : document.createTextNode('')),
         (lowConf ? el('span', { class: 'lowconf', title: 'The model reported low confidence in this proposal — check the arguments and reasoning before approving.', text: 'low confidence — review carefully' }) : document.createTextNode('')),
+        (extractionConf ? el('span', {
+          class: item.lowExtractionConfidence ? 'lowconf' : 'conf',
+          title: 'Qwen-VL source extraction confidence is separate from the decision model confidence.',
+          text: 'Qwen-VL extraction confidence ' + extractionConf + (item.lowExtractionConfidence ? ' — source review required' : '')
+        }) : document.createTextNode('')),
         el('div', { class: 'reasoning', text: p.reasoning || '' }),
       ]);
 
@@ -670,17 +697,15 @@
       }
       if ((item.findings || []).length) {
         const onOverride = () => {
-          item.proposed.tool = 'draft_payment';
+          selectedTool = 'draft_payment';
           toolSpan.textContent = 'draft_payment';
-          const currentArgs = JSON.parse(ta.value || '{}');
           const newArgs = {
             vendor: inv.vendor,
             amount: inv.total,
-            vendor_ref: inv.vendor_ref,
-            ...currentArgs
+            currency: inv.currency
           };
           ta.value = JSON.stringify(newArgs, null, 2);
-          toast('Proposed action changed to draft_payment. Review and click "Approve" or "Amend & approve" to execute.', 'ok');
+          toast('Reviewer override prepared. Review the exact payment args, then approve to record the audited tool change.', 'ok');
         };
         body.appendChild(el('div', {}, [ el('div', { class: 'section-label', text: 'Validation findings' }), renderFindings(item.findings, onOverride) ]));
       }
@@ -702,7 +727,18 @@
       approveBtn.onclick = async () => {
         setBusy(true);
         try {
-          const r = await api('POST', '/approve/' + item.id);
+          let r;
+          if (selectedTool !== originalTool) {
+            const args = JSON.parse(ta.value || '{}');
+            r = await api('POST', '/amend/' + item.id, {
+              tool: selectedTool,
+              args,
+              confirmToolOverride: true,
+              reason: 'Duplicate warning explicitly overridden by the reviewer in the approval UI'
+            });
+          } else {
+            r = await api('POST', '/approve/' + item.id);
+          }
           toast('Approved · ' + ((r.execution && r.execution.summary) || p.tool), 'ok');
           await refreshAll();
         } catch (e) { toast(e.message, 'err'); setBusy(false); }
@@ -714,7 +750,14 @@
         catch (_) { toast('Arguments are not valid JSON — fix them first.', 'err'); return; }
         setBusy(true);
         try {
-          const r = await api('POST', '/amend/' + item.id, { args, reason: 'Amended in the approval UI' });
+          const r = await api('POST', '/amend/' + item.id, {
+            tool: selectedTool,
+            args,
+            confirmToolOverride: selectedTool !== originalTool,
+            reason: selectedTool !== originalTool
+              ? 'Tool and arguments explicitly overridden by the reviewer in the approval UI'
+              : 'Arguments amended in the approval UI'
+          });
           toast('Amended & approved · ' + ((r.execution && r.execution.summary) || p.tool), 'ok');
           await refreshAll();
         } catch (e) { toast(e.message, 'err'); setBusy(false); }
@@ -728,6 +771,38 @@
           await refreshAll();
         } catch (e) { toast(e.message, 'err'); setBusy(false); }
       };
+
+      if (item.status === 'executing') {
+        ta.disabled = true;
+        actions.textContent = '';
+        const warning = el('div', { class: 'gate-note' }, [
+          el('b', { text: 'Execution outcome needs reconciliation.' }),
+          document.createTextNode(' The service did not auto-retry, preventing a duplicate side effect.'),
+        ]);
+        const retryBtn = el('button', { class: 'amend', text: 'Retry after verification' });
+        const completeBtn = el('button', { class: 'approve', text: 'Mark externally completed' });
+        retryBtn.onclick = async () => {
+          const reason = window.prompt('Evidence that NO external side effect completed (required):');
+          if (!reason) return;
+          try {
+            await api('POST', '/recover/' + item.id, { action: 'retry', reason });
+            toast('Execution reset to pending after audited verification.', 'ok');
+            await refreshAll();
+          } catch (e) { toast(e.message, 'err'); }
+        };
+        completeBtn.onclick = async () => {
+          const reason = window.prompt('Evidence that the external side effect DID complete (required):');
+          if (!reason || !window.confirm('Mark this item completed without calling the sink again?')) return;
+          try {
+            await api('POST', '/recover/' + item.id, { action: 'mark_completed', reason });
+            toast('Execution reconciled without a duplicate sink call.', 'ok');
+            await refreshAll();
+          } catch (e) { toast(e.message, 'err'); }
+        };
+        actions.appendChild(warning);
+        actions.appendChild(retryBtn);
+        actions.appendChild(completeBtn);
+      }
 
       c.appendChild(head);
       c.appendChild(body);
@@ -1059,13 +1134,13 @@
         el('span', { class: 'review-model', text: (data && data.model ? data.model : 'qwen-vl') + (data && data.pages ? ' · ' + data.pages + (data.pages === 1 ? ' page' : ' pages') : '') }),
       ]));
       // Advisory input-safety banners (injection detection + relevance). Both are
-      // ADVISORY: the injection was already neutralized (shown as data, never
-      // followed) and the human still decides — they only make the finding VISIBLE.
+      // ADVISORY: document text is labeled as untrusted, and the separate human gate
+      // blocks autonomous execution. These banners only make findings VISIBLE.
       const sec = (data && data.security) || {};
       if (sec.injectionDetected) {
         host.appendChild(el('div', { class: 'sec-banner sec-danger' }, [
           el('span', { class: 'sec-icon', text: '⚠️' }),
-          el('span', { text: 'This document contained ' + (sec.injectionCount || 0) + ' suspected injected instruction(s) — shown to the agent as data, never followed. The human approval gate is unchanged.' }),
+          el('span', { text: 'This document contained ' + (sec.injectionCount || 0) + ' suspected injected instruction(s) — labeled as untrusted data. Autonomous execution remains blocked by the human approval gate.' }),
         ]));
       }
       const rel = (data && data.relevance) || {};
@@ -1085,6 +1160,7 @@
         reviewField('Tax', inv.tax),
         reviewField('Total', inv.total),
         reviewField('Line items', items),
+        reviewField('Qwen-VL extraction confidence', typeof inv.confidence === 'number' ? Math.round(inv.confidence * 100) + '%' : inv.confidence),
       ]));
       host.appendChild(el('div', { class: 'hint', text: 'Fields are editable in the JSON box below — correct anything the extractor got wrong, then Process.' }));
     }
@@ -1163,13 +1239,13 @@
             ]));
             setHead('Document extracted — the agent is reasoning…');
           } else if (event === 'security') {
-            // Advisory: a neutralized prompt-injection was surfaced. Show it inline in
-            // the live trace — it does NOT change the decision the human approves.
+            // Advisory: a recognized prompt-injection was surfaced. Show it inline;
+            // it does NOT change the decision or the authenticated execution gate.
             stepsWrap.appendChild(el('div', { class: 'proc-step reveal' }, [
               el('span', { class: 'num', text: '⚠️' }),
               el('div', {}, [
-                el('div', { class: 'tool', text: 'prompt-injection neutralized' }),
-                el('div', { class: 'obs', text: '→ ' + ((data && data.message) || 'suspected injected instructions were shown as data, never followed') }),
+                el('div', { class: 'tool', text: 'suspected prompt injection detected' }),
+                el('div', { class: 'obs', text: '→ ' + ((data && data.message) || 'recognized attack text was labeled as untrusted data; the human gate still blocks autonomous execution') }),
               ]),
             ]));
           } else if (event === 'step') {
@@ -1242,9 +1318,14 @@
                   const payArgs = {
                     vendor: inv.vendor,
                     amount: inv.total,
-                    vendor_ref: inv.vendor_ref
+                    currency: inv.currency
                   };
-                  await api('POST', '/amend/' + itemId, { args: payArgs, reason: 'Duplicate ignored by user during upload' });
+                  await api('POST', '/amend/' + itemId, {
+                    tool: 'draft_payment',
+                    args: payArgs,
+                    confirmToolOverride: true,
+                    reason: 'Duplicate warning explicitly overridden by the reviewer during upload'
+                  });
                   clearPrompt();
                   toast('Invoice force-approved as payment!', 'ok');
                   setActiveTab('pending');
@@ -1357,7 +1438,7 @@
       steps.push({
         el: () => firstCard.querySelector('[data-tour="proposed"]'),
         title: 'Qwen’s proposed action',
-        body: 'The agent proposes exactly one accounts-payable action, with a confidence score and a plain-language reason. It is a proposal only — it has not run.',
+        body: 'The agent proposes exactly one accounts-payable action, with a decision-confidence score and a plain-language reason. For document uploads, Qwen-VL extraction confidence is shown separately; a weak source read is forced to review. It is a proposal only — it has not run.',
       });
       if (firstCard.querySelector('[data-tour="trace"]')) {
         steps.push({
@@ -1497,6 +1578,15 @@
       $('#searchQueue').value = '';
       applySearch();
     };
+
+    const savedReviewerToken = sessionStorage.getItem('archonReviewerToken') || '';
+    $('#reviewerToken').value = savedReviewerToken;
+    $('#reviewerToken').addEventListener('change', async (e) => {
+      const token = String(e.target.value || '').trim();
+      if (token) sessionStorage.setItem('archonReviewerToken', token);
+      else sessionStorage.removeItem('archonReviewerToken');
+      await refreshAll();
+    });
 
     // Prefill the upload box with the sample so a first-time visitor can Process immediately.
     $('#invoiceInput').value = JSON.stringify(SAMPLE_INVOICE, null, 2);

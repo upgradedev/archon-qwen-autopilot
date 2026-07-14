@@ -2,17 +2,15 @@
 //
 // Executing an AP action has real consequences: a journal entry is posted to the
 // ledger, a payment is recorded, a reply is sent to the vendor, a review is
-// escalated. The ledger / payment-rail / review sinks here are in-memory Fakes
-// that record what WOULD happen (inspectable) rather than touching a real ERP or
-// bank. The email sink is different: `SmtpEmailSink` (smtp-sink.ts) is a REAL
-// transport that actually delivers a message over SMTP once a human approves —
-// still behind this same interface and the same human gate. Swapping in a real
-// ledger client or payment rail later is likewise a drop-in behind these
-// interfaces — the workflow code is unchanged.
+// escalated. The defaults here are inspectable in-memory Fakes for offline tests.
+// Production can replace the ledger with the durable, fsynced `JsonlLedgerSink`
+// and email with the real `SmtpEmailSink`; payment-rail and specialist-review
+// remain simulated adapters. Every implementation stays behind the same human gate.
 //
 // `EmailSink.send` is async because the real transport performs network I/O; the
 // awaited result surfaces a delivery FAILURE back at the approval call, so a failed
-// send leaves the work item pending for retry rather than being silently swallowed.
+// send leaves the work item in an explicit uncertain/executing state for operator
+// reconciliation rather than being silently swallowed or automatically retried.
 // The other three sinks stay synchronous (pure in-memory record).
 
 export interface LedgerEntry {
@@ -32,6 +30,9 @@ export interface PaymentRecord {
 }
 
 export interface OutboundEmail {
+  // Deterministic work-item execution key. Optional only for backwards-
+  // compatible direct sink use; terminal tools always provide it.
+  ref?: string;
   to: string;
   subject: string;
   body: string;
@@ -82,6 +83,8 @@ export interface Sinks {
 export class FakeLedgerSink implements LedgerSink {
   private rows: LedgerEntry[] = [];
   post(entry: Omit<LedgerEntry, "postedAt">): LedgerEntry {
+    const existing = this.rows.find((r) => r.ref === entry.ref);
+    if (existing) return existing;
     const row = { ...entry, postedAt: new Date().toISOString() };
     this.rows.push(row);
     return row;
@@ -94,6 +97,8 @@ export class FakeLedgerSink implements LedgerSink {
 export class FakePaymentSink implements PaymentSink {
   private rows: PaymentRecord[] = [];
   record(payment: Omit<PaymentRecord, "recordedAt">): PaymentRecord {
+    const existing = this.rows.find((r) => r.ref === payment.ref);
+    if (existing) return existing;
     const row = { ...payment, recordedAt: new Date().toISOString() };
     this.rows.push(row);
     return row;
@@ -106,6 +111,8 @@ export class FakePaymentSink implements PaymentSink {
 export class FakeEmailSink implements EmailSink {
   private rows: OutboundEmail[] = [];
   async send(email: Omit<OutboundEmail, "sentAt">): Promise<OutboundEmail> {
+    const existing = email.ref ? this.rows.find((r) => r.ref === email.ref) : undefined;
+    if (existing) return existing;
     const row = { ...email, sentAt: new Date().toISOString() };
     this.rows.push(row);
     return row;
@@ -118,6 +125,8 @@ export class FakeEmailSink implements EmailSink {
 export class FakeReviewSink implements ReviewSink {
   private rows: ReviewEscalation[] = [];
   raise(item: Omit<ReviewEscalation, "raisedAt">): ReviewEscalation {
+    const existing = this.rows.find((r) => r.ref === item.ref);
+    if (existing) return existing;
     const row = { ...item, raisedAt: new Date().toISOString() };
     this.rows.push(row);
     return row;

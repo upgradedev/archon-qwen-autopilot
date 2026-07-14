@@ -4,8 +4,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-Alibaba%20Cloud-ff6a00?logo=alibabacloud&logoColor=white)](https://autopilot.43.106.13.19.sslip.io)
 [![Demo Video](https://img.shields.io/badge/Demo%20Video-watch-ff0000?logo=youtube)](demo/video/final/archon-autopilot-demo.mp4)
-[![Tests](https://img.shields.io/badge/Tests-186%20node%3Atest%20%2B%2025%20Playwright-brightgreen)](tests)
-[![Coverage](https://img.shields.io/badge/Coverage-97.73%25%20(CI%2C%20with%20DB)-brightgreen)](tests)
+[![Tests](https://img.shields.io/badge/Tests-240%20passed%20%2B%206%20DB--gated%20%2B%2025%20Playwright-brightgreen)](tests)
+[![Coverage](https://img.shields.io/badge/Coverage-92.42%25%20statements%20%7C%2084.28%25%20branches-brightgreen)](tests)
 [![Project Story](https://img.shields.io/badge/Project%20Story-Devpost-003e54)](demo/PROJECT_STORY.md)
 
 Archon Autopilot is a **human-gated accounts-payable (AP) agent**. For each
@@ -30,8 +30,9 @@ recommends; it never auto-executes.
 3. **A human-in-the-loop money gate with a *structural* tool-attack defense.** Nothing
    executes until a person approves the exact arguments — and the model's tool catalog
    contains only *proposing* tools, so it literally cannot name `approve`/`pay`. A
-   prompt-injection buried in an untrusted invoice is therefore inert **by
-   construction**, not by a filter (proven by a multi-step tool-attack suite).
+   prompt-injection buried in an untrusted invoice is therefore unable to
+   **autonomously execute by construction**, not because a detector is assumed perfect
+   (tested by a multi-step tool-attack suite).
 4. **The accounts-payable domain, end to end.** Messy incoming invoice → normalize →
    validate → triage (accrue / pay / query / escalate) → a *proposed* action — the
    actual daily work of an AP clerk.
@@ -97,10 +98,11 @@ correction) — see
    proposal. This "recommend, never auto-execute" gate is the core Track-4 story;
    the `/pending` payload and the approval UI show the **whole reasoning trace**, so
    a person sees *how* the agent decided, not just the final action.
-5. **Execute + remember** — on approval the chosen tool runs for real: the vendor
-   reply is a **real SMTP send** (`SmtpEmailSink`) when `SMTP_HOST` is configured,
-   while the journal entry / payment / review land on inspectable in-memory adapters;
-   the outcome is **written back to memory**.
+5. **Execute + remember** — on approval the chosen tool runs: a vendor reply is a
+   **real SMTP send** (`SmtpEmailSink`) when `SMTP_HOST` is configured, and a journal
+   entry is a **durable append-only JSONL post** (`JsonlLedgerSink`) when
+   `LEDGER_JSONL_PATH` is configured. Payment and specialist-review actions remain
+   inspectable in-memory adapters. The outcome is **written back to memory**.
 
 ### Two tool tiers — this is what makes the loop both multi-step AND safe
 
@@ -150,8 +152,8 @@ flowchart TD
     IN["Untrusted vendor invoice<br/>PDF / image via qwen-vl-max &middot; or JSON"]:::untrusted
 
     subgraph SURF["Two client surfaces &middot; ONE injectable agent"]
-      HTTP["HTTP + Approval UI"]:::surface
-      MCP["MCP server &middot; stdio"]:::surface
+      HTTP["HTTP + Approval UI<br/>public intake &middot; Bearer reviewer APIs"]:::surface
+      MCP["MCP server &middot; stdio<br/>4 proposal / read-only tools"]:::surface
     end
 
     NORM["Normalize &middot; fence as<br/>UNTRUSTED DATA"]:::untrusted
@@ -167,9 +169,9 @@ flowchart TD
     end
 
     PEND[("PENDING proposal<br/>+ full step trace")]:::pending
-    GATE{{"HUMAN-IN-THE-LOOP GATE<br/>Approve &middot; Amend &middot; Reject"}}:::gate
-    NOTE["Model tool catalog EXCLUDES<br/>approve / pay &mdash; no injection<br/>can reach a side-effect"]:::guard
-    EXE["Execute for real<br/>real SMTP email &middot; real JSONL ledger &middot; simulated payment/review"]:::exec
+    GATE{{"HUMAN-IN-THE-LOOP GATE<br/>Bearer auth &middot; atomic claim<br/>Approve &middot; Amend &middot; Reject"}}:::gate
+    NOTE["Model tool catalog EXCLUDES<br/>approve / pay &mdash; no injection<br/>can autonomously execute"]:::guard
+    EXE["Execute after approval<br/>real SMTP email &middot; durable JSONL ledger<br/>simulated payment / specialist review"]:::exec
 
     MEM[("pgvector memory")]:::memory
     QWEN["Qwen Cloud / Model Studio &middot; DashScope<br/>vision &middot; decider &middot; embeddings"]:::ai
@@ -248,7 +250,8 @@ each step and can chain several read/analyze tools before it acts — but that a
 a limitation: where money moves, we want **predictability and auditability**, so the
 side-effecting edge is given workflow semantics (a fixed, inspectable path with a
 structural human checkpoint) while the *reasoning* stays fully agentic. The MCP server
-is a **second surface** onto the exact same agent + gate, not a second decision path.
+is a **second, agent-safe proposal/read surface** over the same core, not a decision
+surface: approval, amendment, and rejection exist only on authenticated HTTP/UI.
 The decision framework is simply: *agentic where judgement helps, workflow semantics
 at the money edge where predictability is required.*
 
@@ -292,9 +295,9 @@ npm start
 With a database + real Qwen:
 
 ```bash
-cp .env.example .env         # set DASHSCOPE_API_KEY + DATABASE_URL
+cp .env.example .env         # set DASHSCOPE_API_KEY + DATABASE_URL + REVIEWER_TOKEN
 docker compose up -d db      # a local pgvector container
-npm run db:schema            # create agent_memory + ap_workitems
+npm run db:schema            # create memory, work-item, and durable quota tables
 npm start
 ```
 
@@ -305,8 +308,9 @@ Drive the loop by hand:
 curl -s -X POST localhost:9000/intake -H 'content-type: application/json' \
   -d '{"invoice":{"supplier":"Contoso Ltd","amount":"€ 1.200,00","invoice_number":"CO-42","tax_id":"TX-1","subtotal":1000,"tax":200,"total":1200}}'
 
-curl -s localhost:9000/pending                 # the approval queue
-curl -s -X POST localhost:9000/approve/<id>    # execute for real
+export REVIEWER_TOKEN='<the private judge token>'
+curl -s localhost:9000/pending -H "authorization: Bearer $REVIEWER_TOKEN"
+curl -s -X POST localhost:9000/approve/<id> -H "authorization: Bearer $REVIEWER_TOKEN"
 ```
 
 ---
@@ -319,12 +323,15 @@ curl -s -X POST localhost:9000/approve/<id>    # execute for real
   approval queue (review each Qwen-proposed action + its reasoning + arguments, then
   approve / amend / reject). Also at `/ui`.
 - **Health:** https://autopilot.43.106.13.19.sslip.io/health
+- **Readiness:** https://autopilot.43.106.13.19.sslip.io/ready
 - **API docs:** https://autopilot.43.106.13.19.sslip.io/docs
 
 It runs on the **same Alibaba Cloud ECS box** as the Track-1 MemoryAgent, **reusing
-that box's pgvector** in its own isolated `autopilot` database. The backend container
-listens on `9000` and is published to host port `9100`; a TLS-terminating reverse
-proxy in front maps the `sslip.io` hostname to the box and serves it over HTTPS
+that box's pgvector service** in its own isolated `autopilot` database. The backend
+joins the MemoryAgent's internal **data** network for `db:5432` and its **edge**
+network for DashScope egress. Container port `9000` is bound only to
+`127.0.0.1:9100`; a TLS-terminating reverse proxy maps the `sslip.io` hostname to the
+loopback backend and serves it over HTTPS
 (`sslip.io` resolves `autopilot.43.106.13.19.sslip.io` → `43.106.13.19`, so a real
 certificate can be issued for the host).
 
@@ -333,14 +340,15 @@ is idempotent, schema-first, fail-closed, and runs a health + intake/pending smo
 
 ```bash
 ssh -i <key.pem> root@43.106.13.19
-cd /root/autopilot && git pull
+cd /root/autopilot && git pull --ff-only
 bash deploy/redeploy.sh
 ```
 
-It joins the MemoryAgent's docker network, reuses its pgvector container in a
-separate `autopilot` database, builds + serves the backend (container `9000` → host
-`9100`), and proves the round-trip. Full runbook, the reuse-pgvector decision, and the
-one security-group rule are in [`deploy/DEPLOY_STATE.md`](deploy/DEPLOY_STATE.md).
+It attaches the MemoryAgent's data + edge networks, reuses its pgvector container in a
+separate `autopilot` database, mounts the durable JSONL ledger from the host, builds +
+serves the backend (`9000` → loopback `9100` → HTTPS proxy), and proves the round-trip.
+Port 9100 must **not** be public. The authoritative runbook is
+[`deploy/DEPLOY_STATE.md`](deploy/DEPLOY_STATE.md).
 
 ---
 
@@ -365,8 +373,8 @@ $ curl https://memory.43.106.13.19.sslip.io/health
 
 | Alibaba Cloud service | Code file | What it does |
 |---|---|---|
-| **ECS** (live deploy) | [`deploy/redeploy.sh`](./deploy/redeploy.sh) | Idempotent redeploy on the ECS instance: joins the docker network, reuses the pgvector container, builds + serves the backend over HTTPS. |
-| **ECS container topology** | [`docker-compose.yml`](./docker-compose.yml) | Container definition the ECS box runs (backend + shared pgvector memory store). |
+| **ECS** (live deploy) | [`deploy/redeploy.sh`](./deploy/redeploy.sh) | Idempotent production redeploy: joins MemoryAgent data + edge networks, reuses shared pgvector in an isolated database, mounts the durable ledger, binds loopback 9100, and verifies readiness. |
+| **ECS topology/runbook** | [`deploy/DEPLOY_STATE.md`](./deploy/DEPLOY_STATE.md) | Authoritative current dual-network, shared-DB, localhost-only, HTTPS-fronted deployment. (`docker-compose.yml` is local development only.) |
 | **Model Studio / DashScope** (Qwen inference) | [`src/qwen/client.ts`](./src/qwen/client.ts) | OpenAI-compatible client to Alibaba Cloud Model Studio; calls `text-embedding-v4` (embeddings) and `qwen-plus` (function-calling decisions). |
 
 ---
@@ -394,8 +402,9 @@ $ curl https://memory.43.106.13.19.sslip.io/health
 - **Charts** — two inline-SVG bar charts: pending **clean vs flagged** (clean = every
   validation rule passed), and decided **approved / amended / rejected**.
 
-A success toast and an automatic refresh follow each action. It is same-origin, so it
-needs no configuration.
+A success toast and an automatic refresh follow each action. The static page is
+public, while **HTTP** queue reads and reviewer actions require the private judge token
+entered in the header; it is kept only in that browser tab's `sessionStorage`.
 
 ---
 
@@ -405,28 +414,35 @@ needs no configuration.
 |---|---|
 | `GET /` · `GET /ui` | The human approval UI (static page served by this backend): upload/paste an invoice, watch it process live, work the queue, and review the decided history + charts. |
 | `GET /health` | Liveness + the live embedder / decision-model ids. No DB, no key. |
+| `GET /ready` | Real readiness: reviewer-auth configuration, a live DB query, and an optional real Qwen embedding probe (`READY_PROBE_QWEN=true`). Unprobed provider configuration is labelled honestly. |
 | `POST /intake` | Ingest a vendor invoice → normalize → run the multi-step ReAct loop (recall → validate → check duplicate / compute variance) → a **PENDING** proposed action + its full step trace. Nothing executes. **Rate-limited (see below).** |
 | `POST /intake/stream` | Same pipeline as `/intake`, but **streams each reasoning step live** as Server-Sent Events (`event: step` as it happens, then `event: proposal` + `event: done`). Backs the UI's real-time "watch the agent work" upload view. Nothing executes. **Rate-limited.** |
-| `POST /intake/document` | Upload a **REAL invoice document** (PDF / PNG / JPG, `multipart/form-data`, field `file`) → magic-byte sniff → **Qwen-VL vision extraction** (`qwen-vl-max`) → the same multi-step loop, **streamed** (`event: extracting` → `event: extracted` → an advisory `event: security` if a neutralized injection was found → `event: step` → `event: proposal` → `event: done`). The `extracted` event carries the `security` + `relevance` blocks. A PDF is rasterized to page images with poppler (`pdftoppm`); a PNG/JPG passes through. Nothing executes. **Rate-limited** (shares the same daily budget). |
+| `POST /intake/document` | Upload a **REAL invoice document** (PDF / PNG / JPG, `multipart/form-data`, field `file`) → magic-byte sniff → **Qwen-VL vision extraction** (`qwen-vl-max`) → the same multi-step loop, **streamed** (`event: extracting` → `event: extracted` → an advisory `event: security` if a recognized injection pattern was found → `event: step` → `event: proposal` → `event: done`). The `extracted` event carries the `security` + `relevance` blocks. A PDF is rasterized to page images with poppler (`pdftoppm`); a PNG/JPG passes through. Nothing executes. **Rate-limited** (shares the same daily budget). |
 | `POST /extract/document` | Upload a document → magic-byte sniff → **Qwen-VL vision extraction** (`qwen-vl-max`) → returns the extracted structured invoice **without** running the decision loop, plus a single-use `ticket`, a `security` block (advisory injection detection) and a `relevance` block. The two-step review flow: a reviewer inspects/edits the extracted fields, then posts them to `/intake/stream` **with** that ticket (which skips the limiter, so this does not consume a second slot). Nothing executes. **Rate-limited** (shares the same daily budget). |
 | `GET /sample-document` | The bundled sample invoice ([`demo/sample-invoice.png`](demo/sample-invoice.png)) — a real image the UI's **"Use sample document"** button uploads so the whole vision path is one-click reproducible. |
-| `GET /pending` | The human approval queue (proposals awaiting a decision), each including its reasoning trace. |
-| `GET /decided` | The **decided history** — every approved / amended / rejected item, newest first, with its outcome, decision timestamp, and (for an amended item) the prev → new amend audit trail. Read-only: decided items never re-execute. |
-| `POST /approve/:id` | A human approves → the chosen tool executes for real; the outcome is written back to memory. |
-| `POST /amend/:id` | A human edits the proposed domain args, then approves → the **amended** args are exactly what execute. Body: `{ args, reason? }`. |
-| `POST /reject/:id` | A human discards the proposal → nothing executes. The rejection is remembered. Body: `{ reason? }`. |
+| `GET /pending` | **Bearer-protected.** Pending plus explicitly visible `executing` items awaiting reconciliation. |
+| `GET /decided` | **Bearer-protected.** Approved/rejected history, newest first, including tool+args amendment audit. |
+| `POST /approve/:id` | **Bearer-protected.** Atomically claims a pending item, validates args, then executes once. |
+| `POST /amend/:id` | **Bearer-protected.** Argument edits execute exactly as approved. Tool changes additionally require `{ tool, args, confirmToolOverride: true, reason }` and preserve proposed→approved tool+args. |
+| `POST /reject/:id` | **Bearer-protected.** Atomically claims and rejects without executing. Body: `{ reason? }`. |
+| `POST /recover/:id` | **Bearer-protected.** Reconcile an uncertain `executing` item: `{ action: "retry" | "mark_completed", reason }`. There is no automatic retry; a live claim cannot be reset before a recorded failure or the bounded stale-claim window (`EXECUTION_RECOVERY_AFTER_MS`). |
 | `GET /skills` | The **custom Qwen skill catalog** — every function schema the decider chooses from, annotated with tier / gate / rule (mirrors the MCP `list_skills` tool). |
 | `GET /docs` · `GET /openapi.json` | Interactive Swagger UI + the raw OpenAPI 3 spec. |
 
-**Approval-gate semantics:** an unknown work-item id → `404`; an already-decided
-item (approved/rejected) → `409` (it can never be re-executed).
+**Approval-gate semantics:** missing/invalid credentials → `401`; an unconfigured
+reviewer token → generic `503` plus a request id; unknown id → `404`; an already claimed/decided item → `409`.
+The pending→executing transition is an atomic database compare-and-set, and the
+server-generated work-item UUID is the sink idempotency/correlation key. Every 5xx
+response hides provider/database details and returns a request id that maps to the
+detailed server log entry.
 
 ### Open demo + upload rate limit
 
-The live demo is **intentionally open — no login, no auth**, so a judge can test it
-freely (upload an invoice, watch it process, approve/amend/reject). This is a
-deliberate, rules-compliant choice: the app must be judge-testable end to end. There
-is no sign-in wall by design.
+The intake/demo surface is intentionally public so judges can upload and watch the
+agent reason. On the web API, queue data and every reviewer mutation are protected by
+an opaque Bearer token shared privately with judges. The local MCP proposal/read
+surface has its own process-access boundary and no mutation tools. Thus testability does not turn the human
+approval checkpoint into a public, scriptable side-effect endpoint.
 
 To keep an open, unauthenticated endpoint from running up the model bill, invoice
 uploads are rate-limited **per UTC day** (resetting at 00:00 UTC) across the four
@@ -436,13 +452,17 @@ budget-consuming upload routes — `POST /intake`, `POST /intake/stream`, `POST
 `/intake/stream` call that presents it does not consume a second slot — the pair
 costs one budget slot, not two.
 
-The limiter ([`src/ap/rate-limit.ts`](src/ap/rate-limit.ts), `DailyRateLimiter`) is
-**two-tier**, so one busy visitor can never lock a judge out on their first upload:
+The limiter ([`src/ap/rate-limit.ts`](src/ap/rate-limit.ts)) is **two-tier**. With
+`DATABASE_URL`, production uses `PostgresDailyRateLimiter`: both rows are locked and
+incremented in one transaction, so restarts and multiple replicas cannot reset or
+overspend the budget. `DailyRateLimiter` is only the no-DB dev/test implementation.
 
 - a **per-client bucket** (default **100/day**, `UPLOAD_DAILY_LIMIT`) keyed by the
   caller's IP, so each visitor gets their own fair budget; and
 - a **global daily backstop** across all clients (default **2000/day**,
   `UPLOAD_GLOBAL_DAILY_LIMIT`) — the hard, spoof-proof bound on total Qwen spend.
+  It is independent of the per-client cap and is never silently increased when an
+  operator intentionally configures a smaller global budget.
 
 A request is refused (`429`) only when **either** the caller's own bucket **or** the
 global backstop is full, and the message says which. The per-client key is
@@ -469,8 +489,9 @@ source is new:
    image via `apt-get install poppler-utils`. A PNG/JPG upload passes through directly.
 2. **Qwen-VL extraction.** The page image(s) go to **`qwen-vl-max`** (override with
    `VISION_MODEL`) over the same OpenAI-compatible DashScope surface the rest of the
-   app uses, with an **injection-hardened** prompt (any imperative text inside the
-   document is treated as data, never an instruction) → a canonical raw-invoice object.
+   app uses, with explicit **untrusted-data delimiters** (the prompt labels document
+   content as data and directs the model not to follow embedded instructions) → a
+   canonical raw-invoice object.
 3. **Same loop.** That object is handed to the existing `normalizeInvoice` + the
    multi-step ReAct loop and **streamed** so the UI shows *extracting… → the live loop
    steps → the proposal*. The human approval gate is unchanged.
@@ -485,38 +506,33 @@ auto-selection as the decider and embedder.
 
 ## MCP integration & custom skills
 
-Two capabilities let external agents and tools drive Archon Autopilot through
+Two capabilities let external agents submit work and inspect Archon Autopilot through
 first-class, standard interfaces — the sophisticated-QwenCloud-usage the
 **Technical Depth & Engineering** criterion calls for (custom skills · MCP
 integrations).
 
-### 1 · MCP server — drive the human-gated agent from any MCP client
+### 1 · MCP server — agent-safe proposal and read access
 
 `src/mcp/server.ts` is a real **Model Context Protocol** server
 (`@modelcontextprotocol/sdk`) that **wraps the same injectable `AutopilotAgent`**
 the HTTP routes drive — one decision loop, one memory, one approval queue, exposed
-over a second surface. Both surfaces are wired from the same `resolveDeps()` helper
-(`src/deps.ts`), so they can never drift.
+through a deliberately narrower surface. Both are wired from the same `resolveDeps()`
+helper (`src/deps.ts`), so intake/recall behavior cannot drift.
 
-It exposes seven MCP **tools**:
+It exposes exactly four agent-safe MCP **tools**:
 
 | MCP tool | What it does | Gate |
 |---|---|---|
 | `intake_invoice` | Run the multi-step ReAct loop → the proposed terminal action **+ the full step trace**, persisted **PENDING**. Nothing executes. | — |
-| `list_pending` | The human approval queue, each item with its reasoning trace. | read-only |
-| `approve` | Approve a PENDING item by id → its terminal skill executes for real. | **human-gated** |
-| `amend` | Edit the proposed domain args, then approve → the amended args are exactly what execute. | **human-gated** |
-| `reject` | Discard a proposal → nothing executes; the rejection is remembered. | **human-gated** |
+| `list_pending` | Read the pending proposal queue, including each reasoning trace. | read-only |
 | `recall_vendor` | Recall a vendor's history from persistent memory (prior invoices, actions, insights). | read-only |
 | `list_skills` | Introspect the custom Qwen skill catalog (below). | read-only |
 
-**The human-in-the-loop gate stays ironclad over MCP.** `intake_invoice` never
-executes anything — it only proposes. `approve` requires an *explicit* call naming
-the work-item id; nothing auto-executes. And a decided item **can never
-re-execute**: a second `approve`/`amend`/`reject` returns an MCP **error result**
-(`isError: true`), not a false success — the gate is *observable* over the wire,
-not merely structural. This is enforced by reusing the agent's `requirePending`
-guard, not re-implemented in the MCP layer.
+**MCP cannot cross the human gate.** `approve`, `amend`, `reject`, `recover`, `pay`,
+and every execution primitive are absent from both the advertised MCP catalog and its
+dispatcher. `intake_invoice` can only create a PENDING proposal. A human decision is
+possible exclusively through the Bearer-authenticated HTTP API / Approval UI. This
+least-agency split remains true even if an MCP client itself is compromised.
 
 **Run it (primary transport = stdio):**
 
@@ -544,10 +560,12 @@ client config entry:
 > **stdio ≠ the HTTP port.** The public HTTP + Approval-UI surface is
 > `https://autopilot.43.106.13.19.sslip.io` (see [Live](#live)); the MCP server is a
 > **locally spawned stdio process**, not a host:port. To reach the same live agent's MCP
-> surface on the box, spawn it there over SSH — e.g.
-> `ssh root@43.106.13.19 'cd /root/autopilot && npm run mcp'` — so the MCP client's
-> stdin/stdout is piped to the process. Both surfaces then drive the same pgvector
-> memory + approval queue.
+> surface on the box, spawn the compiled entrypoint inside the deployed container —
+> e.g. `ssh root@43.106.13.19 'docker exec -i archon-autopilot node dist/src/mcp/server.js'`
+> — so the MCP client's stdin/stdout is piped to the process
+> with the same production environment. Both surfaces then drive the same pgvector
+> memory + proposal queue. Human decisions still happen only through authenticated
+> HTTP/UI.
 
 ### 2 · Custom-skills catalog — the AP tools as a formalized skill layer
 
@@ -597,8 +615,10 @@ side-effect**:
 
 - **The human gate is the guarantee.** The loop's terminal tools only ever *propose*.
   Every real side-effect runs through a **single `execute()` chokepoint** reached only
-  by `approve()` / `amend()`, and only for a **PENDING** item (the `requirePending`
-  guard); a decided item can never re-execute. The model's tool catalog **excludes**
+  by authenticated `approve()` / `amend()`, and only after an atomic
+  **PENDING → EXECUTING** claim; a claimed or decided item can never execute again.
+  A sink error remains visibly `executing` until audited reconciliation—there is no
+  unsafe automatic retry. The model's tool catalog **excludes**
   `approve` / `amend` / `reject` entirely — the agent has no tool that moves money, so
   no injection can call one.
 - **Decider fencing.** The untrusted invoice fields and the observation summaries
@@ -614,22 +634,26 @@ side-effect**:
   size/type-validated and **single-use process tickets** prevent free re-processing.
 
 This is proven, offline, by the **multi-step tool-attack suite**
-([`tests/security/tool-attack.test.ts`](tests/security/tool-attack.test.ts)): a table
-of injection payloads planted across every untrusted surface, each asserting the
+([`tests/pentest/excessive-agency.test.ts`](tests/pentest/excessive-agency.test.ts) and
+[`tests/pentest/prompt-injection.test.ts`](tests/pentest/prompt-injection.test.ts)): a table
+of injection payloads planted across the documented untrusted surfaces, each asserting the
 invariant — **at most a PENDING proposal, no sink fires, the attacker's action is not
 the one proposed, and the injected text cannot forge the gate's confidence/reasoning**.
 
-**Honest caveat:** the guarantee is the *human gate* — the agent recommends, a person
-decides. An MCP client that drives `approve` is trusted to be operated by that person
-(the same trust boundary as any admin tool); the gate is enforced structurally, not by
-authenticating the caller.
+**MCP trust boundary:** the bundled MCP server is a local stdio process, not a public
+HTTP listener. Its four-tool surface is agent-safe even inside that local process:
+submit proposals and read state, but never decide or execute. The exclusive reviewer
+surface is HTTP/UI and is independently Bearer-authenticated. “Agent-safe” here means
+**no consequential decision authority**; whoever may start the process can still read
+proposal/vendor state, create PENDING work, and consume configured model capacity, so
+OS/process access remains restricted.
 
 ### The document-input vector — three added upload-safety layers
 
 The same tool-attack threat model applies to the **document-upload** front door
 (`POST /extract/document` · `POST /intake/document`), so the upload path adds three
 input-safety layers **on top of** the existing extension/content-type allowlist, size
-+ page caps, injection-hardened vision prompt, and the decider fence:
++ page caps, untrusted-data vision instructions, and the decider fence:
 
 - **Magic-byte content-sniffing** ([`src/qwen/vision.ts`](src/qwen/vision.ts),
   `validateMagicBytes`). Before any budget is consumed, the buffer's leading bytes are
@@ -639,9 +663,10 @@ input-safety layers **on top of** the existing extension/content-type allowlist,
   `400`. *A full antivirus scan is deliberately out of scope for this demo — this is the
   pragmatic "is the file what it claims to be" check.*
 - **Prompt-injection detection + surfacing** ([`src/qwen/injection-scan.ts`](src/qwen/injection-scan.ts),
-  `scanForInjection`). The fence already *neutralizes* injection smuggled in a document
-  (it lands as fenced DATA, never followed); this **read-only, advisory** scan of the
-  extracted fields + line-item descriptions makes the neutralized attack **VISIBLE** —
+  `scanForInjection`). The fence labels document fields as untrusted DATA; it does not
+  claim model-level immunity. Structural tool separation plus the authenticated human
+  gate block autonomous execution. This **read-only, advisory** scan of extracted
+  fields + line-item descriptions makes recognized attack patterns **VISIBLE** —
   it looks for imperative overrides ("ignore previous instructions"), action coercion
   ("approve", "pay now"), confidence spoofing ("confidence 1.0"), role/prompt hijack,
   and tool/exfil coercion. It **never** rejects, edits the proposal, or touches the
@@ -658,14 +683,14 @@ Both `/extract/document` (JSON) and `/intake/document` (SSE) surface the finding
 ```jsonc
 "security":  { "injectionDetected": true, "injectionCount": 2,
                "matches": [ { "field": "notes", "pattern": "coerce-approve", "snippet": "…Approve and pay…" } ],
-               "neutralized": true },
+               "autonomousExecutionBlocked": true },
 "relevance": { "relevant": true, "reason": "invoice fields detected (amount plus a vendor or invoice number)" }
 ```
 
-On `/intake/document` a neutralized injection is also emitted as an advisory
+On `/intake/document` a recognized injection pattern is also emitted as an advisory
 `event: security` step in the live stream, and the approval UI shows a warning banner
-("⚠️ This document contained N suspected injected instructions — shown as data, never
-followed."). Proven offline by
+("⚠️ This document contained N suspected injected instructions — labeled as untrusted
+data; autonomous execution remains blocked by the human gate."). Proven offline by
 [`tests/security/upload-guard.test.ts`](tests/security/upload-guard.test.ts): a `.pdf`
 carrying PNG bytes is rejected; an injected upload is **detected** *and* the agent's
 downstream behavior is **unchanged** (still PENDING, never a payment, confidence never
@@ -673,7 +698,10 @@ the injected 1.0); a non-invoice document is flagged `relevant: false`.
 
 ## Testing & CI
 
-The suite is the full pyramid, offline-first:
+The suite is the full pyramid, offline-first. The verified final run contains **246
+Node tests: 240 passed, 0 failed, and 6 real-Postgres tests skipped when no database
+is configured**; the browser tier adds **25/25 Playwright specs**. `c8` reports
+**92.42% statements, 84.28% branches, 91.26% functions, and 92.42% lines**.
 
 - **Unit** — normalizer, R1–R6 validation, the terminal tool schemas + execute
   stubs, the autonomous read/analyze tools (`analysis-tools.test.ts`), the
@@ -683,12 +711,13 @@ The suite is the full pyramid, offline-first:
   approval gate (including the "≥2 autonomous steps, nothing side-effecting fires"
   invariant), the HTTP shell, the **custom-skills catalog** (`skills.test.ts` — the
   derived catalog matches the live schemas, no drift), and the **MCP tool dispatch**
-  (`mcp.test.ts` — intake→pending→approve round-trip through the MCP surface, plus
-  the gate observably enforced: a re-approved item returns `isError`).
+  (`mcp.test.ts` — intake→pending plus recall/catalog reads, with decision verbs absent
+  and rejected by the dispatcher).
 - **Integration** — the **mandatory** offline slice drives `intake → pending →
   approve → executed` over HTTP with in-memory injection (no DB, no key); a real MCP
   **`Client ↔ Server`** round-trip over an in-memory transport
-  (`mcp-transport.test.ts` — full protocol wiring, gate preserved); plus a real
+  (`mcp-transport.test.ts` — full proposal/read protocol wiring, no decision tools);
+  plus a real
   pgvector store round-trip that runs against the CI service container and **skips
   automatically when `DATABASE_URL` is unset**.
 - **End-to-end (browser)** — a **Playwright** tier (`tests/e2e/` — **25 specs** across
@@ -725,6 +754,10 @@ docs/video/architecture surface. Checks that need a human with credentials or a 
 — a real SMTP send, a hosted video URL, a live-box redeploy — are reported
 `user-gated`, never auto-claimed.
 
+The verified report is **22 passed, 0 failed, 3 user-gated (100% of automatable
+checks)**. The dedicated adversarial suite is also green at **30/30**, and both the
+production and all-dependency `npm audit` runs report **0 vulnerabilities**.
+
 ```bash
 npm run readiness       # print the per-criterion report + write readiness.json
 ```
@@ -757,7 +790,7 @@ npm run eval -- --gate  # CI gate: fail if accuracy < the floor
 
 - **Offline (deterministic Fakes, gated in CI):** **22 / 22 (100.0%)** tool-choice
   accuracy, with **every one of the 22 scenarios taking ≥2 autonomous read/analyze
-  steps** (avg 2.3) before the terminal action — a **policy / regression** guard
+  steps** (avg 2.5) before the terminal action — a **policy / regression** guard
   over the real multi-step pipeline. The previous routing gap for no-parseable-total
   invoices (Scenario 22) is fully resolved: they are now correctly routed to the
   vendor-reply email tool (`draft_vendor_reply`).
@@ -821,12 +854,14 @@ confidence is the model's own clamped number.
 ## How this maps to the judging rubric
 
 A one-glance guide from each judging criterion to the evidence for it. A click-by-click
-walkthrough is in [`docs/JUDGE-GUIDE.md`](docs/JUDGE-GUIDE.md).
+walkthrough is in [`docs/JUDGE-GUIDE.md`](docs/JUDGE-GUIDE.md), and the exact
+claim→source→test mapping is in
+[`docs/CLAIM_EVIDENCE_MATRIX.md`](docs/CLAIM_EVIDENCE_MATRIX.md).
 
 | Criterion (weight) | Where to look |
 |---|---|
-| **Technical Depth & Engineering (30%)** | A real bounded **multi-step ReAct loop** over `qwen-plus` **function-calling** (`src/ap/loop.ts`) across a two-tier tool set — autonomous read/analyze skills vs. human-gated terminal actions — with the **same `tool_calls`-parse path online and offline** (a canned `FakeQwenChatClient`), so the integration is exercised in CI with no key. The **same injectable agent** is exposed on **two surfaces** (HTTP + Approval UI and a **seven-tool MCP server**, `@modelcontextprotocol/sdk`), wired from one `resolveDeps()` so they can't drift, plus a derived **nine-skill custom-skills catalog**. Real `qwen-vl-max` document vision on the upload path. Full test pyramid (unit → integration → Playwright e2e) + an **80% coverage gate** + **documentation-drift fitness functions** + gitleaks + dep-audit; live on Alibaba Cloud (ECS + pgvector). |
-| **Innovation & AI Creativity (30%)** | **The approval gate is also the training signal** — a human's amend/reject is written back and *read* on the vendor's next decision, so re-billing an amount a person corrected *down* is escalated instead of paid (a **measured** before/after behavioural delta; see [`EVAL.md`](EVAL.md)). Plus the **structural safety design**: the model's tool catalog **excludes** approve/pay, so no prompt-injection in an untrusted invoice can reach a side-effect — proven by a multi-step tool-attack suite. Decision quality is a **measured** number (22/22 offline, gated), not asserted. |
+| **Technical Depth & Engineering (30%)** | A real bounded **multi-step ReAct loop** over `qwen-plus` **function-calling** (`src/ap/loop.ts`) across a two-tier tool set — autonomous read/analyze skills vs. human-gated terminal actions — with the **same `tool_calls`-parse path online and offline** (a canned `FakeQwenChatClient`), so the integration is exercised in CI with no key. The injectable core has two intentionally asymmetric surfaces: HTTP + Approval UI is the exclusive authenticated decision surface, while an agent-safe **four-tool MCP server** can only intake proposals and read queue/memory/catalog state. A derived **nine-skill custom-skills catalog** remains introspectable. Real `qwen-vl-max` document vision on the upload path. Full test pyramid (unit → integration → Playwright e2e) + an **80% coverage gate** + **documentation-drift fitness functions** + gitleaks + dep-audit; live on Alibaba Cloud (ECS + pgvector). |
+| **Innovation & AI Creativity (30%)** | **The approval gate is also the training signal** — a human's amend/reject is written back and *read* on the vendor's next decision, so re-billing an amount a person corrected *down* is escalated instead of paid (a **measured** before/after behavioural delta; see [`EVAL.md`](EVAL.md)). Plus the **structural safety design**: the model's tool catalog **excludes** approve/pay, so prompt-injection in untrusted data cannot autonomously execute — tested by the multi-step adversarial suite. Decision quality is a **measured** number (22/22 offline, gated), not asserted. |
 | **Problem Value & Impact (25%)** | A real, recurring SMB pain: accounts-payable clerks hand-triage messy incoming invoices — accrue, pay, query, or escalate — under real duplicate-payment and over-billing risk. Archon runs that triage automatically to a *proposed* action and stops for a human, so it saves the triage work **without** ever moving money unattended. |
 | **Presentation & Documentation (15%)** | This README + the architecture diagram + [`EVAL.md`](EVAL.md) (method + honest caveats) + [`docs/JUDGE-GUIDE.md`](docs/JUDGE-GUIDE.md) + [JUDGE_REVIEW.md](./demo/JUDGE_REVIEW.md) (rules check & strict review) + the interactive `/docs` API explorer + the live Alibaba Cloud URL + the demo video. |
 
@@ -865,7 +900,12 @@ Stated plainly (see also the Scope note up top):
   actual email is delivered when `SMTP_HOST` is configured. `draft_journal_entry` is
   backed by a **real durable JSONL ledger** (`JsonlLedgerSink`): once a human approves,
   the balanced double-entry accrual is appended (one JSON object per line) to
-  `LEDGER_JSONL_PATH`. Both cleanly simulate — recording the intent, writing nothing —
+  `LEDGER_JSONL_PATH`. The file transport fsyncs the row and keeps an exclusive,
+  per-work-item sidecar marker, so a completed ref is deduplicated after process
+  restart; a marker without a confirmed row is treated as uncertain and requires
+  reconciliation. SMTP uses a stable `Message-ID` for the same application intent,
+  but SMTP cannot guarantee exactly-once delivery to the recipient. Both cleanly
+  simulate — recording the intent, writing nothing —
   when unconfigured, behind the unchanged human gate; a write/delivery failure
   *propagates* so a failed side-effect is never silently swallowed. The other two
   (`draft_payment` / `flag_for_review`) still record what *would* happen to inspectable
@@ -880,7 +920,8 @@ Stated plainly (see also the Scope note up top):
   [Proof of Alibaba Cloud Deployment](#proof-of-alibaba-cloud-deployment),
   [`deploy/DEPLOY_STATE.md`](deploy/DEPLOY_STATE.md) and [`deploy/DEPLOY_NOTE.md`](deploy/DEPLOY_NOTE.md).
 - **Deferred:** managed **ApsaraDB RDS for PostgreSQL** / **Function Compute** as an
-  alternative to the ECS + on-box pgvector topology; and the real Sinks adapters above.
+  alternative to the ECS + on-box pgvector topology; a bank/ERP payment rail; and an
+  external case-management adapter for specialist review.
 
 ## License
 

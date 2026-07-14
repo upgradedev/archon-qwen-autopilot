@@ -43,7 +43,7 @@ test("cold start renders every surface with no broken tiles (header, charts, hea
   guard.assertClean();
 });
 
-test("Load sample invoice → a PENDING proposal is queued and the pending chart populates — guard clean", async ({ page }) => {
+test("Load sample invoice → exactly one PENDING proposal exists and the pending chart populates — guard clean", async ({ page }) => {
   const guard = installGuard(page);
   await gotoReady(page);
 
@@ -52,9 +52,16 @@ test("Load sample invoice → a PENDING proposal is queued and the pending chart
   // Success toast confirms the proposal was queued.
   await expect(page.locator("#toast")).toHaveClass(/show/);
   await expect(page.locator("#toast")).toContainText(/Sample invoice queued/i);
-  // The queue grew by exactly one — a Meridian proposal awaiting approval.
-  await expect.poll(() => pendingCount(page)).toBe(before + 1);
-  const card = page.locator("#queue .card", { hasText: "Meridian Logistics" }).first();
+  // The shared e2e server may already hold this exact fixed sample from an earlier
+  // journey. The product invariant is stronger than a +1 assertion: retries reuse
+  // one live item and never create a second Meridian proposal.
+  await expect.poll(async () => {
+    const after = await pendingCount(page);
+    return after === before || after === before + 1;
+  }).toBe(true);
+  const meridianCards = page.locator("#queue .card", { hasText: "Meridian Logistics" });
+  await expect(meridianCards).toHaveCount(1);
+  const card = meridianCards;
   await expect(card).toBeVisible();
   await expect(card.locator("button.approve")).toBeVisible();
   await expect(card).toContainText("Nothing executes until you approve");
@@ -170,10 +177,17 @@ test("real-document path — 'Use sample document' extracts via the vision path,
   // The extracted invoice is placed in the editable box for correction.
   await expect(page.locator("#invoiceInput")).toHaveValue(/Meridian Logistics/);
 
-  // Process the reviewed invoice → the loop streams → one more PENDING proposal.
+  // Process the reviewed invoice. If another journey already queued this fixed
+  // sample, the streamed idempotency guard explains why the existing proposal is
+  // reused; a fresh isolated run streams the normal recall step.
   await page.locator("#processBtn").click();
   await expect(page.locator("#processView .proc-step").first()).toBeVisible();
-  await expect.poll(() => pendingCount(page)).toBe(before + 1);
+  await expect(page.locator("#processView")).toContainText(/recall_vendor_history|live_idempotency_guard/);
+  await expect.poll(async () => {
+    const after = await pendingCount(page);
+    return after === before || after === before + 1;
+  }).toBe(true);
+  await expect(page.locator("#queue .card", { hasText: "Meridian Logistics" })).toHaveCount(1);
 
   guard.assertClean();
 });

@@ -137,6 +137,25 @@ test("createJsonlTransport is append-only: a second transport to the same path d
   }
 });
 
+test("fs ledger idempotency survives a sink/process restart for the same work-item ref", () => {
+  const dir = mkdtempSync(join(tmpdir(), "archon-ledger-restart-"));
+  const path = join(dir, "ledger.jsonl");
+  try {
+    const first = new JsonlLedgerSink({ transport: createJsonlTransport(path), logger: quietLogger });
+    first.post(SAMPLE);
+
+    // A fresh sink + transport models a process restart (empty RAM dedupe set).
+    const restarted = new JsonlLedgerSink({ transport: createJsonlTransport(path), logger: quietLogger });
+    restarted.post(SAMPLE);
+
+    const lines = readFileSync(path, "utf8").trim().split("\n");
+    assert.equal(lines.length, 1, "restart retry did not append a second durable effect");
+    assert.equal(JSON.parse(lines[0]!).ref, SAMPLE.ref);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // ── The end-to-end HITL guarantee through the AGENT, using the real ledger sink ──────
 
 const CLEAN_KNOWN_VENDOR: RawInvoice = {
@@ -178,7 +197,7 @@ test("approve() → the real ledger sink is appended ONCE with a balanced entry 
   await agent.approve(item.id);
   assert.equal(transport.lines.length, 1, "approval wrote exactly one real ledger entry");
   const written = JSON.parse(transport.lines[0]!) as LedgerEntry;
-  assert.equal(written.ref, item.invoice.invoice_id, "the persisted entry is keyed to the approved invoice");
+  assert.equal(written.ref, item.id, "the persisted entry uses the server work-item idempotency key");
   const debit = written.lines.reduce((s, l) => s + (l.debit ?? 0), 0);
   const credit = written.lines.reduce((s, l) => s + (l.credit ?? 0), 0);
   assert.equal(debit, credit, "the persisted double-entry balances");

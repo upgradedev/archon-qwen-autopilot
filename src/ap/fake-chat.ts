@@ -64,6 +64,10 @@ function chooseNextTool(e: Evidence): ToolCall {
   if (e.dup_candidate && !e.dup_checked) {
     return analysis("check_duplicate", "Recall surfaced a matching prior invoice — confirm whether this is a duplicate (R5).");
   }
+  // 3) Run the structural checks R1–R4 before judging the amount or acting.
+  if (!e.validated) {
+    return analysis("validate_invoice", "Run the structural cross-checks R1–R4 before deciding.");
+  }
   if (e.duplicate) {
     return terminal("flag_for_review", {
       reason: "Confirmed likely duplicate of a previously processed invoice for this vendor.",
@@ -71,10 +75,6 @@ function chooseNextTool(e: Evidence): ToolCall {
       reasoning: "Duplicate risk outranks every other signal — paying again would double-pay the vendor.",
       confidence: 0.9,
     });
-  }
-  // 3) Run the structural checks R1–R4 before judging the amount or acting.
-  if (!e.validated) {
-    return analysis("validate_invoice", "Run the structural cross-checks R1–R4 before deciding.");
   }
   // 4) The amount looks unusual → CONFIRM the anomaly before acting.
   if (e.anomaly_candidate && !e.variance_computed) {

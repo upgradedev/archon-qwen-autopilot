@@ -25,6 +25,7 @@ import { SmtpEmailSink } from "./ap/smtp-sink.js";
 import { JsonlLedgerSink } from "./ap/ledger-sink.js";
 import { hasDatabase } from "./db/client.js";
 import { AutopilotAgent } from "./agents/autopilot-agent.js";
+import { hasQwenCreds } from "./qwen/client.js";
 
 // The default sink bundle: in-memory Fakes for payment / reviews, plus TWO real sinks
 // when configured — a REAL SMTP email sink (SMTP_HOST) and a REAL durable JSONL ledger
@@ -50,6 +51,31 @@ export interface AutopilotDeps {
 // Resolve the full dependency set, filling any not explicitly injected with the
 // environment-selected default. Callers (HTTP + MCP) pass overrides in tests.
 export function resolveDeps(deps: Partial<AutopilotDeps> = {}): AutopilotDeps {
+  const production = process.env.NODE_ENV === "production";
+  const allowFakeQwen = envFlag("ALLOW_FAKE_QWEN");
+  const allowMemoryStore = envFlag("ALLOW_IN_MEMORY_STORE");
+  if (
+    production &&
+    !allowFakeQwen &&
+    !hasQwenCreds() &&
+    (!deps.embedder || !deps.loop)
+  ) {
+    throw new Error(
+      "production requires DASHSCOPE_API_KEY for the Qwen embedder/decider; " +
+        "set ALLOW_FAKE_QWEN=true only for an explicitly non-production demonstration"
+    );
+  }
+  if (
+    production &&
+    !allowMemoryStore &&
+    !hasDatabase() &&
+    (!deps.memory || !deps.workitems)
+  ) {
+    throw new Error(
+      "production requires DATABASE_URL for durable memory/work items; " +
+        "set ALLOW_IN_MEMORY_STORE=true only for an explicitly ephemeral demonstration"
+    );
+  }
   return {
     embedder: deps.embedder ?? defaultEmbedder(),
     memory: deps.memory ?? (hasDatabase() ? new PgVectorStore() : new InMemoryStore()),
@@ -57,6 +83,10 @@ export function resolveDeps(deps: Partial<AutopilotDeps> = {}): AutopilotDeps {
     loop: deps.loop ?? defaultLoop(),
     sinks: deps.sinks ?? defaultSinks(),
   };
+}
+
+function envFlag(name: string): boolean {
+  return /^(1|true|yes|on)$/i.test(process.env[name]?.trim() ?? "");
 }
 
 // Build the AutopilotAgent both surfaces share, from resolved (or injected) deps.

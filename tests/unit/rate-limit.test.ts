@@ -66,11 +66,14 @@ test("the global backstop bounds TOTAL spend even across many distinct clients",
   assert.equal(over.used, 0); // this client never consumed anything
 });
 
-test("the global backstop is never lower than the per-client cap", () => {
-  // A caller-supplied global below the per-client cap is clamped up, so one client can
-  // always at least reach its own documented cap.
+test("an operator's hard global backstop is never silently widened", () => {
   const rl = new DailyRateLimiter(50, () => new Date("2026-07-06T00:00:00Z"), 5);
-  assert.equal(rl.snapshot("x").globalLimit, 50);
+  assert.equal(rl.snapshot("x").globalLimit, 5);
+  for (let i = 0; i < 5; i++) assert.equal(rl.consume("x").allowed, true);
+  const over = rl.consume("x");
+  assert.equal(over.allowed, false);
+  assert.equal(over.scope, "global");
+  assert.equal(over.globalUsed, 5);
 });
 
 test("keyless consumers share one bucket (the default key)", () => {

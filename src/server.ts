@@ -18,7 +18,7 @@
 // a pgvector database in production, unchanged. Absent a DATABASE_URL the server
 // falls back to in-memory stores; absent a DASHSCOPE_API_KEY it uses the Fakes.
 
-import Fastify from "fastify";
+import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import cors from "@fastify/cors";
@@ -26,15 +26,24 @@ import helmet from "@fastify/helmet";
 import multipart from "@fastify/multipart";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { hasDatabase } from "./db/client.js";
+import { hasDatabase, query } from "./db/client.js";
 import { UI_HTML } from "./ui.js";
 import { buildAgent, type AutopilotDeps } from "./deps.js";
 import { skillCatalog } from "./skills/catalog.js";
-import { ConflictError, NotFoundError } from "./agents/autopilot-agent.js";
-import { DailyRateLimiter } from "./ap/rate-limit.js";
+import {
+  ConflictError,
+  ExecutionUncertainError,
+  NotFoundError,
+} from "./agents/autopilot-agent.js";
+import { InvalidToolArgsError } from "./ap/tools.js";
+import {
+  DailyRateLimiter,
+  PostgresDailyRateLimiter,
+  type UploadRateLimiter,
+} from "./ap/rate-limit.js";
 import {
   defaultExtractionClient,
   validateDocument,
@@ -45,7 +54,12 @@ import {
 } from "./qwen/vision.js";
 import { scanForInjection } from "./qwen/injection-scan.js";
 import { assessRelevance } from "./qwen/relevance.js";
-import type { TraceStep, WorkItem } from "./types.js";
+import {
+  EXTRACTION_REVIEW_THRESHOLD,
+  hasLowExtractionConfidence,
+} from "./ap/extraction-confidence.js";
+import { hasQwenCreds } from "./qwen/client.js";
+import type { ToolName, TraceStep, WorkItem } from "./types.js";
 
 const pkg = createRequire(import.meta.url)("../package.json") as { version: string };
 
@@ -54,10 +68,15 @@ const pkg = createRequire(import.meta.url)("../package.json") as { version: stri
 // not have: the daily upload rate limiter (the open demo's budget guardrail). It is
 // injectable so a test can supply a limiter with a low cap + a fake clock.
 export type ServerDeps = AutopilotDeps & {
-  rateLimiter?: DailyRateLimiter;
+  rateLimiter?: UploadRateLimiter;
   // The document vision-extractor (PDF/PNG/JPG → raw invoice). HTTP-only, like the
   // rate limiter, and injectable so tests supply the offline FakeExtractionClient.
   extractor?: ExtractionClient;
+  // HTTP reviewer boundary. Undefined reads the environment; null/empty means
+  // deliberately unconfigured and therefore fail-closed (503 on reviewer APIs).
+  reviewerToken?: string | null;
+  reviewerName?: string;
+  corsOrigins?: string[];
 };
 
 // Response bodies are intentionally permissive (`additionalProperties: true`).
@@ -78,11 +97,18 @@ const looseObject = { type: "object", additionalProperties: true } as const;
 const errorResponse = {
   type: "object",
   additionalProperties: true,
-  properties: { error: { type: "string" } },
+  properties: { error: { type: "string" }, requestId: { type: "string" } },
 } as const;
 
 export async function buildServer(deps: Partial<ServerDeps> = {}) {
-  const app = Fastify({ logger: true });
+  const maxJsonBytes = boundedEnvInt("MAX_JSON_BODY_BYTES", 256 * 1024, 16 * 1024, 1024 * 1024);
+  const app = Fastify({
+    logger: true,
+    bodyLimit: maxJsonBytes,
+    // Strict request schemas must reject unknown reviewer-control fields rather
+    // than Fastify/Ajv silently deleting them before the handler sees the body.
+    ajv: { customOptions: { removeAdditional: false } },
+  });
 
   // Security response headers (HSTS · X-Frame-Options · X-Content-Type-Options ·
   // Referrer-Policy · …). The Content-Security-Policy default is DISABLED on
@@ -91,20 +117,57 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
   // apply to every route.
   await app.register(helmet, { contentSecurityPolicy: false });
 
+  const configuredOrigins = (
+    deps.corsOrigins ??
+    (process.env.CORS_ORIGINS || process.env.CORS_ORIGIN || "").split(",")
+  )
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (configuredOrigins.includes("*")) {
+    throw new Error("CORS_ORIGINS must list exact trusted origins; wildcard '*' is not allowed");
+  }
+  const allowedOrigins = new Set(configuredOrigins);
   await app.register(cors, {
-    origin: process.env.CORS_ORIGIN
-      ? process.env.CORS_ORIGIN.split(",").map((s) => s.trim())
-      : true,
+    // With no allowlist we emit no cross-origin permission. Same-origin browser
+    // traffic continues to work and needs no CORS response header.
+    origin: (origin, cb) => cb(null, !origin || allowedOrigins.has(origin)),
+    credentials: false,
   });
 
-  // A single, typed error envelope for anything that throws past a route handler:
-  // never leak a raw stack — always `{ error: <message> }` with a sane status.
-  // Explicit `.send({ error })` responses in the routes below are unaffected (they
-  // never throw); this catches the rest (e.g. the guard() rethrow path).
+  const reviewerToken =
+    deps.reviewerToken === undefined
+      ? process.env.REVIEWER_TOKEN?.trim() || null
+      : deps.reviewerToken?.trim() || null;
+  if (process.env.NODE_ENV === "production" && deps.reviewerToken === undefined && !reviewerToken) {
+    throw new Error("production requires REVIEWER_TOKEN; refusing to start an unprotected approval queue");
+  }
+  if (process.env.NODE_ENV === "production" && reviewerToken && reviewerToken.length < 32) {
+    throw new Error("REVIEWER_TOKEN must contain at least 32 characters in production");
+  }
+  const reviewerName = (deps.reviewerName ?? process.env.REVIEWER_NAME ?? "authenticated-reviewer").trim();
+  const reviewerAuth = async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
+    if (!reviewerToken) {
+      sendServerError(req, reply, 503, "reviewer service unavailable");
+      return;
+    }
+    const supplied = bearerToken(req.headers.authorization) || headerToken(req.headers["x-reviewer-token"]);
+    if (!supplied || !safeTokenEqual(supplied, reviewerToken)) {
+      reply.header("www-authenticate", 'Bearer realm="archon-reviewer"');
+      reply.code(401).send({ error: "valid reviewer credentials are required" });
+    }
+  };
+
+  // A single, typed error envelope for anything that throws past a route handler.
+  // Client errors may retain their actionable message; every 5xx is deliberately
+  // generic and carries only a request id. Detailed causes stay in server logs.
   app.setErrorHandler((err: { statusCode?: number; message?: string }, req, reply) => {
-    req.log.error(err);
     const status =
       typeof err.statusCode === "number" && err.statusCode >= 400 ? err.statusCode : 500;
+    if (status >= 500) {
+      sendServerError(req, reply, status, genericServerMessage(status), err);
+      return;
+    }
+    req.log.warn({ err, requestId: req.id }, "request rejected");
     reply.code(status).send({ error: err.message || "internal server error" });
   });
 
@@ -130,9 +193,10 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
           "real, amend to edit then execute, or reject to discard. The full step trace is " +
           "persisted so a human can see HOW the agent decided. On approval the outcome is " +
           "written back to memory so the next decision for that vendor is better grounded. " +
-          "The vendor-reply sink delivers over real SMTP when configured; the ledger / " +
-          "payment sinks are simulated in-memory adapters (interfaces ready for real " +
-          "ledger / payment rails); the loop and the read/analyze tools + memory " +
+          "The vendor-reply sink delivers over real SMTP when configured; the journal " +
+          "sink appends to a JSONL ledger when configured; payment/review remain " +
+          "simulated adapters. Reviewer APIs require a Bearer token, and every " +
+          "execution is atomically claimed before a sink can run. The loop and memory " +
           "grounding are real.",
         version: pkg.version,
       },
@@ -142,6 +206,16 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
         { name: "approval", description: "The human-in-the-loop approval gate" },
         { name: "skills", description: "Introspect the custom Qwen skill catalog" },
       ],
+      components: {
+        securitySchemes: {
+          reviewerBearer: {
+            type: "http",
+            scheme: "bearer",
+            bearerFormat: "opaque reviewer token",
+            description: "REVIEWER_TOKEN supplied to judges out-of-band.",
+          },
+        },
+      },
     },
   });
 
@@ -171,7 +245,8 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
   // The open demo's budget guardrail: invoice uploads are capped per UTC day. Built
   // per server instance (never a module singleton, so counts never bleed across
   // tests). See src/ap/rate-limit.ts for the 20/day rationale.
-  const rateLimiter = deps.rateLimiter ?? new DailyRateLimiter();
+  const rateLimiter =
+    deps.rateLimiter ?? (hasDatabase() ? new PostgresDailyRateLimiter() : new DailyRateLimiter());
 
   // The document vision-extractor: real Qwen (qwen-vl-max) when a DASHSCOPE key is
   // set, else the deterministic offline FakeExtractionClient — same env-based
@@ -214,6 +289,75 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
       decider: loop.modelId,
       store: hasDatabase() ? "pgvector" : "in-memory",
     })
+  );
+
+  // Readiness is intentionally different from /health: it verifies the configured
+  // database, the reviewer security boundary, and (optionally) performs a real
+  // Qwen embedding call. It never claims a provider was probed when it was not.
+  app.get(
+    "/ready",
+    {
+      schema: {
+        summary: "Dependency and security readiness",
+        description:
+          "Checks reviewer auth and the configured database. Set READY_PROBE_QWEN=true for a live " +
+          "Qwen embedding probe; otherwise the provider result is explicitly configuration-only.",
+        tags: ["health"],
+        response: { 200: looseObject, 503: looseObject },
+      },
+    },
+    async (req, reply) => {
+      const requireDatabase = envFlag("READY_REQUIRE_DATABASE", process.env.NODE_ENV === "production");
+      const requireQwen = envFlag("READY_REQUIRE_QWEN", process.env.NODE_ENV === "production");
+      const probeQwen = envFlag("READY_PROBE_QWEN", false);
+      const checks: Record<string, unknown> = {
+        reviewerAuth: { ok: Boolean(reviewerToken), configured: Boolean(reviewerToken) },
+      };
+      let ok = Boolean(reviewerToken);
+
+      if (hasDatabase()) {
+        try {
+          await query("SELECT 1 AS ready");
+          checks.database = { ok: true, mode: "postgres", probed: true };
+        } catch (err) {
+          ok = false;
+          checks.database = { ok: false, mode: "postgres", probed: true, error: safeError(err) };
+        }
+      } else {
+        const dbOk = !requireDatabase;
+        ok = ok && dbOk;
+        checks.database = { ok: dbOk, mode: "in-memory", probed: false, required: requireDatabase };
+      }
+
+      const qwenConfigured = hasQwenCreds();
+      if (probeQwen && qwenConfigured) {
+        try {
+          const vector = await embedder.embed("archon readiness probe");
+          const providerOk = vector.length === embedder.dim;
+          ok = ok && providerOk;
+          checks.qwen = { ok: providerOk, configured: true, probed: true, model: embedder.modelId };
+        } catch (err) {
+          ok = false;
+          checks.qwen = { ok: false, configured: true, probed: true, model: embedder.modelId, error: safeError(err) };
+        }
+      } else {
+        const providerOk = qwenConfigured || !requireQwen;
+        ok = ok && providerOk;
+        checks.qwen = {
+          ok: providerOk,
+          configured: qwenConfigured,
+          probed: false,
+          mode: qwenConfigured ? "configured-not-probed" : "offline-fake",
+          required: requireQwen,
+          model: embedder.modelId,
+        };
+      }
+
+      if (!ok) {
+        return sendServerError(req, reply, 503, "service not ready", { checks });
+      }
+      return reply.code(200).send({ status: "ready", checks });
+    }
   );
 
   // Introspect the custom Qwen skill catalog — the SAME function schemas the
@@ -265,7 +409,7 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
       // the loop. So an invalid or over-limit upload never reaches the agent.
       const raw = extractInvoice(req.body);
       if (!raw) return reply.code(400).send({ error: "an invoice payload is required (send { invoice: {...} })" });
-      const rl = rateLimiter.consume(clientKey(req));
+      const rl = await rateLimiter.consume(clientKey(req));
       if (!rl.allowed) return reply.code(429).send(rateLimitError(rl));
       // The loop reaches out to Qwen; a decider/embedder failure is an UPSTREAM
       // dependency error, so surface it as a clean 503 { error } rather than letting
@@ -275,8 +419,7 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
       try {
         return await agent.intake(raw);
       } catch (err) {
-        const msg = err instanceof Error ? err.message : "the decision service is unavailable";
-        return reply.code(503).send({ error: `the decision service is unavailable: ${msg}` });
+        return sendServerError(req, reply, 503, "decision service unavailable", err);
       }
     }
   );
@@ -320,7 +463,7 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
       const ticketed = ticket !== "" && processTickets.delete(ticket);
       let remaining = -1;
       if (!ticketed) {
-        const rl = rateLimiter.consume(clientKey(req));
+        const rl = await rateLimiter.consume(clientKey(req));
         if (!rl.allowed) return reply.code(429).send(rateLimitError(rl));
         remaining = rl.remaining;
       }
@@ -341,7 +484,8 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
         send("proposal", item);
         send("done", { id: item.id });
       } catch (err) {
-        send("error", { error: err instanceof Error ? err.message : "intake failed" });
+        req.log.error({ err, requestId: req.id }, "streamed intake failed");
+        send("error", { error: "intake failed", requestId: String(req.id) });
       } finally {
         res.end();
       }
@@ -395,8 +539,9 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
         send("extracting", { message: `Extracting document with Qwen-VL (${extractor.modelId})…`, model: extractor.modelId });
         const extracted = await extractor.extract({ buffer, filename, mimetype });
         // Advisory input-safety scan (injection detection + relevance). It does NOT
-        // change the decision — the fence already neutralized any injection and the
-        // human gate is unchanged; it only makes the neutralized attack VISIBLE.
+        // change the decision: the fence labels untrusted data, while tool separation
+        // and the authenticated human gate block autonomous execution. The scan only
+        // makes recognized attack text VISIBLE.
         const safety = inputSafety(extracted);
         send("extracted", {
           message: "Document extracted — running the decision loop.",
@@ -407,11 +552,11 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
           security: safety.security,
           relevance: safety.relevance,
         });
-        // Surface a NEUTRALIZED prompt-injection as its own live trace event so it
-        // shows in the stream. Advisory: the loop below still runs unchanged.
+        // Surface a recognized prompt-injection as its own live trace event. This is
+        // advisory: the loop still runs and the human execution gate is unchanged.
         if (safety.security.injectionDetected) {
           send("security", {
-            message: `⚠️ This document contained ${safety.security.injectionCount} suspected injected instruction(s) — shown as data, never followed.`,
+            message: `⚠️ This document contained ${safety.security.injectionCount} suspected injected instruction(s) — labeled as untrusted data; autonomous execution remains blocked by the human gate.`,
             ...safety.security,
           });
         }
@@ -419,7 +564,8 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
         send("proposal", item);
         send("done", { id: item.id });
       } catch (err) {
-        send("error", { error: err instanceof Error ? err.message : "document extraction failed" });
+        req.log.error({ err, requestId: req.id }, "streamed document processing failed");
+        send("error", { error: "document processing failed", requestId: String(req.id) });
       } finally {
         res.end();
       }
@@ -461,7 +607,7 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
       try {
         const extracted = await extractor.extract({ buffer, filename, mimetype });
         // Advisory input-safety scan surfaced for the human reviewer: whether the
-        // document carried a (neutralized) prompt-injection, and whether it even looks
+        // document carried a recognized prompt-injection pattern, and whether it looks
         // like an invoice. Neither changes the flow — the reviewer still decides.
         const safety = inputSafety(extracted);
         // Mint a single-use ticket so the follow-up /intake/stream skips the limiter.
@@ -479,7 +625,7 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
           relevance: safety.relevance,
         };
       } catch (err) {
-        return reply.code(502).send({ error: err instanceof Error ? err.message : "document extraction failed" });
+        return sendServerError(req, reply, 502, "document extraction service unavailable", err);
       }
     }
   );
@@ -503,10 +649,12 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
   app.get(
     "/pending",
     {
+      preHandler: reviewerAuth,
       schema: {
         summary: "The approval queue",
         description: "Lists the proposed actions awaiting a human decision (oldest first).",
         tags: ["approval"],
+        security: [{ reviewerBearer: [] }],
         response: { 200: looseObject },
       },
     },
@@ -516,6 +664,7 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
   app.get(
     "/decided",
     {
+      preHandler: reviewerAuth,
       schema: {
         summary: "The decided history",
         description:
@@ -523,6 +672,7 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
           "most-recently-decided first, each with its outcome, decision timestamp, and (for an " +
           "amended item) the prev → new amend audit trail. Read-only: decided items never re-execute.",
         tags: ["approval"],
+        security: [{ reviewerBearer: [] }],
         response: { 200: looseObject },
       },
     },
@@ -532,10 +682,12 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
   app.post<{ Params: { id: string } }>(
     "/approve/:id",
     {
+      preHandler: reviewerAuth,
       schema: {
         summary: "Approve a proposed action",
         description: "A human approves the proposal → the chosen tool executes for real and the outcome is written back to memory.",
         tags: ["approval"],
+        security: [{ reviewerBearer: [] }],
         params: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
         response: { 200: looseObject, 404: errorResponse, 409: errorResponse },
       },
@@ -543,47 +695,98 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
     (req, reply) => guard(reply, () => agent.approve(req.params.id))
   );
 
-  app.post<{ Params: { id: string }; Body: { args?: Record<string, unknown>; reason?: string } }>(
+  app.post<{
+    Params: { id: string };
+    Body: {
+      args?: Record<string, unknown>;
+      tool?: ToolName;
+      confirmToolOverride?: boolean;
+      reason?: string;
+    };
+  }>(
     "/amend/:id",
     {
+      preHandler: reviewerAuth,
       schema: {
         summary: "Amend then approve a proposed action",
         description:
           "A human edits the proposed DOMAIN arguments and approves → the amended args are EXACTLY what execute. " +
-          "Body: { args: { ...edited fields }, reason?: string }.",
+          "A tool override is allowed only with tool + confirmToolOverride=true + an audit reason.",
         tags: ["approval"],
+        security: [{ reviewerBearer: [] }],
         params: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
         body: {
           type: "object",
-          additionalProperties: true,
+          additionalProperties: false,
           properties: {
             args: { type: "object", additionalProperties: true, description: "Edited domain arguments, merged onto the proposal." },
-            reason: { type: "string", description: "Why the proposal was amended." },
+            tool: {
+              type: "string",
+              enum: ["draft_journal_entry", "draft_payment", "draft_vendor_reply", "flag_for_review"],
+              description: "Reviewer-authorized replacement tool. Requires explicit confirmation and reason.",
+            },
+            confirmToolOverride: { type: "boolean" },
+            reason: { type: "string", maxLength: 1000, description: "Why the proposal was amended." },
           },
         },
         response: { 200: looseObject, 404: errorResponse, 409: errorResponse },
       },
     },
-    (req, reply) => guard(reply, () => agent.amend(req.params.id, req.body ?? {}))
+    (req, reply) =>
+      guard(reply, () =>
+        agent.amend(req.params.id, { ...(req.body ?? {}), by: reviewerName })
+      )
   );
 
   app.post<{ Params: { id: string }; Body: { reason?: string } }>(
     "/reject/:id",
     {
+      preHandler: reviewerAuth,
       schema: {
         summary: "Reject a proposed action",
         description: "A human discards the proposal → nothing executes. The rejection is remembered.",
         tags: ["approval"],
+        security: [{ reviewerBearer: [] }],
         params: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
         body: {
           type: "object",
-          additionalProperties: true,
-          properties: { reason: { type: "string", description: "Why the proposal was rejected." } },
+          additionalProperties: false,
+          properties: { reason: { type: "string", maxLength: 1000, description: "Why the proposal was rejected." } },
         },
         response: { 200: looseObject, 404: errorResponse, 409: errorResponse },
       },
     },
     (req, reply) => guard(reply, () => agent.reject(req.params.id, req.body?.reason))
+  );
+
+  app.post<{
+    Params: { id: string };
+    Body: { action: "retry" | "mark_completed"; reason: string };
+  }>(
+    "/recover/:id",
+    {
+      preHandler: reviewerAuth,
+      schema: {
+        summary: "Reconcile an uncertain execution",
+        description:
+          "For an item left in executing after a sink failure: retry only after verifying no side effect " +
+          "completed, or mark_completed after verifying it did. Never auto-retries.",
+        tags: ["approval"],
+        security: [{ reviewerBearer: [] }],
+        params: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
+        body: {
+          type: "object",
+          additionalProperties: false,
+          required: ["action", "reason"],
+          properties: {
+            action: { type: "string", enum: ["retry", "mark_completed"] },
+            reason: { type: "string", minLength: 1, maxLength: 1000 },
+          },
+        },
+        response: { 200: looseObject, 404: errorResponse, 409: errorResponse },
+      },
+    },
+    (req, reply) => guard(reply, () => agent.recover(req.params.id, req.body.action, req.body.reason))
   );
 
   return app;
@@ -600,7 +803,7 @@ type UploadResult =
 // Parse the multipart file, validate it, and consume ONE daily slot — in that exact
 // order, so a bad/oversized file returns a clean 400/413 and never costs a slot, and
 // an over-limit upload returns 429. The caller sends `{ error }` on !ok, else proceeds.
-async function readAndValidateUpload(req: unknown, rateLimiter: DailyRateLimiter): Promise<UploadResult> {
+async function readAndValidateUpload(req: unknown, rateLimiter: UploadRateLimiter): Promise<UploadResult> {
   // 1) Parse the multipart file. A non-multipart request or a missing file part
   //    is a 400 — before anything is consumed.
   let filename = "";
@@ -635,7 +838,7 @@ async function readAndValidateUpload(req: unknown, rateLimiter: DailyRateLimiter
   if (!mb.ok) return { ok: false, status: mb.status, body: { error: mb.error } };
 
   // 3) Consume the daily budget (429 when the cap is reached), keyed by the client.
-  const rl = rateLimiter.consume(clientKey(req));
+  const rl = await rateLimiter.consume(clientKey(req));
   if (!rl.allowed) return { ok: false, status: 429, body: rateLimitError(rl) };
 
   return { ok: true, filename, mimetype, buffer, remaining: rl.remaining };
@@ -643,16 +846,16 @@ async function readAndValidateUpload(req: unknown, rateLimiter: DailyRateLimiter
 
 // Advisory input-safety summary for an uploaded document. Runs the read-only
 // prompt-injection scan + the relevance gate over the vision-extracted invoice.
-// ADVISORY ONLY — NEITHER changes behavior: the decider fence has already
-// neutralized any injection (it lands as fenced DATA), and an irrelevant document
-// still goes to the human gate. This only SURFACES what was found, so the response,
-// the live trace, and the approval UI can SHOW the neutralized attack.
+// ADVISORY ONLY — NEITHER changes behavior. The fence labels document text as
+// untrusted DATA; structural tool separation and the authenticated human gate block
+// autonomous execution. An irrelevant document still goes to the human gate. This
+// only SURFACES recognized patterns without claiming universal model-level immunity.
 function inputSafety(extracted: ExtractionResult): {
   security: {
     injectionDetected: boolean;
     injectionCount: number;
     matches: ReturnType<typeof scanForInjection>["matches"];
-    neutralized: true;
+    autonomousExecutionBlocked: true;
   };
   relevance: { relevant: boolean; reason: string };
 } {
@@ -662,7 +865,7 @@ function inputSafety(extracted: ExtractionResult): {
       injectionDetected: scan.detected,
       injectionCount: scan.count,
       matches: scan.matches,
-      neutralized: true, // the fence already made it inert — this block just reports it
+      autonomousExecutionBlocked: true, // structural tool separation + human gate
     },
     relevance: assessRelevance(extracted.invoice),
   };
@@ -678,11 +881,23 @@ export const LOW_CONFIDENCE_THRESHOLD = Number(process.env.LOW_CONFIDENCE_THRESH
 // Attach derived, read-only review flags to a pending item for the approval surface.
 // Adds `lowConfidence` (see the threshold above). Does NOT mutate the stored item or
 // change any decision — advisory presentation only.
-export function withReviewFlags(item: WorkItem): WorkItem & { lowConfidence: boolean } {
+export function withReviewFlags(item: WorkItem): WorkItem & {
+  lowConfidence: boolean;
+  lowExtractionConfidence: boolean;
+  requiresCarefulReview: boolean;
+} {
   const c = item.proposed?.confidence;
   const lowConfidence = typeof c === "number" && c < LOW_CONFIDENCE_THRESHOLD;
-  return { ...item, lowConfidence };
+  const lowExtractionConfidence = hasLowExtractionConfidence(item.invoice.extraction_confidence);
+  return {
+    ...item,
+    lowConfidence,
+    lowExtractionConfidence,
+    requiresCarefulReview: lowConfidence || lowExtractionConfidence,
+  };
 }
+
+export { EXTRACTION_REVIEW_THRESHOLD };
 
 // Accept either { invoice: {...} } or a bare invoice object; return the invoice
 // record, or null when there is no usable payload (→ 400). Shared by /intake +
@@ -738,11 +953,73 @@ async function guard<T>(reply: import("fastify").FastifyReply, fn: () => Promise
   } catch (err) {
     if (err instanceof NotFoundError) return reply.code(404).send({ error: err.message });
     if (err instanceof ConflictError) return reply.code(409).send({ error: err.message });
+    if (err instanceof InvalidToolArgsError) return reply.code(400).send({ error: err.message });
+    if (err instanceof ExecutionUncertainError) {
+      return sendServerError(
+        reply.request,
+        reply,
+        502,
+        "execution could not be confirmed; reconcile it before retrying",
+        err
+      );
+    }
     if (isInvalidUuidError(err)) {
       return reply.code(400).send({ error: "invalid work item id — expected a UUID" });
     }
     throw err;
   }
+}
+
+function bearerToken(value: string | undefined): string | null {
+  if (!value) return null;
+  const match = /^Bearer\s+(.+)$/i.exec(value.trim());
+  return match?.[1]?.trim() || null;
+}
+
+function headerToken(value: string | string[] | undefined): string | null {
+  if (typeof value === "string") return value.trim() || null;
+  return Array.isArray(value) && typeof value[0] === "string" ? value[0].trim() || null : null;
+}
+
+function safeTokenEqual(supplied: string, expected: string): boolean {
+  const left = createHash("sha256").update(supplied, "utf8").digest();
+  const right = createHash("sha256").update(expected, "utf8").digest();
+  return timingSafeEqual(left, right);
+}
+
+function sendServerError(
+  req: FastifyRequest,
+  reply: FastifyReply,
+  status: number,
+  message: string,
+  detail?: unknown
+): FastifyReply {
+  const requestId = String(req.id);
+  req.log.error({ err: detail, requestId, status }, message);
+  return reply.code(status).send({ error: message, requestId });
+}
+
+function genericServerMessage(status: number): string {
+  if (status === 502) return "upstream service error";
+  if (status === 503) return "service unavailable";
+  if (status === 504) return "upstream service timeout";
+  return "internal server error";
+}
+
+function envFlag(name: string, fallback: boolean): boolean {
+  const raw = process.env[name];
+  if (raw == null || raw.trim() === "") return fallback;
+  return /^(1|true|yes|on)$/i.test(raw.trim());
+}
+
+function boundedEnvInt(name: string, fallback: number, min: number, max: number): number {
+  const parsed = Number(process.env[name]);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, Math.trunc(parsed)));
+}
+
+function safeError(err: unknown): string {
+  return (err instanceof Error ? err.message : String(err)).replace(/[\r\n\0]/g, " ").slice(0, 500);
 }
 
 // True for the Postgres "invalid input syntax for type uuid" error (SQLSTATE 22P02),

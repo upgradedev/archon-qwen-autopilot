@@ -7,7 +7,7 @@
 // structural rules pure makes them exhaustively unit-testable with no infra.
 //
 //   R1  amount sanity      — a positive, finite total is present
-//   R2  required fields    — vendor, vendor_ref and tax_id are present
+//   R2  required fields    — vendor, vendor_ref, date, currency and tax_id are present
 //   R3  tax consistency     — subtotal + tax reconciles to total (within €0.01)
 //   R4  line-item integrity — line items (if any) sum to the subtotal/total
 //
@@ -19,6 +19,7 @@ import type {
   RecalledFact,
   ValidationFinding,
 } from "../types.js";
+import { canonicalReference, canonicalVendorKey } from "./normalize.js";
 
 const CENT = 0.01;
 
@@ -42,9 +43,11 @@ function ruleRequiredFields(inv: NormalizedInvoice): ValidationFinding {
   const missing: string[] = [];
   if (!inv.vendor) missing.push("vendor");
   if (!inv.vendor_ref) missing.push("vendor_ref");
+  if (!inv.invoice_date) missing.push("invoice_date");
+  if (inv.currency === "UNKNOWN") missing.push("currency");
   if (!inv.tax_id) missing.push("tax_id");
   if (missing.length === 0) {
-    return finding("R2", true, "info", "Vendor, vendor_ref and tax_id are all present.");
+    return finding("R2", true, "info", "Vendor, vendor_ref, invoice_date, currency and tax_id are all present.");
   }
   return finding(
     "R2",
@@ -78,7 +81,15 @@ function ruleLineItems(inv: NormalizedInvoice): ValidationFinding {
   }
   const amounts = inv.line_items.map((l) => l.amount).filter((a): a is number => a != null);
   if (amounts.length === 0) {
-    return finding("R4", true, "warn", "Line items present but carry no reconcilable amounts.");
+    return finding("R4", false, "warn", "Line items are present but none carry a reconcilable amount; human clarification is required.");
+  }
+  if (amounts.length !== inv.line_items.length) {
+    return finding(
+      "R4",
+      false,
+      "warn",
+      `Only ${amounts.length} of ${inv.line_items.length} line items carry a reconcilable amount; the invoice is incomplete.`
+    );
   }
   const sum = round2(amounts.reduce((s, a) => s + a, 0));
   const target = inv.subtotal ?? inv.total;
@@ -105,10 +116,13 @@ export function detectDuplicate(
   priorInvoices: PriorInvoice[]
 ): ValidationFinding {
   for (const p of priorInvoices) {
-    if (p.invoiceId === inv.invoice_id) continue; // don't match a re-read of itself
-    const sameVendor = !!inv.vendor && norm(p.vendor) === norm(inv.vendor);
+    const sameVendor = !!inv.vendor && canonicalVendorKey(p.vendor) === canonicalVendorKey(inv.vendor);
     if (!sameVendor) continue;
-    if (inv.vendor_ref && p.vendorRef && norm(p.vendorRef) === norm(inv.vendor_ref)) {
+    if (
+      inv.vendor_ref &&
+      p.vendorRef &&
+      canonicalReference(p.vendorRef) === canonicalReference(inv.vendor_ref)
+    ) {
       return finding(
         "R5",
         false,
@@ -120,6 +134,7 @@ export function detectDuplicate(
       inv.total != null &&
       p.total != null &&
       Math.abs(p.total - inv.total) <= CENT &&
+      (!p.currency || p.currency === inv.currency) &&
       inv.invoice_date &&
       p.date &&
       p.date === inv.invoice_date
@@ -128,7 +143,8 @@ export function detectDuplicate(
         "R5",
         false,
         "error",
-        `Likely DUPLICATE: ${inv.vendor} already has an invoice for ${money(inv.total, inv.currency)} on ${inv.invoice_date} (${p.invoiceId}).`
+        `Suspected duplicate fingerprint: ${inv.vendor} already has an invoice for ${money(inv.total, inv.currency)} ` +
+          `on ${inv.invoice_date} (${p.invoiceId}). Amount/date matches require human review; this does not merge the invoices.`
       );
     }
   }
@@ -143,7 +159,13 @@ export function detectAmountAnomaly(
 ): ValidationFinding {
   if (inv.total == null) return finding("R6", true, "info", "No total to compare against vendor history.");
   const amounts = priorInvoices
-    .filter((p) => !!inv.vendor && norm(p.vendor) === norm(inv.vendor) && p.total != null)
+    .filter(
+      (p) =>
+        !!inv.vendor &&
+        canonicalVendorKey(p.vendor) === canonicalVendorKey(inv.vendor) &&
+        (!p.currency || p.currency === inv.currency) &&
+        p.total != null
+    )
     .map((p) => p.total!) as number[];
   if (amounts.length === 0) {
     return finding("R6", true, "info", "New vendor — no prior amount history to compare against.");
@@ -167,6 +189,7 @@ export interface PriorInvoice {
   vendorRef: string | null;
   total: number | null;
   date: string | null;
+  currency?: string | null;
 }
 
 // Lift PriorInvoice facts out of recalled `invoice`-kind memories' metadata.
@@ -182,6 +205,7 @@ export function priorInvoicesFromRecall(hits: Array<{ metadata: Record<string, u
       vendorRef: typeof m["vendor_ref"] === "string" ? (m["vendor_ref"] as string) : null,
       total: typeof m["total"] === "number" ? (m["total"] as number) : null,
       date: typeof m["invoice_date"] === "string" ? (m["invoice_date"] as string) : null,
+      currency: typeof m["currency"] === "string" ? (m["currency"] as string) : null,
     });
   }
   return out;
@@ -199,9 +223,6 @@ export function toRecalledFact(h: { kind: string; score: number; content: string
 
 function finding(rule: string, passed: boolean, severity: ValidationFinding["severity"], message: string): ValidationFinding {
   return { rule, passed, severity, message };
-}
-function norm(s: string | null | undefined): string {
-  return (s ?? "").trim().toLowerCase();
 }
 function round2(n: number): number {
   return Math.round(n * 100) / 100;

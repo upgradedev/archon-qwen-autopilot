@@ -29,7 +29,7 @@ async function seedPrior(d: ReturnType<typeof deps>, meta: Record<string, unknow
     vendor: meta["vendor"] as string,
     sourceRef: meta["invoice_id"] as string,
     content: `Invoice ${meta["vendor_ref"]} from ${meta["vendor"]} for EUR ${meta["total"]}.`,
-    metadata: meta,
+    metadata: { processing_status: "approved", ...meta },
   });
 }
 

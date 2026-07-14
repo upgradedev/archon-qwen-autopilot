@@ -204,14 +204,14 @@ test("CHECK 1 · endpoints: every README-documented endpoint is a real Fastify r
   }
 });
 
-test("CHECK 1 · MCP tools: the code exposes 7 MCP tools and every name is documented in the README", async () => {
+test("CHECK 1 · MCP tools: the code exposes 4 agent-safe MCP tools and every name is documented in the README", async () => {
   const names = await mcpToolNames();
-  // Numeric equality is asserted code↔golden (README states 'seven' as a word).
+  // Numeric equality is asserted code↔golden (README states 'four' as a word).
   assert.equal(names.length, GOLDEN.mcpToolCount, `code exposes ${names.length} MCP tools; golden pins ${GOLDEN.mcpToolCount}`);
-  assert.deepEqual(names, ["amend", "approve", "intake_invoice", "list_pending", "list_skills", "recall_vendor", "reject"]);
+  assert.deepEqual(names, ["intake_invoice", "list_pending", "list_skills", "recall_vendor"]);
 
-  // README name-presence (README says the count as the word 'seven', not a digit).
-  assert.match(README, /\bseven\b\s+MCP/i, "README should state 'seven MCP tools'");
+  // README name-presence (README states the count as a word for readable prose).
+  assert.match(README, /\bfour\b[^.\n]{0,40}\bMCP\b/i, "README should state 'four MCP tools'");
   for (const n of names) {
     assert.ok(README.includes("`" + n + "`"), `MCP tool '${n}' is not documented in the README`);
   }
@@ -248,12 +248,12 @@ test("CHECK 1 · SECURITY INVARIANT: the model-facing tool catalog EXCLUDES the 
     assert.ok(!modelCatalog.includes(name), `SECURITY: model tool catalog must NOT expose the human terminal action '${name}'`);
   }
 
-  // Make the invariant BITE (approve/amend/reject are agent methods, never ToolDefs, so
-  // the exclusion alone is trivially true): assert the CONTRAST — those actions ARE on
-  // the human MCP surface, and NO ToolDef anywhere in src/ is named one of them.
+  // Make the invariant bite across both agent-facing catalogs: terminal decisions
+  // are absent from qwen-plus ToolDefs AND from MCP. They exist only on the
+  // authenticated HTTP/UI surface owned by a human reviewer.
   const mcp = await mcpToolNames();
   for (const human of ["approve", "amend", "reject"]) {
-    assert.ok(mcp.includes(human), `'${human}' must exist on the human-gated MCP surface`);
+    assert.ok(!mcp.includes(human), `'${human}' must not exist on the agent-facing MCP surface`);
   }
   const toolsSrc = readFileSync(join(ROOT, "src", "ap", "tools.ts"), "utf8");
   for (const name of FORBIDDEN) {
@@ -322,7 +322,7 @@ test("CHECK 3 · golden: the eval numbers pinned in claims.golden.json match the
   assert.ok(Math.abs(Number(m![3]) - GOLDEN.eval.percent) < 0.1, "README eval % must match golden within 0.1");
 
   const avg = README.match(/avg\s+(\d+(?:\.\d+)?)/i);
-  assert.ok(avg, "README should state the average autonomous-step count ('avg 2.3')");
+  assert.ok(avg, "README should state the average autonomous-step count ('avg 2.5')");
   assert.ok(Math.abs(Number(avg![1]) - GOLDEN.eval.avgAutonomousSteps) < 0.05, "README avg-steps must match golden within 0.05");
 });
 

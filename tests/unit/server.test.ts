@@ -12,11 +12,17 @@ import { InMemoryWorkItemStore } from "../../src/ap/workitem-store.js";
 import { defaultLoop } from "../../src/ap/loop.js";
 import { fakeSinks } from "../../src/ap/sinks.js";
 import { DailyRateLimiter } from "../../src/ap/rate-limit.js";
-import { withReviewFlags, LOW_CONFIDENCE_THRESHOLD } from "../../src/server.js";
+import {
+  withReviewFlags,
+  LOW_CONFIDENCE_THRESHOLD,
+  EXTRACTION_REVIEW_THRESHOLD,
+} from "../../src/server.js";
 import type { WorkItem } from "../../src/types.js";
 import { FakeExtractionClient } from "../../src/qwen/vision.js";
 
 let app: FastifyInstance;
+const REVIEWER_TOKEN = "unit-test-reviewer-token-32-characters";
+const AUTH = { authorization: `Bearer ${REVIEWER_TOKEN}` };
 
 function deps(extra: Partial<ServerDeps> = {}): ServerDeps {
   return {
@@ -26,11 +32,12 @@ function deps(extra: Partial<ServerDeps> = {}): ServerDeps {
     loop: defaultLoop(),
     sinks: fakeSinks(),
     extractor: new FakeExtractionClient(), // offline vision — no key, no poppler
+    reviewerToken: REVIEWER_TOKEN,
     ...extra,
   };
 }
 
-const sampleInvoice = { vendor: "Acme", invoice_number: "A-1", tax_id: "T", subtotal: 100, tax: 20, total: 120 };
+const sampleInvoice = { vendor: "Acme", invoice_number: "A-1", date: "2026-01-01", currency: "EUR", tax_id: "T", subtotal: 100, tax: 20, total: 120 };
 
 // The upload path now content-sniffs the leading bytes, so a fixture PNG must carry
 // the real 8-byte PNG signature. The offline FakeExtractionClient ignores the bytes
@@ -70,26 +77,141 @@ test("GET /health returns ok with embedder + decider identity (no DB, no key)", 
 });
 
 test("withReviewFlags flags a below-threshold confidence for review, and leaves a confident one alone", () => {
-  const base = (confidence: number): WorkItem =>
-    ({ proposed: { tool: "draft_payment", args: {}, reasoning: "", confidence, modelId: "x" } } as unknown as WorkItem);
+  const base = (confidence: number, extractionConfidence: number | null = null): WorkItem =>
+    ({
+      invoice: { extraction_confidence: extractionConfidence },
+      proposed: { tool: "draft_payment", args: {}, reasoning: "", confidence, modelId: "x" },
+    } as unknown as WorkItem);
   assert.ok(LOW_CONFIDENCE_THRESHOLD > 0 && LOW_CONFIDENCE_THRESHOLD <= 1);
   assert.equal(withReviewFlags(base(0.2)).lowConfidence, true, "0.2 < threshold → flagged");
   assert.equal(withReviewFlags(base(0.9)).lowConfidence, false, "0.9 ≥ threshold → not flagged");
+  assert.ok(EXTRACTION_REVIEW_THRESHOLD > 0 && EXTRACTION_REVIEW_THRESHOLD <= 1);
+  const weakSource = withReviewFlags(base(0.9, EXTRACTION_REVIEW_THRESHOLD / 2));
+  assert.equal(weakSource.lowConfidence, false, "decision confidence stays a separate signal");
+  assert.equal(weakSource.lowExtractionConfidence, true, "weak Qwen-VL read is flagged independently");
+  assert.equal(weakSource.requiresCarefulReview, true);
 });
 
 test("GET /pending carries the advisory lowConfidence review flag on each item", async () => {
   await app.inject({ method: "POST", url: "/intake", payload: { invoice: sampleInvoice } });
-  const res = await app.inject({ method: "GET", url: "/pending" });
+  const res = await app.inject({ method: "GET", url: "/pending", headers: AUTH });
   assert.equal(res.statusCode, 200);
   const items = res.json().pending as Array<{ lowConfidence: unknown }>;
   assert.ok(items.length >= 1);
   for (const it of items) assert.equal(typeof it.lowConfidence, "boolean", "every pending item exposes lowConfidence");
 });
 
-test("CORS: a cross-origin GET reflects the request origin", async () => {
-  const origin = "https://autopilot.example.com";
-  const res = await app.inject({ method: "GET", url: "/health", headers: { origin } });
-  assert.equal(res.headers["access-control-allow-origin"], origin);
+test("CORS is same-origin by default and reflects only an exact configured allowlist origin", async () => {
+  const hostile = await app.inject({ method: "GET", url: "/health", headers: { origin: "https://evil.example" } });
+  assert.equal(hostile.headers["access-control-allow-origin"], undefined);
+
+  const local = await buildServer(deps({ corsOrigins: ["https://trusted.example"] }));
+  await local.ready();
+  try {
+    const trusted = await local.inject({ method: "GET", url: "/health", headers: { origin: "https://trusted.example" } });
+    assert.equal(trusted.headers["access-control-allow-origin"], "https://trusted.example");
+    const evil = await local.inject({ method: "GET", url: "/health", headers: { origin: "https://evil.example" } });
+    assert.equal(evil.headers["access-control-allow-origin"], undefined);
+  } finally {
+    await local.close();
+  }
+});
+
+test("reviewer APIs fail closed: missing/wrong credentials cannot read or execute, valid Bearer can", async () => {
+  const localSinks = fakeSinks();
+  const local = await buildServer(deps({ sinks: localSinks }));
+  await local.ready();
+  try {
+    const intake = await local.inject({ method: "POST", url: "/intake", payload: { invoice: sampleInvoice } });
+    const id = intake.json().id;
+    assert.equal((await local.inject({ method: "GET", url: "/pending" })).statusCode, 401);
+    assert.equal(
+      (await local.inject({ method: "POST", url: `/approve/${id}`, headers: { authorization: "Bearer wrong" } })).statusCode,
+      401
+    );
+    assert.equal(localSinks.ledger.entries().length, 0, "unauthenticated callers reach no sink");
+    const approved = await local.inject({ method: "POST", url: `/approve/${id}`, headers: AUTH });
+    assert.equal(approved.statusCode, 200);
+    assert.equal(localSinks.ledger.entries().length, 1);
+  } finally {
+    await local.close();
+  }
+});
+
+test("reviewer APIs return 503 when REVIEWER_TOKEN is unconfigured; public health/UI remain available", async () => {
+  const local = await buildServer(deps({ reviewerToken: null }));
+  await local.ready();
+  try {
+    assert.equal((await local.inject({ method: "GET", url: "/health" })).statusCode, 200);
+    assert.equal((await local.inject({ method: "GET", url: "/" })).statusCode, 200);
+    const denied = await local.inject({ method: "GET", url: "/pending" });
+    assert.equal(denied.statusCode, 503);
+    assert.equal(denied.json().error, "reviewer service unavailable");
+    assert.ok(typeof denied.json().requestId === "string" && denied.json().requestId.length > 0);
+    assert.doesNotMatch(JSON.stringify(denied.json()), /token|configured/i);
+
+    const notReady = await local.inject({ method: "GET", url: "/ready" });
+    assert.equal(notReady.statusCode, 503);
+    assert.deepEqual(Object.keys(notReady.json()).sort(), ["error", "requestId"]);
+    assert.equal(notReady.json().error, "service not ready");
+    assert.ok(typeof notReady.json().requestId === "string" && notReady.json().requestId.length > 0);
+  } finally {
+    await local.close();
+  }
+});
+
+test("production startup fails closed when REVIEWER_TOKEN is absent from real configuration", async () => {
+  const explicit = deps();
+  delete (explicit as Partial<ServerDeps>).reviewerToken;
+  const previousNodeEnv = process.env.NODE_ENV;
+  const previousToken = process.env.REVIEWER_TOKEN;
+  process.env.NODE_ENV = "production";
+  delete process.env.REVIEWER_TOKEN;
+  try {
+    await assert.rejects(
+      () => buildServer(explicit),
+      /production requires REVIEWER_TOKEN/
+    );
+  } finally {
+    if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousNodeEnv;
+    if (previousToken === undefined) delete process.env.REVIEWER_TOKEN;
+    else process.env.REVIEWER_TOKEN = previousToken;
+  }
+});
+
+test("reviewer amendment/rejection bodies reject unknown fields and oversized audit reasons", async () => {
+  const extra = await app.inject({
+    method: "POST",
+    url: "/reject/not-used",
+    headers: AUTH,
+    payload: { reason: "reviewed", unexpected: "not persisted" },
+  });
+  assert.equal(extra.statusCode, 400);
+
+  const oversized = "x".repeat(1001);
+  const amend = await app.inject({
+    method: "POST",
+    url: "/amend/not-used",
+    headers: AUTH,
+    payload: { reason: oversized },
+  });
+  const reject = await app.inject({
+    method: "POST",
+    url: "/reject/not-used",
+    headers: AUTH,
+    payload: { reason: oversized },
+  });
+  assert.equal(amend.statusCode, 400);
+  assert.equal(reject.statusCode, 400);
+});
+
+test("GET /ready distinguishes liveness from dependency/security readiness", async () => {
+  const ready = await app.inject({ method: "GET", url: "/ready" });
+  assert.equal(ready.statusCode, 200);
+  assert.equal(ready.json().status, "ready");
+  assert.equal(ready.json().checks.reviewerAuth.configured, true);
+  assert.equal(ready.json().checks.qwen.probed, false);
 });
 
 test("POST /intake with an empty body → 400", async () => {
@@ -119,19 +241,19 @@ test("approve on an unknown id → 404; approve twice → 409 (the gate over HTT
   });
   const id = intake.json().id;
 
-  const missing = await app.inject({ method: "POST", url: "/approve/nope" });
+  const missing = await app.inject({ method: "POST", url: "/approve/nope", headers: AUTH });
   assert.equal(missing.statusCode, 404);
 
-  const first = await app.inject({ method: "POST", url: `/approve/${id}` });
+  const first = await app.inject({ method: "POST", url: `/approve/${id}`, headers: AUTH });
   assert.equal(first.statusCode, 200);
   assert.equal(first.json().status, "approved");
 
-  const second = await app.inject({ method: "POST", url: `/approve/${id}` });
+  const second = await app.inject({ method: "POST", url: `/approve/${id}`, headers: AUTH });
   assert.equal(second.statusCode, 409);
 });
 
 test("GET /pending lists proposals awaiting a decision", async () => {
-  const res = await app.inject({ method: "GET", url: "/pending" });
+  const res = await app.inject({ method: "GET", url: "/pending", headers: AUTH });
   assert.equal(res.statusCode, 200);
   assert.ok(Array.isArray(res.json().pending));
 });
@@ -190,8 +312,8 @@ test("GET / ships the enriched UI: upload + live process view, collapsible trace
   assert.match(res.body, /review the extracted fields, then Process/); // the demo review note
   assert.match(res.body, /pendingTicket/); // single-use ticket → process without re-consuming
   assert.match(res.body, /getReader|text\/event-stream|Processing invoice/);
-  // The 20/day limit is surfaced to the visitor in the upload panel.
-  assert.match(res.body, /20\/day/);
+  // The durable two-tier rate limit is surfaced without hard-coding an env-tunable cap.
+  assert.match(res.body, /rate-limited per visitor and globally/);
   // Collapsible "How the agent decided" trace (chevron toggle).
   assert.match(res.body, /How the agent decided/);
   assert.match(res.body, /class: 'collapsible'|collapsible/);
@@ -217,7 +339,7 @@ test("GET /openapi.json documents every workflow + approval route", async () => 
   const spec = res.json();
   assert.equal(spec.openapi?.startsWith("3."), true);
   assert.equal(spec.info?.title, "Archon Autopilot API");
-  for (const path of ["/health", "/intake", "/pending", "/approve/{id}", "/amend/{id}", "/reject/{id}"]) {
+  for (const path of ["/health", "/ready", "/intake", "/pending", "/approve/{id}", "/amend/{id}", "/reject/{id}", "/recover/{id}"]) {
     assert.ok(spec.paths?.[path], `spec should document ${path}`);
   }
 });
@@ -232,7 +354,7 @@ test("GET /docs serves the interactive Swagger UI", async () => {
 });
 
 test("GET /decided lists decided items (empty array on a fresh app)", async () => {
-  const res = await app.inject({ method: "GET", url: "/decided" });
+  const res = await app.inject({ method: "GET", url: "/decided", headers: AUTH });
   assert.equal(res.statusCode, 200);
   assert.ok(Array.isArray(res.json().decided));
 });
@@ -312,12 +434,12 @@ test("POST /intake/document: a real PNG upload → Qwen-VL extraction → the lo
     assert.match(res.body, /event: proposal/);
     assert.match(res.body, /event: done/);
     // The human gate held: exactly one PENDING item, nothing executed, /decided empty.
-    const pending = (await local.inject({ method: "GET", url: "/pending" })).json().pending;
+    const pending = (await local.inject({ method: "GET", url: "/pending", headers: AUTH })).json().pending;
     assert.equal(pending.length, 1);
     assert.equal(pending[0].status, "pending");
     assert.equal(pending[0].execution, undefined);
     assert.equal(pending[0].invoice.vendor, "Meridian Logistics");
-    const decided = (await local.inject({ method: "GET", url: "/decided" })).json().decided;
+    const decided = (await local.inject({ method: "GET", url: "/decided", headers: AUTH })).json().decided;
     assert.equal(decided.length, 0);
   } finally {
     await local.close();
@@ -375,7 +497,7 @@ test("POST /extract/document: a PNG upload → Qwen-VL extraction → invoice JS
     // … with a single-use process ticket …
     assert.ok(typeof body.ticket === "string" && body.ticket.length > 0);
     // … and NOTHING was proposed or executed: the queue is still empty.
-    const pending = (await local.inject({ method: "GET", url: "/pending" })).json().pending;
+    const pending = (await local.inject({ method: "GET", url: "/pending", headers: AUTH })).json().pending;
     assert.equal(pending.length, 0);
   } finally {
     await local.close();
@@ -393,7 +515,16 @@ test("POST /extract/document surfaces an extractor failure as 502 (the vision ca
     const { payload, headers } = multipartFile("file", "invoice.png", "image/png", PNG_BYTES);
     const res = await local.inject({ method: "POST", url: "/extract/document", payload, headers });
     assert.equal(res.statusCode, 502);
-    assert.match(res.json().error, /vision backend unavailable/);
+    assert.equal(res.json().error, "document extraction service unavailable");
+    assert.ok(typeof res.json().requestId === "string" && res.json().requestId.length > 0);
+    assert.doesNotMatch(JSON.stringify(res.json()), /vision backend unavailable/);
+
+    const streamed = multipartFile("file", "invoice.png", "image/png", PNG_BYTES);
+    const streamRes = await local.inject({ method: "POST", url: "/intake/document", payload: streamed.payload, headers: streamed.headers });
+    assert.equal(streamRes.statusCode, 200);
+    assert.match(streamRes.body, /event: error/);
+    assert.match(streamRes.body, /requestId/);
+    assert.doesNotMatch(streamRes.body, /vision backend unavailable/);
   } finally {
     await local.close();
   }
@@ -430,7 +561,7 @@ test("two-step flow: extract consumes ONE slot, process-with-ticket consumes NON
     assert.equal(proc.statusCode, 200);
     assert.match(proc.body, /event: proposal/);
     // Exactly one PENDING proposal, nothing executed (the human gate held).
-    const pending = (await local.inject({ method: "GET", url: "/pending" })).json().pending;
+    const pending = (await local.inject({ method: "GET", url: "/pending", headers: AUTH })).json().pending;
     assert.equal(pending.length, 1);
     assert.equal(pending[0].status, "pending");
     assert.equal(pending[0].execution, undefined);
@@ -495,7 +626,7 @@ test("security headers: helmet sets X-Frame-Options + X-Content-Type-Options on 
   assert.ok(res.headers["x-frame-options"], "X-Frame-Options is set");
 });
 
-test("POST /intake surfaces an upstream decider failure as a typed 503 { error } (never a raw 500 stack)", async () => {
+test("POST /intake sanitizes an upstream decider failure and returns a request id", async () => {
   // A loop whose run() throws models Qwen/the embedder being unreachable. The route
   // must translate that into a clean 503 { error }, not a generic 500.
   const boomLoop = {
@@ -507,28 +638,54 @@ test("POST /intake surfaces an upstream decider failure as a typed 503 { error }
   try {
     const res = await local.inject({ method: "POST", url: "/intake", payload: { invoice: sampleInvoice } });
     assert.equal(res.statusCode, 503);
-    assert.match(res.json().error, /decision service is unavailable/i);
-    assert.match(res.json().error, /qwen unreachable/);
+    assert.equal(res.json().error, "decision service unavailable");
+    assert.ok(typeof res.json().requestId === "string" && res.json().requestId.length > 0);
+    assert.doesNotMatch(JSON.stringify(res.json()), /qwen unreachable/);
+
+    const streamRes = await local.inject({ method: "POST", url: "/intake/stream", payload: { invoice: sampleInvoice } });
+    assert.equal(streamRes.statusCode, 200);
+    assert.match(streamRes.body, /event: error/);
+    assert.match(streamRes.body, /requestId/);
+    assert.doesNotMatch(streamRes.body, /qwen unreachable/);
   } finally {
     await local.close();
   }
 });
 
-test("global error handler: an unexpected throw past a route becomes a typed { error } (no raw stack)", async () => {
+test("global error handler: unexpected DB details stay in logs and the 500 returns only a generic error + request id", async () => {
   // A work-item store whose approve() throws a generic error exercises the guard()
   // rethrow → the global setErrorHandler, which must answer { error } (not a stack).
-  const throwingStore = {
-    ...new InMemoryWorkItemStore(),
-    async get() { throw new Error("db exploded"); },
-  } as unknown as ServerDeps["workitems"];
+  const throwingStore = new InMemoryWorkItemStore();
+  throwingStore.get = async () => { throw new Error("db exploded"); };
+  throwingStore.claimPending = async () => { throw new Error("db exploded"); };
   const local = await buildServer(deps({ workitems: throwingStore }));
   await local.ready();
   try {
-    const res = await local.inject({ method: "POST", url: "/approve/anything" });
+    const res = await local.inject({ method: "POST", url: "/approve/anything", headers: AUTH });
     assert.equal(res.statusCode, 500);
-    assert.deepEqual(Object.keys(res.json()), ["error"]);
-    assert.match(res.json().error, /db exploded/);
-    assert.doesNotMatch(res.json().error, /at .*\(.*:\d+:\d+\)/); // no stack frames leaked
+    assert.deepEqual(Object.keys(res.json()).sort(), ["error", "requestId"]);
+    assert.equal(res.json().error, "internal server error");
+    assert.ok(typeof res.json().requestId === "string" && res.json().requestId.length > 0);
+    assert.doesNotMatch(JSON.stringify(res.json()), /db exploded|at .*\(.*:\d+:\d+\)/);
+  } finally {
+    await local.close();
+  }
+});
+
+test("approval 502 does not expose an uncertain sink failure detail", async () => {
+  const localSinks = fakeSinks();
+  localSinks.ledger.post = () => {
+    throw new Error("SECRET ledger transport response");
+  };
+  const local = await buildServer(deps({ sinks: localSinks }));
+  await local.ready();
+  try {
+    const intake = await local.inject({ method: "POST", url: "/intake", payload: { invoice: sampleInvoice } });
+    const res = await local.inject({ method: "POST", url: `/approve/${intake.json().id}`, headers: AUTH });
+    assert.equal(res.statusCode, 502);
+    assert.equal(res.json().error, "execution could not be confirmed; reconcile it before retrying");
+    assert.ok(typeof res.json().requestId === "string" && res.json().requestId.length > 0);
+    assert.doesNotMatch(JSON.stringify(res.json()), /SECRET|ledger transport/i);
   } finally {
     await local.close();
   }
@@ -536,17 +693,16 @@ test("global error handler: an unexpected throw past a route becomes a typed { e
 
 test("approval gate: a malformed :id that hits a uuid column (Postgres 22P02) → 400, not a 500 leak", async () => {
   // Simulate the pgvector store rejecting a non-UUID id with SQLSTATE 22P02.
-  const pgLikeStore = {
-    ...new InMemoryWorkItemStore(),
-    async get() {
-      throw Object.assign(new Error('invalid input syntax for type uuid: "not-a-uuid"'), { code: "22P02" });
-    },
-  } as unknown as ServerDeps["workitems"];
+  const pgLikeStore = new InMemoryWorkItemStore();
+  const invalidUuid = () =>
+    Promise.reject(Object.assign(new Error('invalid input syntax for type uuid: "not-a-uuid"'), { code: "22P02" }));
+  pgLikeStore.get = invalidUuid;
+  pgLikeStore.claimPending = invalidUuid;
   const local = await buildServer(deps({ workitems: pgLikeStore }));
   await local.ready();
   try {
     for (const route of ["/approve/not-a-uuid", "/amend/not-a-uuid", "/reject/not-a-uuid"]) {
-      const res = await local.inject({ method: "POST", url: route, payload: {} });
+      const res = await local.inject({ method: "POST", url: route, headers: AUTH, payload: {} });
       assert.equal(res.statusCode, 400, `${route} should be 400`);
       assert.match(res.json().error, /invalid work item id/i);
     }
@@ -568,7 +724,7 @@ test("POST /intake/stream streams the reasoning live (SSE) then the proposal, ex
     assert.match(res.body, /event: proposal/);
     assert.match(res.body, /event: done/);
     // It only PROPOSED — the item sits PENDING in the queue, nothing executed.
-    const pending = await local.inject({ method: "GET", url: "/pending" });
+    const pending = await local.inject({ method: "GET", url: "/pending", headers: AUTH });
     assert.equal(pending.json().pending.length, 1);
     assert.equal(pending.json().pending[0].status, "pending");
     assert.equal(pending.json().pending[0].execution, undefined);

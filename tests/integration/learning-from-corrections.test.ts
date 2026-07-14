@@ -100,4 +100,8 @@ test("a REJECTED proposal is written back with structured metadata and surfaced 
   const recallStep = c.trace.find((s) => s.tool === "recall_vendor_history");
   assert.ok(recallStep, "the loop recalled vendor history");
   assert.match(recallStep!.observation, /REJECTED by a human/i);
+  assert.ok(
+    !c.findings.some((f) => f.rule === "R5" && !f.passed),
+    "the rejected invoice itself is not durable duplicate history"
+  );
 });

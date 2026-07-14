@@ -1,96 +1,140 @@
-# 🎯 Qwen Cloud Hackathon: Rules Audit & Strict Judge Review
+# Archon Autopilot — strict final judge review
 
-This document contains a comprehensive rules audit and strict judge review for the two Qwen implementations: **Archon MemoryAgent** (Track 1) and **Archon Autopilot** (Track 4). It highlights how we resolved the main limitations identified during the initial review.
+**Review date:** 2026-07-15
 
----
+**Entry:** Qwen Cloud Hackathon, Track 4 — Autopilot Agent
 
-## 📋 1. Submission Rules Audit
+**Review posture:** evidence-first, skeptical of unmeasured LLM claims
 
-We evaluated both projects against the mandatory requirements of the [Global AI Hackathon Series with Qwen Cloud](https://qwencloud-hackathon.devpost.com/):
+## Executive verdict
 
-| Devpost Requirement | Qwen MemoryAgent (Track 1) | Qwen Autopilot (Track 4) | Status |
-| :--- | :--- | :--- | :---: |
-| **Code Repository URL** | [GitHub Repo](https://github.com/upgradedev/archon-qwen-memoryagent) is public, clean, and fully functional. | [GitHub Repo](https://github.com/upgradedev/archon-qwen-autopilot) is public, clean, and fully functional. | ✅ **Pass** |
-| **Open Source License** | Detectable [MIT License](https://github.com/upgradedev/archon-qwen-memoryagent/blob/main/LICENSE) in root and visible. | Detectable [MIT License](https://github.com/upgradedev/archon-qwen-autopilot/blob/main/LICENSE) in root and visible. | ✅ **Pass** |
-| **Proof of Alibaba Cloud Deployment** | Linked to code file: [`src/qwen/client.ts`](https://github.com/upgradedev/archon-qwen-memoryagent/blob/main/src/qwen/client.ts). Deployed on Alibaba Cloud ECS. Includes a separate video proof [`demo/alibaba-proof.mp4`](https://github.com/upgradedev/archon-qwen-memoryagent/blob/main/demo/alibaba-proof.mp4) showing ECS instance & live `/health` endpoint. | Linked to code file: [`src/qwen/client.ts`](https://github.com/upgradedev/archon-qwen-autopilot/blob/main/src/qwen/client.ts). Deployed on Alibaba Cloud ECS. Includes a separate video proof [`demo/alibaba-proof.mp4`](https://github.com/upgradedev/archon-qwen-autopilot/blob/main/demo/alibaba-proof.mp4) showing ECS instance & live `/health` endpoint. | ✅ **Pass** |
-| **Architecture Diagram** | High-quality, clear Mermaid diagram directly in the [README](https://github.com/upgradedev/archon-qwen-memoryagent#architecture) showing ingestion pipeline, MemoryAgent, and Alibaba / Qwen Cloud layers. | Professional SVG & PNG diagram in [`docs/architecture.svg`](https://github.com/upgradedev/archon-qwen-autopilot/blob/main/docs/architecture.svg) / [`docs/architecture.png`](https://github.com/upgradedev/archon-qwen-autopilot/blob/main/docs/architecture.png) showing the AP agent loop, human-in-the-loop gate, and defenses. | ✅ **Pass** |
-| **Video Demonstration** | Demo video (`demo/video/final/archon-memoryagent-demo.mp4`) ready for upload to YouTube. | Demo video (`demo/video/final/archon-autopilot-demo.mp4`) prepared and ready for upload to YouTube. | ✅ **Pass** |
-| **Text Description** | Structured description written in [`demo/SUBMISSION.md`](https://github.com/upgradedev/archon-qwen-memoryagent/blob/main/demo/SUBMISSION.md) and [`demo/PROJECT_STORY.md`](https://github.com/upgradedev/archon-qwen-memoryagent/blob/main/demo/PROJECT_STORY.md) (Devpost format). | Structured description written in [`demo/SUBMISSION.md`](https://github.com/upgradedev/archon-qwen-autopilot/blob/main/demo/SUBMISSION.md) and [`demo/PROJECT_STORY.md`](https://github.com/upgradedev/archon-qwen-autopilot/blob/main/demo/PROJECT_STORY.md) (Devpost format). | ✅ **Pass** |
-| **Track Identification** | Explicitly identified as **Track 1: MemoryAgent** in submission files. | Explicitly identified as **Track 4: Autopilot Agent** in submission files. | ✅ **Pass** |
-| **Optional: Blog Post** | Detailed technical blog post drafted in [`demo/BLOG.md`](https://github.com/upgradedev/archon-qwen-memoryagent/blob/main/demo/BLOG.md), eligible for the **$500 Blog Post Award** upon publishing. | Detailed technical blog post drafted in [`demo/BLOG.md`](https://github.com/upgradedev/archon-qwen-autopilot/blob/main/demo/BLOG.md), eligible for the **$500 Blog Post Award** upon publishing. | ✅ **Pass** |
+Archon Autopilot is technically credible and differentiated. It is not an invoice
+chatbot with a prompt around it: `qwen-plus` runs a bounded function-calling loop over
+memory recall and AP validations, stops at one persisted proposal, and cannot execute
+without an authenticated human decision. The strongest story is the combination of
+agentic depth, structural least agency, and a measurable correction feedback loop.
 
----
+The engineering package is ready. Presentation is the remaining variable: the final
+recording and screenshots must make the workflow obvious within three minutes and must
+not expose the reviewer credential.
 
-## ⚖️ 2. Judging Criteria Coverage
+## Rubric assessment
 
-Let's verify how the projects map to the official **Judging Criteria (weighted percentages)**:
+| Criterion | Strict score | Evidence | What prevents a perfect score |
+|---|---:|---|---|
+| **Innovation & AI Creativity (30%)** | **9.2/10** | Bounded Qwen function-calling loop; model catalog separated into five read/analyze and four proposal skills; human gate doubles as a correction signal that changes a later decision; injection resistance comes from unreachable execution rather than trusting a classifier. | The offline `22/22` is a deterministic policy result, not live-model accuracy; no multi-agent/A2A layer, by deliberate design. |
+| **Technical Depth & Engineering (30%)** | **9.4/10** | Authenticated HTTP/UI exclusively owns decisions; a four-tool MCP surface shares intake/memory but is limited to proposal/read operations; Qwen vision + embeddings + chat; pgvector memory; strict auth; production quotas; atomic claims; explicit uncertain-outcome recovery; durable restart-safe ledger; 240/246 Node pass with six declared DB skips; 25/25 browser; 30/30 adversarial; >80% coverage in every dimension. | Complex-document vision lacks a labelled extraction benchmark; the local MCP surface can still read proposal/vendor state and must be access-controlled at the process boundary; SMTP cannot promise recipient-level exactly once. |
+| **Problem Value & Impact (25%)** | **8.9/10** | Solves a real AP bottleneck while retaining human control; duplicate/anomaly checks use cross-session evidence; configurable SMTP and durable JSONL ledger create real post-approval effects. | Payment rail and specialist case system remain simulated; no production time-saved or error-rate study is claimed. |
+| **Presentation (15%) — artifacts** | **9.1/10** | Strong README, architecture, judge guide, evidence matrix, honest eval method, Devpost copy, story, blog, and reproducible commands. | Final public hosted video, refreshed screenshots, and published post are human-owned and must still be supplied. |
 
-### 1. Technical Depth & Engineering (30%)
-*   **QwenCloud API Sophistication:** Both projects call `qwen-plus` (for chat/reasoning/re-ranking/tool use), `text-embedding-v4` (for vector embeddings), and `qwen-vl-max` (for vision extraction of invoice documents in Autopilot).
-*   **Advanced Patterns:** MemoryAgent leverages hybrid dense-sparse search, Reciprocal Rank Fusion (RRF), and listwise cross-encoder re-ranking. Autopilot layers on this vector memory to build a multi-step ReAct agent loop (recall → validate → check duplicate → compute variance). Both expose typed Model Context Protocol (MCP) server endpoints and custom skill catalogs.
-*   **Rigor & Offline-First:** Both repos feature deterministic Fakes (`FakeEmbedder`, `FakeNarrator`, `FakeQwenChatClient`) that bypass DashScope base URL calls when no key is present. This makes the entire codebase and test pyramids (Unit, Integration, E2E) runnable in CI/CD pipelines with zero spend.
-*   **Measurement:** MemoryAgent includes [`BENCHMARK.md`](https://github.com/upgradedev/archon-qwen-memoryagent/blob/main/BENCHMARK.md) (reproducible search scores & sensitivity control) + a new scalability test (`npm run bench:scale`). Autopilot includes [`EVAL.md`](https://github.com/upgradedev/archon-qwen-autopilot/blob/main/EVAL.md) (reproducible decision accuracy on 22 scenarios).
+**Weighted artifact score:** approximately **9.2/10** before judging variance. This is
+an assessment of the repository and supplied materials, not a promise of placement.
 
-### 2. Innovation & AI Creativity (30%)
-*   **Archon MemoryAgent:** Introduces the concept of a **self-auditing memory** (`POST /consistency`) that detects cross-session contradictions (different values for the same record/attribute) and dangling references, returning a resolution recommendation based on a lexicographical priority ladder (*importance → source authority → recency*) **without mutating** the raw memory. This stands out against simple RAG (which just ranks) and Mem0/Zep (which perform silent, destructive mutations at write-time).
-*   **Archon Autopilot:** Implements a highly secure **human-in-the-loop state machine**. Since LLM function-calls can be hijacked via prompt injections embedded in raw documents, the model is restricted to *proposing* actions into a `PENDING` queue. A human clerk must approve, reject, or amend the arguments before the side-effect executes. Untrusted inputs are fenced, and an advisory scanner makes neutralized attacks visible.
+## What a judge can verify quickly
 
-### 3. Problem Value & Impact (25%)
-*   **MemoryAgent:** Solves "AI amnesia" and the "conflicting memory" problem in high-stakes domains (business financial intelligence), where memory integrity is critical and silent data loss (via LLM mutations) is unacceptable.
-*   **Autopilot:** Target accounts payable (AP), a major operational bottleneck for SMBs. The division of labor is realistic: the agent handles the heavy cognitive load of reading, normalizing, cross-checking, and proposing, while the human acts as the gatekeeper for capital movement.
+1. Upload the real sample PNG and watch `qwen-vl-max` extraction feed the same loop as
+   JSON intake.
+2. See multiple ordered read/analyze steps stream before exactly one PENDING action.
+3. Expand the full evidence trace and inspect validation, duplicate, and variance
+   observations.
+4. Authenticate, amend an argument, approve, and inspect the proposed→approved audit
+   diff in Decided.
+5. Repeat the same invoice and see the duplicate route to human review.
+6. Inspect a recognized injection warning while the item remains PENDING and no sink
+   fires automatically.
+7. Run the offline evidence commands: 22/22 eval, 30/30 adversarial, 25/25 browser,
+   and the 22-pass readiness report.
 
-### 4. Presentation & Documentation (15%)
-*   **Visual walkthroughs & code:** The READMEs are exceptional. The click paths for judges are laid out, the schemas are documented, and the project stories are structured to directly fit the Devpost forms.
+## Strongest technical differentiators
 
----
+### 1. The agent gathers evidence; it does not classify once
 
-## 🏛️ 3. Strict Judge Review
+Qwen chooses the next function call from a bounded catalog. Vendor recall and
+structural validation are required evidence; duplicate and amount-variance tools run
+when relevant; a terminal tool ends the loop. Max-step, deadline, no-progress, and
+deterministic evidence-before-action guards fail safely to review.
 
-*Acting as a strict, demanding hackathon judge evaluating the engineering, originality, and completeness of the two projects:*
+### 2. Least agency is enforced structurally
 
-```
-JUDGE PERSONA: Extremely rigorous, values engineering depth over flashy demos, focuses on production-readiness, scalability, reproducibility, and security. Sceptical of LLM magic; demands empirical proofs and clean architectural boundaries.
-```
+The model can propose `draft_journal_entry`, `draft_payment`, `draft_vendor_reply`, or
+`flag_for_review`; it cannot call an approval or execution function. An authenticated
+reviewer decision, atomic work-item claim, runtime argument validation, and the single
+execution chokepoint are separate layers. The adversarial tests cover direct invoice
+payloads, poisoned recalled memory, a compromised model attempting excessive agency,
+authorization/replay, sensitive-data exposure, and sink injection.
 
----
+### 3. Human corrections are read, not merely stored
 
-### Project 1: Archon MemoryAgent (Track 1)
-**Verdict:** Outstanding technical rigor. A highly complete engineering package that treats memory integrity as a first-class citizen.
+An amendment/rejection writes structured correction metadata to vendor memory.
+`recall_vendor_history` lifts that signal into the next loop. The controlled eval shows
+a materially over-billed repeat flip from `draft_payment` to `flag_for_review`, while
+the corrected-amount control stays `draft_payment`.
 
-#### 🟢 Strengths
-1.  **Engineering Rigor vs. Industry Baselines:** Instead of shipping a tutorial-grade LangChain cosine-search wrapper, the team built a hybrid dense-lexical retriever using Reciprocal Rank Fusion (RRF) and backed it up with a cross-encoder re-ranker. They validated this with an objective, reproducible benchmark ([`BENCHMARK.md`](https://github.com/upgradedev/archon-qwen-memoryagent/blob/main/BENCHMARK.md)).
-2.  **Self-Audit vs. Mutation Tradeoff:** surrendering vector store management to LLMs (as in Mem0) is dangerous for auditable systems like finance. The design choice of a read-only, deterministic consistency audit (`POST /consistency`) that flags contradictions and recommends resolutions without mutating database states is a major differentiator.
-3.  **The "Shuffled-Vector" Sensitivity Ablation:** The inclusion of a permutation control (degrading vectors to prove the benchmark isn't reward-fitting noise) is a high-level academic practice rarely seen in hackathon entries. It proves the benchmark is honest.
-4.  **A2A Readiness:** The integration of the Model Context Protocol (MCP) server means this memory store is immediately composable with other agent systems.
-5.  **Verified Scale & Retrieval Performance:** We addressed the scalability concern by building a dedicated stress-test script ([`bench/scale-stress.ts`](https://github.com/upgradedev/archon-qwen-memoryagent/blob/main/bench/scale-stress.ts) running via `npm run bench:scale`). It injects 1,000 synthetic memories with normalized 1024-d vectors and performs 100 hybrid searches (RRF dense + sparse). Ingest runs in `~157ms` (0.157ms/write) and average query latency is **1.62ms** (well below the 15ms SLA threshold), proving high algorithmic scaling efficiency.
-6.  **Listwise Re-ranking Efficiency:** We clarified that `LlmReranker` (`src/memory/rerank.ts`) does not suffer from the latency/cost bottleneck of N pairwise completions. It implements a **listwise cross-encoder** that packs the entire candidate pool (top-10) into a **single, unified prompt**, executing re-ranking in exactly **one** API call per search query.
+### 4. Two real configurable terminal transports
 
-#### 🔴 Critiques & Vulnerabilities (Strict Judge Concerns)
-1.  **Rule-Based Consistency Limits:** The contradiction detection relies on metadata matching (e.g., matching record IDs and attribute keys). If the agent ingests memories with slightly different semantic naming (e.g., "employer cost" vs. "total salary cost" with different figures), the rule-based audit will miss it. A true semantic contradiction engine is missing.
-2.  **Simulated Benchmarks in CI:** Gating CI on cached fixtures is great for speed, but it masks live API drifts. If the Qwen Cloud embedding dimensions or compatibility endpoints change, the offline green checks will remain green while production breaks.
+- `SmtpEmailSink` uses Nodemailer after approval and receives exactly the approved or
+  amended message. A transport failure propagates and does not produce a false success.
+- `JsonlLedgerSink` appends a balanced double-entry row, fsyncs it, and records a
+  per-work-item marker so a completed ref dedupes after restart. Ambiguous outcomes
+  require reconciliation rather than automatic replay.
 
----
+Both select inspectable Fakes when unconfigured. `draft_payment` and specialist review
+remain simulations. This is materially stronger than the earlier single-transport
+scope and is still honest about the absence of a bank/ERP integration.
 
-### Project 2: Archon Autopilot (Track 4)
-**Verdict:** A masterclass in secure, human-in-the-loop agentic workflow design. It addresses the real-world liabilities of AI agents.
+## Security, auth, and testability
 
-#### 🟢 Strengths
-1.  **Realistic Operational Design:** The team rejected the dangerous industry narrative of "autonomous agents moving money" and focused on the correct pattern: **cognitive automation with a physical human gate**.
-2.  **Structural Security Moat:** Prompt injection is the most common vulnerability of agentic apps. By stripping the agent's tool set of any execution tools (it can only propose tools to a queue; execution is hardcoded behind a gate reachable only by the human API), they rendered prompt injections fundamentally inert. This is a robust, structural defense.
-3.  **Normalizer Pipeline Quality:** Normalizing messy string inputs like `"€ 2.500,00"`, foreign currencies, and garbled layouts while recording every coercion is a non-trivial engineering effort. It ensures the validation rules (R1–R6) receive clean data.
-4.  **Learning-from-Corrections Loop:** The behavioral evaluation (`eval/corrections`) proves that human corrections (e.g., amending an invoice total down) flow back into the vector store as memory and alter future decisions for that vendor.
-5.  **100% Policy Accuracy:** We resolved the Scenario 22 offline routing discrepancy in the evaluation harness. We updated [`src/ap/fake-chat.ts`](https://github.com/upgradedev/archon-qwen-autopilot/blob/main/src/ap/fake-chat.ts) to explicitly check the `no_total` evidence flag and route invoices without a parseable total to `draft_vendor_reply` (to query the vendor). The offline evaluation suite now passes **22 / 22 (100.0%)** scenarios cleanly.
+- Public intake is deliberate for judge access; persistent per-client/global quotas
+  bound model spend. Invalid input is rejected before quota consumption.
+- HTTP queue reads and all reviewer mutations require a constant-time-compared Bearer
+  token. Production refuses to start without a token of at least 32 characters. The UI holds
+  it only in tab-scoped `sessionStorage`.
+- Same-origin is the default; CORS uses an explicit allowlist and rejects wildcard
+  configuration.
+- Reviewer request schemas reject unknown control fields. Error responses hide
+  provider/database detail and carry a request id for server-side correlation.
+- MCP is local stdio with exactly four agent-safe tools: intake, pending read, vendor
+  recall, and catalog read. It exposes no decision/execution verb; process access still
+  controls who may read state, create PENDING work, and consume model capacity.
 
-#### 🔴 Critiques & Vulnerabilities (Strict Judge Concerns)
-1.  **Partly-simulated Sinks:** The `draft_vendor_reply` sink is now **real** — `SmtpEmailSink` delivers an actual email over SMTP once a human approves (env-configured; it cleanly simulates when unconfigured), behind the unchanged human gate. The remaining money-moving sinks (journal posts, payment rails) are still **simulated in-memory adapters** behind the same interfaces: appropriate for a hackathon, but the integration complexities of a real ledger / banking rail (OAuth, ledger locking, execution-time network timeouts) are still bypassed until those adapters are written.
-2.  **Indirect Prompt Injection via Memory — now tested:** A prior poisoned memory (written in an earlier session) that is *recalled* during the ReAct loop is a real agent vector. It is now covered by a dedicated test (`tests/security/injection-poisoned-memory.test.ts`) that plants such a poison, proves it *is* recalled into the agent's evidence, and shows it still cannot reach a side-effect — the model-facing tool catalog holds only proposing tools, so execution stays behind the human `approve()` gate. The guarantee is structural, not a filter.
-3.  **Visual Extraction Limits:** Relying on `qwen-vl-max` for direct visual extraction of multi-page, complex invoice tables is brittle. While it works for standard templates, real-world document tables often cause vision models to hallucinate numbers or column alignments, violating the R4 line-item checks.
+## Injection and vision — exact limitations
 
----
+The advisory scanner is a bounded, documented set of generic patterns. It can miss
+novel wording, other languages, images that vision fails to transcribe, or indirect
+semantic attacks; therefore the submission must not claim universal detection.
+Safety does not depend on scanner recall: untrusted values are fenced, the model has no
+execution tool, and a reviewer must authorize the exact action.
 
-## 🏁 4. Final Verification Summary
+Document intake accepts PDF/PNG/JPG, defaults to a 10 MiB limit, and examines at most
+the first three PDF pages. Extension/MIME and magic bytes are checked; PDFs are
+rasterized under a timeout, Qwen calls have a timeout, and model output is narrowed to
+canonical fields. Low or missing extraction confidence and incomplete finance fields
+force review. Still:
 
-Both projects are **technically superior** to typical hackathon entries:
-1.  They do not rely on simple LLM wrappers; they have custom engines (Recall re-ranking, self-auditing memory, structural injection defense, human-in-the-loop state machine).
-2.  They have **real live URLs**, public repos, and detectable MIT licenses.
-3.  They are backed by reproducible evaluations and benchmarks rather than "vibe checks," and now achieve **100% accuracy** on the offline AP harness and have verified performance scaling under **1,000 memories (1.62ms latency)**.
+- magic-byte sniffing is not malware scanning or content disarm;
+- relevance and injection findings are advisory rather than hard rejection;
+- complex multi-page tables can be misread by a vision model;
+- no labelled real-world extraction-accuracy benchmark is claimed.
+
+These limitations are acceptable for a hackathon when shown plainly and paired with
+fail-safe review behavior.
+
+## Measurement — exact interpretation
+
+| Measurement | Result | Correct interpretation |
+|---|---:|---|
+| Offline decision eval | **22/22 tool · 22/22 args · 22/22 autonomy; avg 2.5 steps** | Deterministic policy/regression evidence over the real pipeline, not live-Qwen accuracy |
+| Node suite | **240 pass · 0 fail · 6 DB-gated skip (246 total)** | Bare-clone result; skipped real-Postgres cases are explicit |
+| Playwright | **25/25** | Served UI flows in Chromium with deterministic providers |
+| Coverage | **92.42 stmts · 84.28 branches · 91.26 funcs · 92.42 lines** | Current `c8` result; all above the 80% CI floor |
+| Adversarial | **30/30** | Repository threat cases, not proof against every future attack |
+| Readiness | **22 pass · 0 fail · 3 user-gated** | 100% of automatable checks; live mailbox/video/deploy evidence is never auto-claimed |
+| Audits | **0 vulnerabilities** | Snapshot of current npm advisories, not a permanent guarantee |
+
+## Remaining action
+
+No additional product feature is required for a competitive submission. The remaining
+work is the quality of the **video, screenshots, public post, and Devpost assembly**.
+Follow [`FINAL_MEDIA_CHECKLIST.md`](FINAL_MEDIA_CHECKLIST.md); use
+[`POST_DRAFTS.md`](POST_DRAFTS.md); and keep the claim/evidence wording aligned with
+[`../docs/CLAIM_EVIDENCE_MATRIX.md`](../docs/CLAIM_EVIDENCE_MATRIX.md).

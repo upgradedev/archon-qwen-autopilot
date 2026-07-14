@@ -4,7 +4,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { FakeEmbedder } from "../../src/memory/embeddings.js";
-import { InMemoryStore } from "../../src/memory/store.js";
+import { InMemoryStore, PgVectorStore } from "../../src/memory/store.js";
+import { query as databaseQuery } from "../../src/db/client.js";
 import { recall, remember } from "../../src/memory/memory.js";
 
 test("remember then recall returns the most semantically similar memory first", async () => {
@@ -49,4 +50,39 @@ test("count reflects what was remembered, and clear empties the store", async ()
   assert.equal(await store.count(), 2);
   await store.clear();
   assert.equal(await store.count(), 0);
+});
+
+test("deterministic invoice history excludes pending/rejected facts and keeps approved facts", async () => {
+  const e = new FakeEmbedder();
+  const store = new InMemoryStore();
+  const base = { kind: "invoice" as const, vendor: "Acme", content: "Acme invoice" };
+  await remember(e, store, { ...base, sourceRef: "pending", metadata: { vendor: "Acme", processing_status: "pending" } });
+  await remember(e, store, { ...base, sourceRef: "rejected", metadata: { vendor: "Acme", processing_status: "rejected" } });
+  await remember(e, store, { ...base, sourceRef: "approved", metadata: { vendor: "Acme", processing_status: "approved" } });
+
+  const history = await store.invoiceHistory("  ACME  ");
+  assert.deepEqual(history.map((h) => h.sourceRef), ["approved"]);
+});
+
+test("PgVectorStore remember writes only to its configured database", async () => {
+  let calls = 0;
+  const fakeQuery = (async (sql: string) => {
+    calls += 1;
+    assert.match(sql, /INSERT INTO agent_memory/);
+    return [{ id: "11111111-1111-4111-8111-111111111111" }];
+  }) as typeof databaseQuery;
+  const store = new PgVectorStore(fakeQuery);
+
+  const id = await store.remember({
+    kind: "invoice",
+    vendor: "Private Tenant Vendor",
+    sourceRef: "private-1",
+    content: "tenant-scoped invoice fact",
+    metadata: { processing_status: "approved" },
+    embedding: [1, 0],
+    embedModel: "test",
+  });
+
+  assert.equal(id, "11111111-1111-4111-8111-111111111111");
+  assert.equal(calls, 1, "default remember must not open or double-write to another database");
 });

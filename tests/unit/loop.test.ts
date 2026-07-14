@@ -60,7 +60,7 @@ function toolCall(name: string, args: Record<string, unknown>): ToolCall {
 
 test("clean new vendor: the loop recalls + validates (≥2 autonomous steps), then proposes draft_journal_entry", async () => {
   const loop = new AutopilotLoop(new FakeQwenChatClient());
-  const invoice = normalizeInvoice({ vendor: "NewCo", invoice_number: "N-1", tax_id: "T", subtotal: 100, tax: 20, total: 120 });
+  const invoice = normalizeInvoice({ vendor: "NewCo", invoice_number: "N-1", date: "2026-01-01", currency: "EUR", tax_id: "T", subtotal: 100, tax: 20, total: 120 });
   const res = await loop.run({ invoice, ...loopDeps() });
 
   assert.equal(res.stopReason, "terminal_action");
@@ -77,7 +77,7 @@ test("clean new vendor: the loop recalls + validates (≥2 autonomous steps), th
 test("onStep streams each autonomous step live, once per trace step, before the terminal action", async () => {
   const streamed: string[] = [];
   const loop = new AutopilotLoop(new FakeQwenChatClient());
-  const invoice = normalizeInvoice({ vendor: "StreamCo", invoice_number: "S-1", tax_id: "T", subtotal: 100, tax: 20, total: 120 });
+  const invoice = normalizeInvoice({ vendor: "StreamCo", invoice_number: "S-1", date: "2026-01-01", currency: "EUR", tax_id: "T", subtotal: 100, tax: 20, total: 120 });
   const res = await loop.run({ invoice, ...loopDeps(), onStep: (s) => streamed.push(s.tool) });
 
   // The observer fired exactly once per persisted trace step, in order — this is the
@@ -93,10 +93,10 @@ test("known/recurring vendor: the loop computes variance before proposing draft_
   const memory = new InMemoryStore();
   const embedder = new FakeEmbedder();
   const agent = new AutopilotAgent(embedder, memory, new InMemoryWorkItemStore(), defaultLoop(), fakeSinks());
-  await agent.intake({ vendor: "KnownCo", invoice_number: "K-1", tax_id: "T", subtotal: 100, tax: 20, total: 120, date: "2026-01-01" });
+  await agent.intake({ vendor: "KnownCo", invoice_number: "K-1", tax_id: "T", currency: "EUR", subtotal: 100, tax: 20, total: 120, date: "2026-01-01" });
   await agent.approve((await agent.pending())[0]!.id);
 
-  const item = await agent.intake({ vendor: "KnownCo", invoice_number: "K-2", tax_id: "T", subtotal: 110, tax: 22, total: 132, date: "2026-02-01" });
+  const item = await agent.intake({ vendor: "KnownCo", invoice_number: "K-2", tax_id: "T", currency: "EUR", subtotal: 110, tax: 22, total: 132, date: "2026-02-01" });
   assert.equal(item.proposed.tool, "draft_payment");
   assert.ok(item.trace.some((t) => t.tool === "compute_variance_vs_history"));
   assert.equal(item.stopReason, "terminal_action");
@@ -106,7 +106,7 @@ test("suspected duplicate: the loop confirms via check_duplicate, then flags for
   const memory = new InMemoryStore();
   const embedder = new FakeEmbedder();
   const agent = new AutopilotAgent(embedder, memory, new InMemoryWorkItemStore(), defaultLoop(), fakeSinks());
-  const dup = { vendor: "Dup", invoice_number: "D-1", tax_id: "T", subtotal: 400, tax: 100, total: 500, date: "2026-01-01" };
+  const dup = { vendor: "Dup", invoice_number: "D-1", tax_id: "T", currency: "EUR", subtotal: 400, tax: 100, total: 500, date: "2026-01-01" };
   const first = await agent.intake(dup);
   await agent.approve(first.id);
 
@@ -125,10 +125,12 @@ test("missing required fields → draft_vendor_reply", async () => {
 
 test("parse path: a terminal tool_call is parsed and reasoning/confidence are lifted out of the domain args", async () => {
   const client = scriptedClient([
+    toolCall("recall_vendor_history", { reasoning: "establish history" }),
+    toolCall("validate_invoice", { reasoning: "validate structure" }),
     toolCall("draft_journal_entry", { expense_account: "Office Supplies", amount: 120, reasoning: "clean invoice", confidence: 0.91 }),
   ]);
   const loop = new AutopilotLoop(client);
-  const invoice = normalizeInvoice({ vendor: "A", invoice_number: "1", tax_id: "T", total: 120 });
+  const invoice = normalizeInvoice({ vendor: "A", invoice_number: "1", date: "2026-01-01", currency: "EUR", tax_id: "T", total: 120 });
   const res = await loop.run({ invoice, ...loopDeps() });
   assert.equal(res.proposed.tool, "draft_journal_entry");
   assert.equal(res.proposed.reasoning, "clean invoice");
@@ -139,11 +141,75 @@ test("parse path: a terminal tool_call is parsed and reasoning/confidence are li
 });
 
 test("parse path: terminal confidence is clamped to [0,1]", async () => {
-  const client = scriptedClient([toolCall("flag_for_review", { reason: "x", confidence: 5 })]);
+  const client = scriptedClient([
+    toolCall("recall_vendor_history", { reasoning: "establish history" }),
+    toolCall("validate_invoice", { reasoning: "validate structure" }),
+    toolCall("flag_for_review", { reason: "x", confidence: 5 }),
+  ]);
   const loop = new AutopilotLoop(client);
   const invoice = normalizeInvoice({ vendor: "A", invoice_number: "1", tax_id: "T", total: 1 });
   const res = await loop.run({ invoice, ...loopDeps() });
   assert.equal(res.proposed.confidence, 1);
+});
+
+test("structural evidence gate withholds a step-1 money proposal until recall and validation run", async () => {
+  const client = scriptedClient([
+    toolCall("draft_payment", { vendor: "A", amount: 120, currency: "EUR", reasoning: "skip checks", confidence: 1 }),
+    toolCall("recall_vendor_history", { reasoning: "run required history" }),
+    toolCall("validate_invoice", { reasoning: "run required validation" }),
+    toolCall("draft_payment", { vendor: "A", amount: 120, currency: "EUR", reasoning: "evidence complete", confidence: 0.8 }),
+  ]);
+  const invoice = normalizeInvoice({ vendor: "A", invoice_number: "1", date: "2026-01-01", currency: "EUR", tax_id: "T", total: 120 });
+  const res = await new AutopilotLoop(client).run({ invoice, ...loopDeps() });
+
+  assert.equal(res.proposed.tool, "draft_payment");
+  assert.match(res.trace[0]!.observation, /Terminal proposal withheld/);
+  assert.ok(res.trace.some((step) => step.tool === "recall_vendor_history"));
+  assert.ok(res.trace.some((step) => step.tool === "validate_invoice"));
+});
+
+test("proposal policy guard replaces a malicious payment over a confirmed duplicate", async () => {
+  const memory = new InMemoryStore();
+  const embedder = new FakeEmbedder();
+  const seeder = new AutopilotAgent(embedder, memory, new InMemoryWorkItemStore(), defaultLoop(), fakeSinks());
+  const raw = { vendor: "GuardedCo", invoice_number: "G-1", date: "2026-01-01", currency: "EUR", tax_id: "T", total: 120 };
+  const first = await seeder.intake(raw);
+  await seeder.approve(first.id);
+
+  const malicious = scriptedClient([
+    toolCall("recall_vendor_history", { reasoning: "history" }),
+    toolCall("validate_invoice", { reasoning: "structure" }),
+    toolCall("check_duplicate", { reasoning: "confirm match" }),
+    toolCall("draft_payment", { vendor: "GuardedCo", amount: 120, currency: "EUR", reasoning: "pay anyway", confidence: 1 }),
+  ]);
+  const res = await new AutopilotLoop(malicious).run({ invoice: normalizeInvoice(raw), embedder, memory });
+
+  assert.equal(res.proposed.tool, "flag_for_review");
+  assert.equal(res.proposed.modelId, "policy:proposal-safety-guard");
+  assert.ok(res.findings.some((finding) => finding.rule === "R5" && !finding.passed));
+  assert.ok(res.trace.some((step) => step.tool === "proposal_policy_guard"));
+});
+
+test("proposal policy guard blocks money actions for unknown currency and incomplete line items", async () => {
+  const unknownCurrency = normalizeInvoice({
+    vendor: "AmbiguousCo", invoice_number: "A-1", date: "2026-01-01", tax_id: "T", total: 100,
+  });
+  const malicious = scriptedClient([
+    toolCall("recall_vendor_history", { reasoning: "history" }),
+    toolCall("validate_invoice", { reasoning: "structure" }),
+    toolCall("draft_payment", { vendor: "AmbiguousCo", amount: 100, currency: "EUR", reasoning: "invent EUR", confidence: 1 }),
+  ]);
+  const guarded = await new AutopilotLoop(malicious).run({ invoice: unknownCurrency, ...loopDeps() });
+  assert.equal(guarded.proposed.tool, "draft_vendor_reply");
+  assert.equal(guarded.proposed.modelId, "policy:proposal-safety-guard");
+
+  const incomplete = normalizeInvoice({
+    vendor: "LinesCo", invoice_number: "L-1", date: "2026-01-01", currency: "EUR", tax_id: "T", total: 60,
+    line_items: [{ description: "known", amount: 60 }, { description: "missing" }],
+  });
+  const routed = await new AutopilotLoop(new FakeQwenChatClient()).run({ invoice: incomplete, ...loopDeps() });
+  assert.equal(routed.proposed.tool, "draft_vendor_reply");
+  assert.ok(routed.findings.some((finding) => finding.rule === "R4" && !finding.passed));
 });
 
 test("loop guard: max-steps cap falls back to a safe flag_for_review", async () => {
@@ -151,7 +217,7 @@ test("loop guard: max-steps cap falls back to a safe flag_for_review", async () 
   // maxSteps=2 is too small for a clean new vendor (recall + validate + terminal = 3),
   // so the loop exhausts the budget without a terminal action → deterministic fallback.
   const loop = new AutopilotLoop(new FakeQwenChatClient(), "qwen-plus", { maxSteps: 2, onStop: (r) => reasons.push(r) });
-  const invoice = normalizeInvoice({ vendor: "NewCo", invoice_number: "N-1", tax_id: "T", subtotal: 100, tax: 20, total: 120 });
+  const invoice = normalizeInvoice({ vendor: "NewCo", invoice_number: "N-1", date: "2026-01-01", currency: "EUR", tax_id: "T", subtotal: 100, tax: 20, total: 120 });
   const res = await loop.run({ invoice, ...loopDeps() });
   assert.equal(res.stopReason, "max_steps_fallback");
   assert.equal(res.proposed.tool, "flag_for_review");

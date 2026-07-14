@@ -16,8 +16,8 @@
 // POLICY/REGRESSION guard, and the real DECISION-QUALITY number is the live
 // qwen-plus run (which chooses freely against these same labels). See EVAL.md.
 //
-// `seed` invoices are intaken first (through the same pipeline) so that later
-// invoices from the same vendor are RECALLED from persistent memory — that is how
+// `seed` invoices are intaken and approved first (through the same gate) so that
+// later invoices from the same vendor are RECALLED from completed persistent facts — that is how
 // "recurring vendor", "suspected duplicate", and "amount anomaly" become real,
 // memory-grounded situations rather than hand-set flags.
 //
@@ -40,7 +40,7 @@ export interface EvalScenario {
   id: string;
   category: EvalCategory;
   label: string; // what a human reviewer sees; the business situation in one line
-  seed?: RawInvoice[]; // prior invoices intaken first (establish vendor history / duplicates)
+  seed?: RawInvoice[]; // prior invoices intaken + approved first (establish completed history)
   invoice: RawInvoice; // the invoice under decision
   expected: ToolName; // the tool a human AP clerk would deem correct (BUSINESS ground truth)
   // Set when the deterministic offline policy is KNOWN to miss this scenario, with

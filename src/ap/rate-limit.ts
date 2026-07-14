@@ -13,10 +13,9 @@
 //     is rejected when EITHER the caller's own bucket OR the global backstop is full,
 //     and the result says WHICH (`scope`) so the message is accurate.
 //
-// It is per-process and in-memory, keyed by the UTC calendar day, so it resets at
-// 00:00 UTC (and on restart). That is sufficient for a single-box demo; a multi-
-// instance deployment would move this to a shared store (e.g. the same PostgreSQL).
-// The clock is injectable so the UTC-reset behaviour is unit-testable.
+// DailyRateLimiter is the dependency-free test/dev implementation. Production
+// uses PostgresDailyRateLimiter below: its two counters are locked and incremented
+// in one transaction, so restarts and multiple replicas cannot reset/overspend.
 //
 // Honesty note on the per-client key: behind a reverse proxy the caller's IP is only
 // as trustworthy as the proxy's `X-Forwarded-For`, which a client can spoof. So the
@@ -27,11 +26,14 @@
 // The per-client daily cap. 100 uploads/day per client is plenty for a judge to
 // exercise every path many times over while bounding one client's spend; tune it for
 // a judging window via UPLOAD_DAILY_LIMIT.
-export const DEFAULT_DAILY_UPLOAD_LIMIT = Number(process.env.UPLOAD_DAILY_LIMIT || 100);
+import { createHash } from "node:crypto";
+import { withClient } from "../db/client.js";
+
+export const DEFAULT_DAILY_UPLOAD_LIMIT = boundedLimit(process.env.UPLOAD_DAILY_LIMIT, 100);
 // The global daily backstop across ALL clients — the hard total-spend bound. Kept
 // well above the per-client cap so distinct judges never collide on it, yet finite so
 // an abusive fleet cannot run the bill away. Tune via UPLOAD_GLOBAL_DAILY_LIMIT.
-export const DEFAULT_GLOBAL_DAILY_UPLOAD_LIMIT = Number(process.env.UPLOAD_GLOBAL_DAILY_LIMIT || 2000);
+export const DEFAULT_GLOBAL_DAILY_UPLOAD_LIMIT = boundedLimit(process.env.UPLOAD_GLOBAL_DAILY_LIMIT, 2000);
 
 // The key used when a caller does not supply one (e.g. an internal call with no
 // request context). All keyless consumers share this single bucket.
@@ -48,6 +50,11 @@ export interface RateLimitResult {
   globalUsed: number; // the global count across all clients AFTER a successful consume
 }
 
+export interface UploadRateLimiter {
+  consume(key?: string): RateLimitResult | Promise<RateLimitResult>;
+  snapshot(key?: string): RateLimitResult | Promise<RateLimitResult>;
+}
+
 export class DailyRateLimiter {
   private day: string;
   private buckets = new Map<string, number>(); // per-client counts for the current day
@@ -56,12 +63,10 @@ export class DailyRateLimiter {
   constructor(
     private limit: number = DEFAULT_DAILY_UPLOAD_LIMIT,
     private now: () => Date = () => new Date(), // injectable clock for deterministic tests
-    // The global backstop. Defaults high, but never below the per-client cap (a
-    // per-client cap above the backstop would be meaningless — one client could never
-    // reach its own limit).
+    // The global backstop is an independent HARD spend ceiling. It may deliberately
+    // be lower than the per-client fairness cap; never widen an operator's budget.
     private globalLimit: number = DEFAULT_GLOBAL_DAILY_UPLOAD_LIMIT
   ) {
-    this.globalLimit = Math.max(this.globalLimit, this.limit);
     this.day = utcDay(this.now());
   }
 
@@ -115,7 +120,113 @@ export class DailyRateLimiter {
   }
 }
 
+// Durable, atomic two-tier quota. Rows are scoped by UTC day and retained as a
+// small audit trail; a best-effort cleanup removes windows older than 14 days.
+export class PostgresDailyRateLimiter implements UploadRateLimiter {
+  private readonly globalLimit: number;
+
+  constructor(
+    private readonly limit: number = DEFAULT_DAILY_UPLOAD_LIMIT,
+    private readonly now: () => Date = () => new Date(),
+    globalLimit: number = DEFAULT_GLOBAL_DAILY_UPLOAD_LIMIT
+  ) {
+    this.globalLimit = globalLimit;
+  }
+
+  async consume(key: string = SHARED_CLIENT_KEY): Promise<RateLimitResult> {
+    return this.readOrConsume(key, true);
+  }
+
+  async snapshot(key: string = SHARED_CLIENT_KEY): Promise<RateLimitResult> {
+    return this.readOrConsume(key, false);
+  }
+
+  private async readOrConsume(key: string, consume: boolean): Promise<RateLimitResult> {
+    const day = utcDay(this.now());
+    const clientKey = durableClientKey(key);
+    return withClient(async (client) => {
+      await client.query("BEGIN");
+      try {
+        await client.query(
+          `INSERT INTO ap_daily_quota(day, client_key, used)
+           VALUES ($1::date, $2, 0), ($1::date, '__global__', 0)
+           ON CONFLICT (day, client_key) DO NOTHING`,
+          [day, clientKey]
+        );
+        const rows = await client.query<{ client_key: string; used: number }>(
+          `SELECT client_key, used
+             FROM ap_daily_quota
+            WHERE day = $1::date AND client_key IN ($2, '__global__')
+            ORDER BY client_key
+            FOR UPDATE`,
+          [day, clientKey]
+        );
+        const used = Number(rows.rows.find((r) => r.client_key === clientKey)?.used ?? 0);
+        const globalUsed = Number(rows.rows.find((r) => r.client_key === "__global__")?.used ?? 0);
+        const scope: "ip" | "global" = used >= this.limit ? "ip" : "global";
+        const allowed = used < this.limit && globalUsed < this.globalLimit;
+        let nextUsed = used;
+        let nextGlobal = globalUsed;
+        if (consume && allowed) {
+          await client.query(
+            `UPDATE ap_daily_quota SET used = used + 1
+              WHERE day = $1::date AND client_key IN ($2, '__global__')`,
+            [day, clientKey]
+          );
+          nextUsed += 1;
+          nextGlobal += 1;
+          // Small, bounded housekeeping inside the already-open transaction.
+          await client.query(`DELETE FROM ap_daily_quota WHERE day < current_date - 14`);
+        }
+        await client.query("COMMIT");
+        return makeResult(
+          allowed,
+          allowed ? "ip" : scope,
+          nextUsed,
+          nextGlobal,
+          day,
+          this.limit,
+          this.globalLimit
+        );
+      } catch (err) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw err;
+      }
+    });
+  }
+}
+
 // The UTC calendar-day bucket (YYYY-MM-DD) — the reset boundary is 00:00 UTC.
 function utcDay(d: Date): string {
   return d.toISOString().slice(0, 10);
+}
+
+function durableClientKey(key: string): string {
+  return `client:${createHash("sha256").update(key || SHARED_CLIENT_KEY).digest("hex")}`;
+}
+
+function boundedLimit(raw: string | undefined, fallback: number): number {
+  const value = Number(raw);
+  return Number.isFinite(value) ? Math.max(1, Math.min(1_000_000, Math.trunc(value))) : fallback;
+}
+
+function makeResult(
+  allowed: boolean,
+  scope: "ip" | "global",
+  used: number,
+  globalUsed: number,
+  day: string,
+  limit: number,
+  globalLimit: number
+): RateLimitResult {
+  return {
+    allowed,
+    limit,
+    used,
+    remaining: Math.max(0, limit - used),
+    day,
+    scope,
+    globalLimit,
+    globalUsed,
+  };
 }
