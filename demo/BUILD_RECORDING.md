@@ -11,9 +11,12 @@ project, a chat attachment, or a desktop scratch file as the only copy.
 
 ## Release identity lock
 
-- Application release candidate audited by this pack:
+- Exact application release audited, deployed, and verified on 2026-07-15:
   **`321b6c5440a365fe346d2c446e141e9c5d33854c`**.
-- That SHA is a source target, not an automatic claim that production runs it.
+- Project-contained redacted release evidence records exact checkout, immutable
+  post-merge CI, production build, schema/bootstrap, least privilege,
+  cross-database denial, health/readiness/deep readiness, a real-Qwen
+  intake→PENDING smoke with targeted cleanup, and public TLS canaries for that SHA.
 - A later documentation/media-only submission commit may legitimately differ from
   the deployed application SHA. Record both identities and describe them accurately.
 - Any later change to runtime code, dependencies, Docker context, deployment scripts,
@@ -53,14 +56,14 @@ git show -s --format='%H %cI %s' HEAD
 
 Acceptance:
 
-- [ ] `HEAD` is the exact application release SHA selected above (or a newly
+- [x] `HEAD` was the exact application release SHA selected above (or a newly
   documented replacement after a full release cycle).
-- [ ] The checkout is clean before build.
-- [ ] The immutable GitHub CI run shown in the proof resolves to the same application
+- [x] The checkout was clean before build.
+- [x] The immutable GitHub CI run resolves to the same application
   SHA and all required jobs are green.
-- [ ] The production Docker build completes from this checkout; the image is not
+- [x] The production Docker build completed from this checkout; the image was not
   reused from a floating tag or older tree.
-- [ ] The release script completes schema/bootstrap, least-privilege and
+- [x] The release script completed schema/bootstrap, least-privilege and
   cross-database-denial checks before replacing the serving container.
 
 Use [`../deploy/redeploy.sh`](../deploy/redeploy.sh) as the authoritative release
@@ -71,23 +74,24 @@ path. Do not type a reviewer token into a command that will remain in shell hist
 Use a uniquely prefixed synthetic vendor and the actual final HTTPS hostname.
 Acceptance is all-or-nothing:
 
-- [ ] Public `/health` returns `200`, `status=ok`, `store=pgvector`, and the exact
+- [x] Public `/health` returns `200`, `status=ok`, `store=pgvector`, and the exact
   decision + embedding IDs expected above.
-- [ ] Public network-free `/ready` returns `200`, `status=ready`, with reviewer auth,
+- [x] Public network-free `/ready` returns `200`, `status=ready`, with reviewer auth,
   PostgreSQL, Qwen configuration, and embedding-model compatibility healthy.
-- [ ] Authenticated, admission-controlled `/ready/deep` returns `200` and a real
+- [x] Authenticated, admission-controlled `/ready/deep` returned `200` and a real
   embedding probe with the same embedding ID. The request header/token is never
   visible in the captured frame.
-- [ ] An authenticated synthetic invoice reaches durable `PENDING`; its proposal
+- [x] An authenticated synthetic invoice reached durable `PENDING`; its proposal
   carries the final decision model ID and no sink has fired.
 - [ ] A fresh sample document extraction carries the final vision model ID, then
   feeds the same bounded loop.
-- [ ] An unauthenticated `/pending` request fails closed, while the private reviewer
+- [x] An unauthenticated `/pending` request fails closed, while the private reviewer
   path works. Do not display the credential.
-- [ ] Smoke work items and vendor-memory rows are removed through the approved cleanup
+- [x] Smoke work items and vendor-memory rows were removed through the approved cleanup
   path after capture; no stale PENDING card is left for judges.
-- [ ] Public UI, `/health`, `/ready`, `/docs`, TLS, and the private judge path are
-  tested again from an incognito/off-network browser.
+- [x] Public UI, `/health`, `/ready`, and TLS were tested after the exact deployment.
+- [ ] Recheck `/docs`, the private judge path, and the fresh vision flow while making
+  the sanitized incognito/off-network final capture.
 
 Do not claim a model from configuration alone. A configured model ID proves intent;
 the decision and vision canaries prove the exercised paths.

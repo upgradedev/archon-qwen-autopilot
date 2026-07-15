@@ -10,20 +10,21 @@ printed or committed.
 > Autopilot container is bound to **`127.0.0.1:9100`**, not a public security-group
 > port.
 >
-> Release-truth boundary: the hostname being live does not prove which source
-> revision it serves. The audited application release candidate is
-> `321b6c5440a365fe346d2c446e141e9c5d33854c`; it is represented as the final runtime
-> only after the exact checkout, immutable CI, redeploy, readiness, decision and
-> vision canaries pass. See [`../demo/BUILD_RECORDING.md`](../demo/BUILD_RECORDING.md).
-> A later docs/media-only submission HEAD may differ and must be labelled separately.
+> **Exact application release verified 2026-07-15:**
+> `321b6c5440a365fe346d2c446e141e9c5d33854c`. The release controller checked out that
+> SHA, built the production image, bootstrapped the dedicated database role and
+> schema, proved cross-database denial, replaced the hardened container, and passed
+> `/health`, `/ready`, authenticated `/ready/deep`, and a real-Qwen
+> intake→PENDING→targeted-cleanup smoke. Public UI, health and readiness also
+> returned `200` over valid TLS. The deployment record is redacted and retained only
+> in this project's ignored `.artifacts/` evidence directory.
 >
-> Historical infrastructure checkpoint (not final-release evidence): real
-> `text-embedding-v4` / `qwen-plus`, PostgreSQL mode, real-Qwen intake→pending,
-> unauthenticated `/pending` 401 and authenticated `/pending` 200 were verified on
-> 2026-07-15. Runtime hardening was loopback-only, read-only, `cap-drop ALL`,
-> `512 MiB / 1 CPU / 128 PIDs`, zero restarts, dual `data` + `edge` networks, and a
-> uid-1000 writable durable-ledger mount; direct public 9100/5432 were blocked. These
-> facts must be re-proven for the selected application SHA rather than copied forward.
+> The exercised release proves the `qwen-plus` decision path and
+> `text-embedding-v4` deep probe. A fresh `qwen-vl-max` document canary still belongs
+> in the final screenshot/video capture; configuration alone is not presented as an
+> exercised vision claim. A later docs/media-only submission HEAD may differ from the
+> deployed application SHA and must be labelled separately. See
+> [`../demo/BUILD_RECORDING.md`](../demo/BUILD_RECORDING.md).
 
 ## Current production topology
 

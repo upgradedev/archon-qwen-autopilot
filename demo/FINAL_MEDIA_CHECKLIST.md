@@ -6,9 +6,12 @@ recording voice, public hosting, or publication account. Never show the reviewer
 
 Run [`BUILD_RECORDING.md`](BUILD_RECORDING.md) first, then use the concise operator
 sheet in [`VIDEO_RECORDING_CHECKLIST.md`](VIDEO_RECORDING_CHECKLIST.md). The audited
-application release candidate is `321b6c5440a365fe346d2c446e141e9c5d33854c`;
-do not call it deployed until the exact-SHA proof and final canaries pass. A later
-documentation/media-only submission HEAD may differ and must be labelled separately.
+application release `321b6c5440a365fe346d2c446e141e9c5d33854c` was exact-deployed
+and passed production build, database isolation, health/readiness/deep readiness,
+real-Qwen intake→PENDING cleanup, and public TLS canaries on 2026-07-15. The final
+media pass must still capture a fresh `qwen-vl-max` document canary and sanitize the
+proof composite. A later documentation/media-only submission HEAD may differ and
+must be labelled separately.
 Recheck the [official rules](https://qwencloud-hackathon.devpost.com/rules) immediately
 before submission; this pack was reconciled to them on 2026-07-15.
 
