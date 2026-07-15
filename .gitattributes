@@ -9,3 +9,9 @@
 *.pdf binary
 *.jpg binary
 *.jpeg binary
+
+# Frozen evaluation text is hashed byte-for-byte. Force LF in every checkout so
+# Windows core.autocrlf cannot invalidate the preregistered evidence protocol.
+eval/dataset.sha256 text eol=lf
+eval/vision/manifest.json text eol=lf
+eval/vision/fixtures.sha256 text eol=lf
