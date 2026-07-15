@@ -774,6 +774,11 @@
           title: 'Qwen-VL source extraction confidence is separate from the decision model confidence.',
           text: 'Qwen-VL extraction confidence ' + extractionConf + (item.lowExtractionConfidence ? ' — source review required' : '')
         }) : document.createTextNode('')),
+        (item.inferredPayableTotal ? el('span', {
+          class: 'lowconf',
+          title: 'The payable total was not read from the source document; it was inferred from subtotal and tax.',
+          text: 'payable total inferred — verify source'
+        }) : document.createTextNode('')),
         (needsVerifiedRecipient ? el('span', {
           class: 'lowconf',
           title: 'The model is not trusted to choose an email destination. Add the verified vendor-master recipient by amendment.',

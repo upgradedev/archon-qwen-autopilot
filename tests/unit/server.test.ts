@@ -273,6 +273,12 @@ test("withReviewFlags flags a below-threshold confidence for review, and leaves 
   assert.equal(weakSource.lowConfidence, false, "decision confidence stays a separate signal");
   assert.equal(weakSource.lowExtractionConfidence, true, "weak Qwen-VL read is flagged independently");
   assert.equal(weakSource.requiresCarefulReview, true);
+  const inferredSource = base(0.9, 0.95);
+  inferredSource.invoice.notes = ["total inferred from subtotal + tax = 120"];
+  const inferred = withReviewFlags(inferredSource);
+  assert.equal(inferred.lowExtractionConfidence, false);
+  assert.equal(inferred.inferredPayableTotal, true);
+  assert.equal(inferred.requiresCarefulReview, true);
 });
 
 test("GET /pending carries the advisory lowConfidence review flag on each item", async () => {
@@ -538,6 +544,7 @@ test("GET / ships the enriched UI: upload + live process view, collapsible trace
   assert.match(res.body, /review the extracted fields, then Process/); // the demo review note
   assert.match(res.body, /pendingTicket/); // single-use ticket → process without re-consuming
   assert.match(res.body, /getReader|text\/event-stream|Processing invoice/);
+  assert.match(res.body, /payable total inferred — verify source/); // document-only source guard is visible
   // The durable two-tier rate limit is surfaced without hard-coding an env-tunable cap.
   assert.match(res.body, /rate-limited per visitor and globally/);
   // Collapsible "How the agent decided" trace (chevron toggle).

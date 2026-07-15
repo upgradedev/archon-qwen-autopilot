@@ -49,6 +49,7 @@ that the demo is ready to control a real bank or ERP.
 | Replay or concurrent approval | Atomic database claim, terminal state conflicts, durable JSONL ref marker | SMTP recipient delivery cannot be made exactly-once by the application |
 | Public quota exhaustion | Persistent per-client/global public limits plus a separate bounded reviewer reserve | Limits count accepted workflows, not provider billing units; a fleet deployment needs a shared edge policy |
 | Malicious upload | Size/type/magic-byte/page/time caps and bounded PDF rasterization | Magic bytes are not antivirus or content disarm; complex documents can be misread |
+| Vision source ambiguity | Low/missing extraction confidence and a payable total inferred because it was unreadable deterministically replace any money proposal with review | Confidence is model-reported, not calibrated; the reviewer must compare the extracted fields with the source image |
 | Sensitive-data leakage | Redacted public preview, protected evidence reads, generic errors with request IDs, secret scanning | Operators must still keep tokens, `.env`, cloud identity, and real vendor data out of media/logs |
 | Cross-application database access | Dedicated database/principal and release-time denial check | The physical PostgreSQL service is shared and still requires host-level protection |
 | MCP misuse | Local stdio only and four narrow tools | Anyone who can spawn the process may read state, create proposals, and consume configured model capacity |

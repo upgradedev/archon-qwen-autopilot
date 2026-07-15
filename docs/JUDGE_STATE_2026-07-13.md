@@ -53,9 +53,9 @@ Real-Postgres integration cases skip explicitly, never silently, when a local
 - The JSONL ledger fsyncs the row and a per-work-item idempotency marker, and dedupes
   a completed ref after restart. SMTP uses a stable application `Message-ID`, while
   honestly not claiming recipient-level exactly-once semantics.
-- Unknown/conflicting currency, missing or invalid dates, incomplete line items, and
-  low/unknown Qwen-VL extraction confidence fail toward human review instead of a
-  payment proposal.
+- Unknown/conflicting currency, missing or invalid dates, incomplete line items,
+  low/unknown Qwen-VL extraction confidence, and a payable total inferred because it
+  was unreadable in the document fail toward human review instead of a payment proposal.
 - Uploaded PDF/PNG/JPG files are bounded and magic-byte checked; PDF pages and model
   calls have caps/timeouts. Recognized injection patterns and non-invoice relevance
   are surfaced to the reviewer.
