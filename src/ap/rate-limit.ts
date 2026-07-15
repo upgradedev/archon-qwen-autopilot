@@ -1,39 +1,46 @@
-// Daily upload rate limiter — protects the Qwen API budget on the OPEN demo.
+// Daily upload rate limiter — bounds provider-workflow admissions on the OPEN demo.
 //
 // The live demo is intentionally open (no login, so judges can test it freely —
-// see the README). To keep an open endpoint from running up the Qwen bill, invoice
+// see the README). To limit an open endpoint's model exposure, invoice
 // uploads (POST /intake and the streaming / document routes) are capped PER UTC DAY.
 // This is a deliberate, rules-compliant guardrail, not authentication.
 //
 // TWO TIERS, so a single busy client cannot starve everyone else out of the demo:
 //   • a PER-CLIENT bucket (keyed by a best-effort client id — the caller passes the
 //     request's IP), so one judge hitting the cap does not 429 the next judge; and
-//   • a GLOBAL backstop across all clients, so the total spend stays bounded even
+//   • a GLOBAL backstop across all clients, so accepted workflows stay bounded even
 //     with many distinct clients (the whole reason the limiter exists). A decision
 //     is rejected when EITHER the caller's own bucket OR the global backstop is full,
 //     and the result says WHICH (`scope`) so the message is accurate.
 //
 // DailyRateLimiter is the dependency-free test/dev implementation. Production
 // uses PostgresDailyRateLimiter below: its two counters are locked and incremented
-// in one transaction, so restarts and multiple replicas cannot reset/overspend.
+// in one transaction, so restarts and multiple replicas cannot reset/oversubscribe it.
 //
 // Honesty note on the per-client key: behind a reverse proxy the caller's IP is only
 // as trustworthy as the proxy's `X-Forwarded-For`, which a client can spoof. So the
 // per-client bucket is a BEST-EFFORT fairness split, and the GLOBAL backstop is the
-// hard, spoof-proof spend bound. Size the backstop so that even in the degenerate
+// hard, spoof-proof workflow-entitlement bound. Size it so that even in the degenerate
 // "every client collapses to one key" case it alone does not starve the judges.
 
 // The per-client daily cap. 100 uploads/day per client is plenty for a judge to
-// exercise every path many times over while bounding one client's spend; tune it for
+// exercise every path many times over while bounding one client's admissions; tune it for
 // a judging window via UPLOAD_DAILY_LIMIT.
 import { createHash } from "node:crypto";
 import { withClient } from "../db/client.js";
 
 export const DEFAULT_DAILY_UPLOAD_LIMIT = boundedLimit(process.env.UPLOAD_DAILY_LIMIT, 100);
-// The global daily backstop across ALL clients — the hard total-spend bound. Kept
+// The global daily backstop across ALL clients — the hard accepted-workflow bound. Kept
 // well above the per-client cap so distinct judges never collide on it, yet finite so
 // an abusive fleet cannot run the bill away. Tune via UPLOAD_GLOBAL_DAILY_LIMIT.
 export const DEFAULT_GLOBAL_DAILY_UPLOAD_LIMIT = boundedLimit(process.env.UPLOAD_GLOBAL_DAILY_LIMIT, 2000);
+
+// A valid out-of-band reviewer credential uses a separate, still-bounded reserve.
+// Public traffic therefore cannot consume judging capacity, while leaked/abusive
+// credentials still cannot create an unlimited workflow-admission bypass. The total
+// accepted workflows/day is bounded by both global caps; calls/tokens are separate.
+export const DEFAULT_REVIEWER_DAILY_UPLOAD_LIMIT = boundedLimit(process.env.REVIEWER_UPLOAD_DAILY_LIMIT, 250);
+export const DEFAULT_REVIEWER_GLOBAL_DAILY_UPLOAD_LIMIT = boundedLimit(process.env.REVIEWER_UPLOAD_GLOBAL_DAILY_LIMIT, 500);
 
 // The key used when a caller does not supply one (e.g. an internal call with no
 // request context). All keyless consumers share this single bucket.
@@ -63,7 +70,7 @@ export class DailyRateLimiter {
   constructor(
     private limit: number = DEFAULT_DAILY_UPLOAD_LIMIT,
     private now: () => Date = () => new Date(), // injectable clock for deterministic tests
-    // The global backstop is an independent HARD spend ceiling. It may deliberately
+    // The global backstop is an independent HARD workflow-entitlement ceiling. It may deliberately
     // be lower than the per-client fairness cap; never widen an operator's budget.
     private globalLimit: number = DEFAULT_GLOBAL_DAILY_UPLOAD_LIMIT
   ) {
@@ -124,13 +131,20 @@ export class DailyRateLimiter {
 // small audit trail; a best-effort cleanup removes windows older than 14 days.
 export class PostgresDailyRateLimiter implements UploadRateLimiter {
   private readonly globalLimit: number;
+  private readonly globalKey: string;
+  private readonly namespace: string;
 
   constructor(
     private readonly limit: number = DEFAULT_DAILY_UPLOAD_LIMIT,
     private readonly now: () => Date = () => new Date(),
-    globalLimit: number = DEFAULT_GLOBAL_DAILY_UPLOAD_LIMIT
+    globalLimit: number = DEFAULT_GLOBAL_DAILY_UPLOAD_LIMIT,
+    namespace = ""
   ) {
     this.globalLimit = globalLimit;
+    if (namespace && !/^[a-z0-9_-]{1,32}$/i.test(namespace)) throw new Error("rate-limit namespace must be 1–32 safe characters");
+    this.namespace = namespace;
+    // Keep the historical public key unchanged; named reserves get disjoint rows.
+    this.globalKey = namespace ? `__global__:${namespace}` : "__global__";
   }
 
   async consume(key: string = SHARED_CLIENT_KEY): Promise<RateLimitResult> {
@@ -143,26 +157,26 @@ export class PostgresDailyRateLimiter implements UploadRateLimiter {
 
   private async readOrConsume(key: string, consume: boolean): Promise<RateLimitResult> {
     const day = utcDay(this.now());
-    const clientKey = durableClientKey(key);
+    const clientKey = durableClientKey(this.namespace ? `${this.namespace}:${key}` : key);
     return withClient(async (client) => {
       await client.query("BEGIN");
       try {
         await client.query(
           `INSERT INTO ap_daily_quota(day, client_key, used)
-           VALUES ($1::date, $2, 0), ($1::date, '__global__', 0)
+           VALUES ($1::date, $2, 0), ($1::date, $3, 0)
            ON CONFLICT (day, client_key) DO NOTHING`,
-          [day, clientKey]
+          [day, clientKey, this.globalKey]
         );
         const rows = await client.query<{ client_key: string; used: number }>(
           `SELECT client_key, used
              FROM ap_daily_quota
-            WHERE day = $1::date AND client_key IN ($2, '__global__')
+            WHERE day = $1::date AND client_key IN ($2, $3)
             ORDER BY client_key
             FOR UPDATE`,
-          [day, clientKey]
+          [day, clientKey, this.globalKey]
         );
         const used = Number(rows.rows.find((r) => r.client_key === clientKey)?.used ?? 0);
-        const globalUsed = Number(rows.rows.find((r) => r.client_key === "__global__")?.used ?? 0);
+        const globalUsed = Number(rows.rows.find((r) => r.client_key === this.globalKey)?.used ?? 0);
         const scope: "ip" | "global" = used >= this.limit ? "ip" : "global";
         const allowed = used < this.limit && globalUsed < this.globalLimit;
         let nextUsed = used;
@@ -170,8 +184,8 @@ export class PostgresDailyRateLimiter implements UploadRateLimiter {
         if (consume && allowed) {
           await client.query(
             `UPDATE ap_daily_quota SET used = used + 1
-              WHERE day = $1::date AND client_key IN ($2, '__global__')`,
-            [day, clientKey]
+              WHERE day = $1::date AND client_key IN ($2, $3)`,
+            [day, clientKey, this.globalKey]
           );
           nextUsed += 1;
           nextGlobal += 1;

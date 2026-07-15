@@ -13,14 +13,34 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   validateDocument,
+  validateImageDimensions,
   FakeExtractionClient,
   QwenVisionExtractionClient,
   FAKE_EXTRACTED_INVOICE,
   defaultExtractionClient,
   DEFAULT_VISION_MODEL,
   MAX_DOCUMENT_BYTES,
+  MAX_PDF_PAGES,
+  MAX_PDF_RENDER_DIMENSION,
+  MAX_PDF_RENDERED_BYTES,
+  POPPLER_STDERR_MAX_BYTES,
+  assertRenderedPdfBudget,
+  pdfRenderArgs,
   type VisionChat,
 } from "../../src/qwen/vision.js";
+import { SOTA_CANDIDATE_MODEL } from "../../src/qwen/client.js";
+
+function pngHeader(width: number, height: number): Buffer {
+  const out = Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0, 0, 0, 0, 0, 0, 0, 0,
+  ]);
+  out.writeUInt32BE(width, 16);
+  out.writeUInt32BE(height, 20);
+  return out;
+}
+const PNG_BYTES = pngHeader(1, 1);
 
 // A fake OpenAI-compatible vision chat that returns a canned completion string â€” lets
 // us exercise QwenVisionExtractionClient.extract() (JSON-clean + toRawInvoice) offline,
@@ -157,6 +177,45 @@ test("QwenVisionExtractionClient.extract maps a model completion (image path) â†
   assert.equal(content[content.length - 1].type, "text");
 });
 
+test("image header preflight accepts bounded PNG/JPEG and rejects malformed or pixel-bomb canvases", () => {
+  assert.equal(validateImageDimensions(pngHeader(1200, 1600), ".png").ok, true);
+  const bomb = validateImageDimensions(pngHeader(8192, 8192), ".png");
+  assert.equal(bomb.ok, false);
+  if (!bomb.ok) assert.equal(bomb.status, 413);
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x0b, 0x08, 0x04, 0xb0, 0x06, 0x40, 0x03, 0x01, 0x11, 0x00]);
+  assert.equal(validateImageDimensions(jpeg, ".jpg").ok, true);
+  assert.equal(validateImageDimensions(Buffer.from([0xff, 0xd8, 0xff]), ".jpg").ok, false);
+});
+
+test("PDF rasterization arguments cap pages and longest-side pixels", () => {
+  const args = pdfRenderArgs("input.pdf", "page");
+  assert.deepEqual(args, [
+    "-png", "-scale-to", String(MAX_PDF_RENDER_DIMENSION),
+    "-l", String(MAX_PDF_PAGES + 1), "input.pdf", "page",
+  ]);
+  assert.ok(MAX_PDF_RENDER_DIMENSION >= 512 && MAX_PDF_RENDER_DIMENSION <= 4096);
+  assert.ok(POPPLER_STDERR_MAX_BYTES >= 1024 && POPPLER_STDERR_MAX_BYTES <= 65_536);
+});
+
+test("PDF rendered-output byte budget rejects oversized page sets before reads/base64", () => {
+  assert.doesNotThrow(() => assertRenderedPdfBudget([1, MAX_PDF_RENDERED_BYTES - 1]));
+  assert.throws(() => assertRenderedPdfBudget([MAX_PDF_RENDERED_BYTES, 1]), /output budget/i);
+  assert.throws(() => assertRenderedPdfBudget([-1]), /invalid rendered PDF output size/i);
+});
+
+test("versioned qwen3.7 candidate uses the exact non-thinking JSON contract without max_tokens", async () => {
+  let captured: Record<string, unknown> | undefined;
+  const client = new QwenVisionExtractionClient(
+    SOTA_CANDIDATE_MODEL,
+    fakeVisionChat(JSON.stringify({ vendor: "Candidate Vision", invoice_number: "CV-1", invoice_date: "2026-01-01", tax_id: "T", currency: "EUR", subtotal: 100, tax: 20, total: 120, confidence: 0.9 }), (args) => { captured = args as Record<string, unknown>; })
+  );
+  await client.extract({ buffer: PNG_BYTES, filename: "invoice.png", mimetype: "image/png" });
+  assert.deepEqual(captured?.response_format, { type: "json_object" });
+  assert.equal(captured?.enable_thinking, false);
+  assert.equal("extra_body" in (captured ?? {}), false, "Python-only extra_body must never be sent by Node");
+  assert.equal(Object.prototype.hasOwnProperty.call(captured ?? {}, "max_tokens"), false);
+});
+
 test("QwenVisionExtractionClient.extract treats missing/invalid confidence as untrusted", async () => {
   const client = new QwenVisionExtractionClient("qwen-vl-max", fakeVisionChat("sorry, I could not read it"));
   const out = await client.extract({ buffer: Buffer.from("img"), filename: "invoice.jpg", mimetype: "image/jpeg" });
@@ -176,6 +235,80 @@ test("QwenVisionExtractionClient.extract treats missing/invalid confidence as un
   );
   const invalidOut = await invalid.extract({ buffer: Buffer.from("img"), filename: "invoice.jpg", mimetype: "image/jpeg" });
   assert.equal(invalidOut.invoice.confidence, 0);
+});
+
+test("Qwen-VL caller abort returns promptly while admission retains an SDK call until settlement", async () => {
+  let active = 0;
+  const retained: Promise<unknown>[] = [];
+  let sawAbortResolve!: () => void;
+  const sawAbort = new Promise<void>((resolve) => { sawAbortResolve = resolve; });
+  let settleResolve!: () => void;
+  const settle = new Promise<void>((resolve) => { settleResolve = resolve; });
+  const chat: VisionChat = {
+    chat: {
+      completions: {
+        create: async (_args, options) => {
+          active += 1;
+          try {
+            await new Promise<void>((_resolve, reject) => {
+              options?.signal?.addEventListener("abort", () => {
+                sawAbortResolve();
+                void settle.then(() => reject(options.signal?.reason ?? new Error("aborted")));
+              }, { once: true });
+            });
+            throw new Error("unreachable");
+          } finally {
+            active -= 1;
+          }
+        },
+      },
+    },
+  };
+  const aborter = new AbortController();
+  const extraction = new QwenVisionExtractionClient("qwen-vl-max", chat).extract(
+    { buffer: PNG_BYTES, filename: "invoice.png", mimetype: "image/png" },
+    { signal: aborter.signal, retainProviderCallUntilSettled: (operation) => retained.push(operation) }
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(active, 1);
+  aborter.abort(new Error("client disconnected"));
+  await sawAbort;
+  await assert.rejects(extraction, /client disconnected/);
+  assert.equal(active, 1, "the SDK call remains active after the response boundary returns");
+  assert.equal(retained.length, 1, "the live SDK promise transfers to admission ownership");
+  settleResolve();
+  await assert.rejects(retained[0]!, /client disconnected/);
+  assert.equal(active, 0);
+});
+
+test("Qwen-VL hard deadline returns even when the SDK ignores AbortSignal", async () => {
+  let settle!: () => void;
+  let signalSeen: AbortSignal | undefined;
+  const chat: VisionChat = {
+    chat: {
+      completions: {
+        create: (_args, options) => {
+          signalSeen = options?.signal;
+          return new Promise((resolve) => {
+            settle = () => resolve({ choices: [{ message: { content: "{}" } }] });
+          });
+        },
+      },
+    },
+  };
+  const retained: Promise<unknown>[] = [];
+  const started = Date.now();
+  const extraction = new QwenVisionExtractionClient("qwen-vl-max", chat).extract(
+    { buffer: PNG_BYTES, filename: "invoice.png", mimetype: "image/png" },
+    { deadlineMs: 20, retainProviderCallUntilSettled: (operation) => retained.push(operation) }
+  );
+
+  await assert.rejects(extraction, /timed out after 20ms/);
+  assert.ok(Date.now() - started < 500, "the local vision deadline cannot depend on SDK cancellation");
+  assert.equal(signalSeen?.aborted, true);
+  assert.equal(retained.length, 1);
+  settle();
+  await retained[0];
 });
 
 test("QwenVisionExtractionClient PDF path surfaces a clear 'poppler not installed' error when the binary is missing", async () => {

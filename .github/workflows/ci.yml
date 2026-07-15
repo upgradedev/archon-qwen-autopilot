@@ -1,12 +1,12 @@
 name: CI
 
 # Archon Autopilot CI — gitleaks-first, then dep-audit → typecheck → build → test.
-# Runs FULLY OFFLINE: with no DASHSCOPE_API_KEY the decider + embedder auto-fall
-# back to the deterministic Fakes (FakeQwenChatClient + FakeEmbedder), so the
-# whole AP loop — intake → Qwen-decide → HITL approve → execute — is exercised end
-# to end with no secrets and no spend. A pgvector service container backs the
-# DB-integration tests; the mandatory intake→pending→approve→executed slice runs
-# in-memory, so the suite is green even with no database.
+# Application tests make no provider calls: with no DASHSCOPE_API_KEY the decider
+# + embedder auto-fall back to deterministic Fakes (FakeQwenChatClient +
+# FakeEmbedder), so the whole AP loop — intake → decide → HITL approve → execute —
+# is exercised with no provider secret or spend. Dependency installation, the
+# advisory audit, and the pinned gitleaks download still require ordinary CI
+# network access. A pgvector service container backs the DB-integration tests.
 
 on:
   push:
@@ -18,9 +18,9 @@ permissions:
 jobs:
   # Stage 1 — fail fast on any committed secret.
   secret-scan:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
       - name: gitleaks detect (pinned v8.18.4, redacted)
@@ -32,16 +32,16 @@ jobs:
           tar -xzf gitleaks.tar.gz gitleaks
           ./gitleaks detect --source . --redact --no-banner
 
-  # Stage 2a — dependency vulnerability audit (offline; runs in parallel with tests).
+  # Stage 2a — registry-backed dependency vulnerability audit (parallel with tests).
   # High/critical advisories fail the job; low/moderate are reported, not blocking.
   dep-audit:
     needs: secret-scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20
+          node-version: "24.18.0"
           cache: npm
       - name: Install deps
         run: npm ci
@@ -51,12 +51,12 @@ jobs:
   # Stage 2b — typecheck → build → the full testing pyramid.
   build-test:
     needs: secret-scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
     services:
       pgvector:
-        image: pgvector/pgvector:pg16
+        image: pgvector/pgvector:0.8.5-pg16-bookworm@sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_USER: postgres
@@ -69,11 +69,11 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20
+          node-version: "24.18.0"
           cache: npm
 
       - name: Install deps
@@ -97,8 +97,72 @@ jobs:
       - name: End-to-end AP loop smoke (offline Fakes — no key)
         run: npm run demo
 
+      - name: Frozen decision dataset integrity (offline — no key)
+        run: npm run eval:dataset
+
+      - name: Frozen vision fixture integrity (offline — no key, no model call)
+        run: npm run eval:vision
+
       - name: Decision-quality eval (offline policy/regression gate — no key)
         run: npm run eval -- --gate
+
+      - name: Submission smoke static contract (zero network)
+        run: npm run smoke:submission -- --check
+
+  # Stage 2b-db — production bootstrap proof against a real PostgreSQL cluster.
+  # The bootstrap/admin DSN exists only in this one-shot job. The serving identity
+  # is a separate autopilot_app DSN, and scripts/bootstrap-db.ts verifies exact
+  # role flags, ownership, schema/table/sequence grants, and denial of CONNECT to
+  # the neighbouring Memory database. Running it twice also proves redeploy-safe
+  # idempotency rather than validating only a fresh cluster.
+  database-isolation:
+    needs: secret-scan
+    runs-on: ubuntu-24.04
+    env:
+      MIGRATION_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      DATABASE_URL: postgresql://autopilot_app:ci_only_autopilot_app_password_2026_48chars@localhost:5432/autopilot
+      AUTOPILOT_APP_DB_PASSWORD: ci_only_autopilot_app_password_2026_48chars
+      MEMORY_DATABASE_NAME: memoryagent
+    services:
+      pgvector:
+        image: pgvector/pgvector:0.8.5-pg16-bookworm@sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24.18.0"
+          cache: npm
+      - name: Install deps
+        run: npm ci
+      - name: Create neighbouring Memory role/database prerequisite
+        run: |
+          node --input-type=module <<'NODE'
+          import pg from "pg";
+          const { Client } = pg;
+          const admin = new Client({ connectionString: process.env.MIGRATION_DATABASE_URL });
+          await admin.connect();
+          try {
+            await admin.query("CREATE ROLE memoryagent_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS");
+            await admin.query("CREATE DATABASE memoryagent OWNER postgres");
+          } finally {
+            await admin.end();
+          }
+          NODE
+      - name: Bootstrap and verify dedicated runtime identity
+        run: npm run db:bootstrap
+      - name: Re-run bootstrap to prove redeploy idempotency
+        run: npm run db:bootstrap
 
   # Stage 2c-docs — documentation-drift fitness functions. A DISTINCT job so it shows
   # as its own check: it asserts the README's claims (model ids, HTTP endpoints, the
@@ -107,12 +171,12 @@ jobs:
   # and pins the headline eval numbers. Fully offline (no key, no DB, no browser).
   docs-consistency:
     needs: secret-scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20
+          node-version: "24.18.0"
           cache: npm
       - name: Install deps
         run: npm ci
@@ -130,12 +194,12 @@ jobs:
   # dep-audit job above (the dependency gate). Fully OFFLINE — no key, no DB, no network.
   pen-test:
     needs: secret-scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20
+          node-version: "24.18.0"
           cache: npm
       - name: Install deps
         run: npm ci
@@ -151,14 +215,14 @@ jobs:
   # readiness.json (uploaded as an artifact). Fully OFFLINE (no key, no DB, no browser).
   readiness:
     needs: secret-scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0 # the gate reads `git ls-files` for the tracked-mp4 allowlist
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20
+          node-version: "24.18.0"
           cache: npm
       - name: Install deps
         run: npm ci
@@ -166,7 +230,7 @@ jobs:
         run: npm run readiness
       - name: Upload readiness.json
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: readiness-report
           path: readiness.json
@@ -181,12 +245,12 @@ jobs:
   # server process, which c8 cannot instrument across that boundary; it is its own job.)
   coverage:
     needs: secret-scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
     services:
       pgvector:
-        image: pgvector/pgvector:pg16
+        image: pgvector/pgvector:0.8.5-pg16-bookworm@sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_USER: postgres
@@ -199,10 +263,10 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20
+          node-version: "24.18.0"
           cache: npm
       - name: Install deps
         run: npm ci
@@ -212,7 +276,7 @@ jobs:
         run: npm run coverage
       - name: Upload lcov coverage report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: coverage-lcov
           path: coverage/lcov.info
@@ -225,12 +289,12 @@ jobs:
   # that the node:test pyramid cannot see. No live Qwen, no database.
   e2e:
     needs: secret-scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20
+          node-version: "24.18.0"
           cache: npm
       - name: Install deps
         run: npm ci
@@ -240,7 +304,7 @@ jobs:
         run: npm run test:e2e
       - name: Upload Playwright report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: playwright-report
           path: playwright-report/

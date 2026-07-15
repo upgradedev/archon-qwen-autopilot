@@ -28,6 +28,173 @@ function makeAgent(): { agent: AutopilotAgent; sinks: Sinks; memory: InMemorySto
   return { agent, sinks, memory };
 }
 
+class CrashAfterIntentStore extends InMemoryWorkItemStore {
+  private crash = true;
+  override async updateExecuting(
+    item: import("../../src/types.js").WorkItem,
+    expectedRecoveryLeaseId?: string
+  ): Promise<boolean> {
+    if (this.crash && item.decisionIntent && !item.execution && !item.executionFailure) {
+      this.crash = false;
+      // Make the simulated orphan immediately eligible for the explicit recovery
+      // path; in production the normal stale-claim window must elapse.
+      item.executionStartedAt = "2000-01-01T00:00:00.000Z";
+      await super.updateExecuting(item, expectedRecoveryLeaseId);
+      throw new Error("process died after intent commit, before sink call");
+    }
+    return super.updateExecuting(item, expectedRecoveryLeaseId);
+  }
+}
+
+class RejectIntentCasStore extends InMemoryWorkItemStore {
+  override async updateExecuting(): Promise<boolean> {
+    return false;
+  }
+}
+
+class FailFinalizeOnceStore extends InMemoryWorkItemStore {
+  private fail = true;
+  override async finishExecuting(
+    item: import("../../src/types.js").WorkItem,
+    expectedRecoveryLeaseId?: string
+  ): Promise<boolean> {
+    if (this.fail) {
+      this.fail = false;
+      return false;
+    }
+    return super.finishExecuting(item, expectedRecoveryLeaseId);
+  }
+}
+
+class RecoveryTakeoverStore extends InMemoryWorkItemStore {
+  private paused = false;
+  private reachedResolve!: () => void;
+  private continueResolve!: () => void;
+  readonly checkpointReached = new Promise<void>((resolve) => { this.reachedResolve = resolve; });
+  private readonly continuePromise = new Promise<void>((resolve) => { this.continueResolve = resolve; });
+
+  releaseOldHolder(): void {
+    this.continueResolve();
+  }
+
+  override async updateExecuting(
+    item: import("../../src/types.js").WorkItem,
+    expectedRecoveryLeaseId?: string
+  ): Promise<boolean> {
+    const persisted = await super.updateExecuting(item, expectedRecoveryLeaseId);
+    if (
+      persisted &&
+      expectedRecoveryLeaseId &&
+      item.recoveryReason &&
+      !item.execution &&
+      !this.paused
+    ) {
+      this.paused = true;
+      const durable = await super.get(item.id);
+      if (durable?.recoveryLease?.id === expectedRecoveryLeaseId) {
+        durable.recoveryLease.startedAt = "2000-01-01T00:00:00.000Z";
+        await super.updateExecuting(durable, expectedRecoveryLeaseId);
+      }
+      this.reachedResolve();
+      await this.continuePromise;
+    }
+    return persisted;
+  }
+}
+
+class StaleOriginalBeforeFenceStore extends InMemoryWorkItemStore {
+  private paused = false;
+  private reachedResolve!: () => void;
+  private continueResolve!: () => void;
+  readonly beforeFence = new Promise<void>((resolve) => { this.reachedResolve = resolve; });
+  private readonly continueFence = new Promise<void>((resolve) => { this.continueResolve = resolve; });
+
+  releaseOriginal(): void {
+    this.continueResolve();
+  }
+
+  override async fenceExecution(
+    id: string,
+    startedAt: string,
+    expectedRecoveryLeaseId?: string
+  ): Promise<import("../../src/types.js").WorkItem | null> {
+    if (!expectedRecoveryLeaseId && !this.paused) {
+      this.paused = true;
+      const durable = await super.get(id);
+      assert.ok(durable);
+      durable.executionStartedAt = "2000-01-01T00:00:00.000Z";
+      assert.equal(await super.updateExecuting(durable), true);
+      this.reachedResolve();
+      await this.continueFence;
+    }
+    return super.fenceExecution(id, startedAt, expectedRecoveryLeaseId);
+  }
+}
+
+class PostClaimRevalidationRaceStore extends InMemoryWorkItemStore {
+  private pausedIntent = false;
+  private pausedClaim = false;
+  private pausedFence = false;
+  private intentResolve!: () => void;
+  private continueIntentResolve!: () => void;
+  private claimResolve!: () => void;
+  private continueClaimResolve!: () => void;
+  private fenceResolve!: () => void;
+  private continueFenceResolve!: () => void;
+  readonly intentPersistedStale = new Promise<void>((resolve) => { this.intentResolve = resolve; });
+  readonly recoveryReachedClaim = new Promise<void>((resolve) => { this.claimResolve = resolve; });
+  readonly originalFencePersisted = new Promise<void>((resolve) => { this.fenceResolve = resolve; });
+  private readonly continueIntent = new Promise<void>((resolve) => { this.continueIntentResolve = resolve; });
+  private readonly continueClaim = new Promise<void>((resolve) => { this.continueClaimResolve = resolve; });
+  private readonly continueFence = new Promise<void>((resolve) => { this.continueFenceResolve = resolve; });
+
+  releaseIntentHolder(): void { this.continueIntentResolve(); }
+  releaseRecoveryClaim(): void { this.continueClaimResolve(); }
+  releaseOriginalFence(): void { this.continueFenceResolve(); }
+
+  override async updateExecuting(
+    item: import("../../src/types.js").WorkItem,
+    expectedRecoveryLeaseId?: string
+  ): Promise<boolean> {
+    if (!this.pausedIntent && !expectedRecoveryLeaseId && item.decisionIntent && !item.execution) {
+      this.pausedIntent = true;
+      item.executionStartedAt = "2000-01-01T00:00:00.000Z";
+      const persisted = await super.updateExecuting(item, expectedRecoveryLeaseId);
+      this.intentResolve();
+      await this.continueIntent;
+      return persisted;
+    }
+    return super.updateExecuting(item, expectedRecoveryLeaseId);
+  }
+
+  override async claimRecovery(
+    id: string,
+    lease: import("../../src/types.js").RecoveryLease,
+    staleBefore: string
+  ): Promise<import("../../src/types.js").WorkItem | null> {
+    if (!this.pausedClaim) {
+      this.pausedClaim = true;
+      this.claimResolve();
+      await this.continueClaim;
+    }
+    return super.claimRecovery(id, lease, staleBefore);
+  }
+
+  override async fenceExecution(
+    id: string,
+    startedAt: string,
+    expectedRecoveryLeaseId?: string
+  ): Promise<import("../../src/types.js").WorkItem | null> {
+    const fenced = await super.fenceExecution(id, startedAt, expectedRecoveryLeaseId);
+    if (!expectedRecoveryLeaseId && !this.pausedFence) {
+      this.pausedFence = true;
+      this.fenceResolve();
+      await this.continueFence;
+    }
+    return fenced;
+  }
+}
+
 const cleanInvoice = { vendor: "Acme", invoice_number: "A-1", tax_id: "T", subtotal: 100, tax: 20, total: 120, date: "2026-01-01", currency: "EUR" };
 
 test("intake produces a PENDING work item and executes NOTHING (the gate)", async () => {
@@ -103,6 +270,7 @@ test("reject discards the proposal — nothing executes — and remembers the re
   const rejected = await agent.reject(item.id, "Not authorised this quarter.");
   assert.equal(rejected.status, "rejected");
   assert.equal(rejected.decisionReason, "Not authorised this quarter.");
+  assert.deepEqual(rejected.rejectionMemory, { stored: true });
   assert.equal(sinks.ledger.entries().length, 0);
   const hits = await memory.recall(await new FakeEmbedder().embed("rejected by a human"), { kind: "insight" });
   assert.ok(hits.length >= 1);
@@ -234,11 +402,12 @@ test("uncertain sink failure stays executing, never auto-retries, and supports a
   await assert.rejects(() => agent.approve(item.id), ConflictError);
   assert.equal(calls, 1, "repeated approve cannot call the sink while execution is uncertain");
 
-  const reset = await agent.recover(item.id, "retry", "ledger confirms no entry was committed");
-  assert.equal(reset.status, "pending");
   fail = false;
-  const approved = await agent.approve(item.id);
+  const approved = await agent.recover(item.id, "retry", "ledger confirms no entry was committed");
   assert.equal(approved.status, "approved");
+  assert.equal(approved.decisionIntent?.by, "direct-reviewer");
+  assert.equal(approved.recoveryBy, "direct-reviewer");
+  assert.equal(approved.recoveryLease, undefined, "retry recovery lease is fencing metadata, not terminal audit state");
   assert.equal(calls, 2);
   assert.equal(sinks.ledger.entries().length, 1);
 });
@@ -261,8 +430,374 @@ test("manual recovery marks an uncertain execution complete without calling the 
   await assert.rejects(() => agent.approve(item.id), ExecutionUncertainError);
   const recovered = await agent.recover(item.id, "mark_completed", "ERP entry verified by reference");
   assert.equal(recovered.status, "approved");
+  assert.equal(recovered.recoveryBy, "direct-reviewer");
   assert.equal(recovered.execution?.output["manuallyReconciled"], true);
+  assert.equal(recovered.recoveryLease, undefined, "terminal audit state must not retain an active recovery lease");
+  assert.equal((await agent.get(item.id)).recoveryLease, undefined);
   assert.equal(calls, 1);
+});
+
+test("an over-bound total cannot become an approval-ready money proposal", async () => {
+  const { agent, sinks } = makeAgent();
+  const item = await agent.intake({
+    vendor: "Over Bound Co", invoice_number: "OB-1", date: "2026-01-01", currency: "EUR", tax_id: "T",
+    subtotal: 2_000_000_000, tax: 0, total: 2_000_000_000,
+  });
+  assert.ok(item.findings.some((finding) => finding.rule === "R1" && !finding.passed));
+  assert.equal(item.proposed.tool, "draft_vendor_reply");
+  assert.deepEqual(item.proposed.requiresReviewerInput, ["to"]);
+  await assert.rejects(() => agent.approve(item.id), InvalidToolArgsError);
+  assert.equal(sinks.ledger.entries().length + sinks.payments.payments().length, 0);
+});
+
+test("same live vendor reference with changed financial substance is a conflict, not a silent retry", async () => {
+  const { agent } = makeAgent();
+  await agent.intake({ ...cleanInvoice, vendor: "Collision Co", invoice_number: "COL-1", total: 120 });
+  await assert.rejects(
+    () => agent.intake({ ...cleanInvoice, vendor: "Collision Co", invoice_number: "COL-1", subtotal: 900, tax: 100, total: 1000 }),
+    /identity collides.*payload differs/i
+  );
+  assert.equal((await agent.pending()).length, 1);
+});
+
+test("currencyless same-day amounts are not collapsed as live financial fingerprints", async () => {
+  const { agent } = makeAgent();
+  const left = await agent.intake({ vendor: "Unknown Currency Co", subtotal: 100, tax: 20, total: 120, date: "2026-01-01" });
+  const right = await agent.intake({ vendor: "Unknown Currency Co", subtotal: 100, tax: 20, total: 120, date: "2026-01-01" });
+  assert.notEqual(left.id, right.id);
+  assert.equal((await agent.pending()).length, 2);
+});
+
+test("approving a clarification does not poison processed-invoice duplicate or amount history", async () => {
+  const { agent, memory, sinks } = makeAgent();
+  const unresolved = {
+    vendor: "Clarification Only Co",
+    date: "2026-01-01",
+    currency: "EUR",
+    subtotal: 100,
+    tax: 20,
+    total: 120,
+    // vendor_ref and tax_id intentionally absent → clarification draft
+  };
+  const first = await agent.intake(unresolved);
+  assert.equal(first.proposed.tool, "draft_vendor_reply");
+  const sent = await agent.amend(first.id, {
+    args: { to: "billing@clarification-only.example" },
+    reason: "Verified recipient from the signed vendor master record",
+  });
+  assert.equal(sent.status, "approved");
+  assert.equal(sinks.email.outbox().length, 1);
+  assert.equal((await memory.invoiceHistory("Clarification Only Co")).length, 0);
+
+  const resubmitted = await agent.intake(unresolved);
+  assert.equal(resubmitted.proposed.tool, "draft_vendor_reply");
+  assert.ok(!resubmitted.findings.some((finding) => finding.rule === "R5" && !finding.passed));
+});
+
+test("failed amendment → audited retry preserves exact amended args, audit label, correction memory, and touches", async () => {
+  const memory = new InMemoryStore();
+  const store = new InMemoryWorkItemStore();
+  const sinks = fakeSinks();
+  const realPost = sinks.ledger.post.bind(sinks.ledger);
+  let fail = true;
+  sinks.ledger.post = (entry) => {
+    if (fail) throw new Error("ledger acknowledgement lost after amended call");
+    return realPost(entry);
+  };
+  const agent = new AutopilotAgent(new FakeEmbedder(), memory, store, defaultLoop(), sinks);
+  const item = await agent.intake({ ...cleanInvoice, vendor: "Retry Amendment Co", invoice_number: "RA-1" });
+
+  await assert.rejects(
+    () => agent.amend(item.id, { args: { amount: 80 }, reason: "contract cap is EUR 80", by: "judge" }),
+    ExecutionUncertainError
+  );
+  const uncertain = await agent.get(item.id);
+  assert.equal(uncertain.status, "executing");
+  assert.equal(uncertain.proposed.args["amount"], 80);
+  assert.equal(uncertain.amendment?.amendedArgs["amount"], 80);
+  assert.equal(uncertain.telemetry?.humanTouches, 1);
+
+  fail = false;
+  const approved = await agent.recover(item.id, "retry", "ledger confirms no entry was committed");
+  assert.equal(approved.amended, true);
+  assert.equal(approved.decisionReason, "contract cap is EUR 80");
+  assert.equal(approved.proposed.args["amount"], 80);
+  assert.deepEqual(approved.amendment?.correctionMemory, { applicable: true, stored: true });
+  assert.equal(approved.telemetry?.humanTouches, 2, "authenticated recovery is the second human touch");
+  assert.equal(approved.decisionIntent?.kind, "amend");
+  assert.equal(approved.decisionIntent?.args["amount"], 80);
+  const entry = sinks.ledger.entries()[0]!;
+  assert.equal(entry.lines.find((line) => line.debit)?.debit, 80, "the exact amended amount executes");
+});
+
+test("intent CAS failure aborts before the irreversible sink boundary", async () => {
+  const store = new RejectIntentCasStore();
+  const sinks = fakeSinks();
+  const agent = new AutopilotAgent(new FakeEmbedder(), new InMemoryStore(), store, defaultLoop(), sinks);
+  const item = await agent.intake({ ...cleanInvoice, vendor: "Intent CAS Co", invoice_number: "IC-1" });
+
+  await assert.rejects(
+    () => agent.amend(item.id, { args: { amount: 70 }, reason: "verified cap" }),
+    /nothing was executed/i
+  );
+  assert.equal(sinks.ledger.entries().length, 0);
+  assert.equal(sinks.payments.payments().length, 0);
+  const durable = await agent.get(item.id);
+  assert.equal(durable.status, "executing");
+  assert.equal(durable.decisionIntent, undefined, "unconfirmed intent was never persisted");
+  assert.notEqual(durable.proposed.args["amount"], 70, "RAM-only amendment did not become durable");
+});
+
+test("crash after intent commit but before sink preserves exact immutable amend intent for audited retry", async () => {
+  const store = new CrashAfterIntentStore();
+  const sinks = fakeSinks();
+  const agent = new AutopilotAgent(new FakeEmbedder(), new InMemoryStore(), store, defaultLoop(), sinks);
+  const item = await agent.intake({ ...cleanInvoice, vendor: "Intent Crash Co", invoice_number: "IC-2" });
+
+  await assert.rejects(
+    () => agent.amend(item.id, { args: { amount: 77 }, reason: "contract evidence", by: "judge" }),
+    /nothing was executed/i
+  );
+  assert.equal(sinks.ledger.entries().length, 0, "a lost intent acknowledgement cannot cross the sink boundary");
+  const orphan = await agent.get(item.id);
+  assert.equal(orphan.status, "executing");
+  assert.equal(orphan.decisionIntent?.kind, "amend");
+  assert.equal(orphan.decisionIntent?.tool, "draft_journal_entry");
+  assert.equal(orphan.decisionIntent?.args["amount"], 77);
+  assert.equal(orphan.decisionIntent?.amendment?.amendedArgs["amount"], 77);
+
+  const recovered = await agent.recover(item.id, "retry", "confirmed no ledger row exists");
+  assert.equal(recovered.status, "approved");
+  assert.equal(recovered.decisionIntent?.args["amount"], 77);
+  assert.equal(sinks.ledger.entries().length, 1);
+  assert.equal(sinks.ledger.entries()[0]!.lines.find((line) => line.debit)?.debit, 77);
+});
+
+test("sink success then finalization failure recovers exact intent without duplicate outcome memories", async () => {
+  const store = new FailFinalizeOnceStore();
+  const memory = new InMemoryStore();
+  const sinks = fakeSinks();
+  const agent = new AutopilotAgent(new FakeEmbedder(), memory, store, defaultLoop(), sinks);
+  const item = await agent.intake({ ...cleanInvoice, vendor: "Finalize Crash Co", invoice_number: "FC-1" });
+
+  await assert.rejects(
+    () => agent.amend(item.id, { args: { amount: 65 }, reason: "signed cap", by: "judge" }),
+    ExecutionUncertainError
+  );
+  assert.equal(sinks.ledger.entries().length, 1);
+  const checkpoint = await agent.get(item.id);
+  assert.equal(checkpoint.status, "executing");
+  assert.equal(checkpoint.decisionIntent?.kind, "amend");
+  assert.equal(checkpoint.decisionIntent?.args["amount"], 65);
+  assert.equal(checkpoint.execution?.ok, true, "sink acknowledgement was checkpointed before finalization");
+  assert.deepEqual(checkpoint.amendment?.correctionMemory, { applicable: true, stored: true });
+  const memoriesAfterCrash = await memory.count("Finalize Crash Co");
+  assert.equal(memoriesAfterCrash, 3, "one action, one approved invoice, and one correction memory");
+
+  await assert.rejects(
+    () => agent.recover(item.id, "retry", "unsafe retry request"),
+    /only mark_completed is safe/i
+  );
+  assert.equal(sinks.ledger.entries().length, 1, "acknowledged execution can never be retried");
+
+  const recovered = await agent.recover(item.id, "mark_completed", "ledger row verified by work-item id");
+  assert.equal(recovered.status, "approved");
+  assert.equal(recovered.proposed.args["amount"], 65);
+  assert.equal(recovered.decisionIntent?.args["amount"], 65);
+  assert.equal(sinks.ledger.entries().length, 1, "mark_completed never calls the sink again");
+  assert.equal(await memory.count("Finalize Crash Co"), memoriesAfterCrash, "outcome memory keys suppress retry duplicates");
+});
+
+test("rejection finalization failure recovers as rejection and writes one correction memory", async () => {
+  const store = new FailFinalizeOnceStore();
+  const memory = new InMemoryStore();
+  const sinks = fakeSinks();
+  const agent = new AutopilotAgent(new FakeEmbedder(), memory, store, defaultLoop(), sinks);
+  const item = await agent.intake({ ...cleanInvoice, vendor: "Reject Crash Co", invoice_number: "RC-1" });
+
+  await assert.rejects(() => agent.reject(item.id, "invalid purchase order"), ExecutionUncertainError);
+  const checkpoint = await agent.get(item.id);
+  assert.equal(checkpoint.status, "executing");
+  assert.equal(checkpoint.decisionIntent?.kind, "reject");
+  assert.deepEqual(checkpoint.rejectionMemory, { stored: true });
+  assert.equal(await memory.count("Reject Crash Co"), 1);
+  assert.equal(sinks.ledger.entries().length + sinks.payments.payments().length, 0);
+
+  const recoveryAgent = new AutopilotAgent(
+    {
+      modelId: "embedding-provider-down",
+      dim: 1,
+      embed: async () => {
+        throw new Error("embedding provider unavailable during recovery");
+      },
+    },
+    memory,
+    store,
+    defaultLoop(),
+    sinks
+  );
+  const recovered = await recoveryAgent.recover(item.id, "mark_completed", "reviewed rejection audit");
+  assert.equal(recovered.status, "rejected", "recovery branches on persisted rejection intent");
+  assert.equal(recovered.decisionReason, "invalid purchase order");
+  assert.equal(await memory.count("Reject Crash Co"), 1, "rejection correction is idempotent");
+  assert.equal(recovered.execution, undefined, "a rejection can never become an approved execution");
+});
+
+test("atomic recovery lease lets exactly one concurrent retry cross the sink boundary", async () => {
+  const store = new InMemoryWorkItemStore();
+  const sinks = fakeSinks();
+  const realPost = sinks.ledger.post.bind(sinks.ledger);
+  let calls = 0;
+  let fail = true;
+  sinks.ledger.post = (entry) => {
+    calls += 1;
+    if (fail) throw new Error("unknown acknowledgement");
+    return realPost(entry);
+  };
+  const agent = new AutopilotAgent(new FakeEmbedder(), new InMemoryStore(), store, defaultLoop(), sinks);
+  const item = await agent.intake({ ...cleanInvoice, vendor: "Recovery Race Co", invoice_number: "RR-1" });
+  await assert.rejects(() => agent.approve(item.id), ExecutionUncertainError);
+  assert.equal(calls, 1);
+  fail = false;
+
+  const results = await Promise.allSettled([
+    agent.recover(item.id, "retry", "ledger confirms no committed row"),
+    agent.recover(item.id, "retry", "ledger confirms no committed row"),
+  ]);
+  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+  assert.equal(results.filter((result) => result.status === "rejected").length, 1);
+  assert.equal(calls, 2, "the two competing recovery requests caused exactly one retry sink call");
+  assert.equal(sinks.ledger.entries().length, 1);
+  assert.equal((await agent.get(item.id)).status, "approved");
+});
+
+test("retry racing mark_completed has one recovery owner and one terminal outcome", async () => {
+  const store = new InMemoryWorkItemStore();
+  const sinks = fakeSinks();
+  const realPost = sinks.ledger.post.bind(sinks.ledger);
+  let calls = 0;
+  let fail = true;
+  sinks.ledger.post = (entry) => {
+    calls += 1;
+    if (fail) throw new Error("unknown acknowledgement");
+    return realPost(entry);
+  };
+  const agent = new AutopilotAgent(new FakeEmbedder(), new InMemoryStore(), store, defaultLoop(), sinks);
+  const item = await agent.intake({ ...cleanInvoice, vendor: "Mixed Recovery Race Co", invoice_number: "MRR-1" });
+  await assert.rejects(() => agent.approve(item.id), ExecutionUncertainError);
+  fail = false;
+
+  const results = await Promise.allSettled([
+    agent.recover(item.id, "retry", "ledger confirms no committed row"),
+    agent.recover(item.id, "mark_completed", "ERP operator verified the work-item reference"),
+  ]);
+  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+  assert.equal(results.filter((result) => result.status === "rejected").length, 1);
+  assert.ok(calls === 1 || calls === 2, "at most one recovery retry can call the sink");
+  assert.ok(sinks.ledger.entries().length <= 1);
+  const final = await agent.get(item.id);
+  assert.equal(final.status, "approved");
+  assert.equal((await agent.decided()).filter((row) => row.id === item.id).length, 1);
+});
+
+test("expired-lease takeover fences the old holder before it can call or finalize a sink", async () => {
+  const store = new RecoveryTakeoverStore();
+  const sinks = fakeSinks();
+  let calls = 0;
+  sinks.ledger.post = () => {
+    calls += 1;
+    throw new Error("initial outcome unknown");
+  };
+  const agent = new AutopilotAgent(new FakeEmbedder(), new InMemoryStore(), store, defaultLoop(), sinks);
+  const item = await agent.intake({ ...cleanInvoice, vendor: "Fenced Recovery Co", invoice_number: "FR-1" });
+  await assert.rejects(() => agent.approve(item.id), ExecutionUncertainError);
+  assert.equal(calls, 1);
+
+  const oldHolder = agent.recover(item.id, "retry", "no ledger row found before retry");
+  await store.checkpointReached;
+  const takeover = await agent.recover(
+    item.id,
+    "mark_completed",
+    "lease expired; operator reconciled the external record"
+  );
+  assert.equal(takeover.status, "approved");
+  store.releaseOldHolder();
+  await assert.rejects(oldHolder, /recovery ownership changed|lost its durable checkpoint/i);
+  assert.equal(calls, 1, "the fenced stale holder never entered the sink again");
+  assert.equal((await agent.get(item.id)).status, "approved");
+});
+
+test("recovery takeover fences a stale original executor before its first sink call", async () => {
+  const store = new StaleOriginalBeforeFenceStore();
+  const sinks = fakeSinks();
+  const agent = new AutopilotAgent(new FakeEmbedder(), new InMemoryStore(), store, defaultLoop(), sinks);
+  const item = await agent.intake({ ...cleanInvoice, vendor: "Original Fence Co", invoice_number: "OF-1" });
+
+  const original = agent.approve(item.id);
+  await store.beforeFence;
+  const reconciled = await agent.recover(
+    item.id,
+    "mark_completed",
+    "operator verified the stale process never reached the ledger"
+  );
+  assert.equal(reconciled.status, "approved");
+  store.releaseOriginal();
+  await assert.rejects(original, /execution ownership changed|no new side effect/i);
+  assert.equal(sinks.ledger.entries().length, 0, "the stale original never crosses the fenced sink boundary");
+});
+
+test("post-claim recovery revalidation yields to an original executor that refreshed first", async () => {
+  const store = new PostClaimRevalidationRaceStore();
+  const sinks = fakeSinks();
+  const agent = new AutopilotAgent(new FakeEmbedder(), new InMemoryStore(), store, defaultLoop(), sinks);
+  const item = await agent.intake({ ...cleanInvoice, vendor: "Post Claim Fence Co", invoice_number: "PCF-1" });
+
+  const original = agent.approve(item.id);
+  await store.intentPersistedStale;
+  const recovery = agent.recover(item.id, "retry", "ledger confirms no existing row");
+  await store.recoveryReachedClaim;
+  store.releaseIntentHolder();
+  await store.originalFencePersisted;
+  store.releaseRecoveryClaim();
+  await assert.rejects(recovery, /active execution window/i);
+  store.releaseOriginalFence();
+  const approved = await original;
+
+  assert.equal(approved.status, "approved");
+  assert.equal(approved.recoveryLease, undefined);
+  assert.equal(sinks.ledger.entries().length, 1, "exactly the fresh original executor reaches the sink");
+  assert.equal((await agent.get(item.id)).status, "approved");
+});
+
+test("failed amendment → mark_completed preserves amended audit and records correction evidence without a second sink call", async () => {
+  const memory = new InMemoryStore();
+  const sinks = fakeSinks();
+  let calls = 0;
+  sinks.ledger.post = () => {
+    calls += 1;
+    throw new Error("transport outcome unknown after amended call");
+  };
+  const agent = new AutopilotAgent(
+    new FakeEmbedder(), memory, new InMemoryWorkItemStore(), defaultLoop(), sinks
+  );
+  const item = await agent.intake({ ...cleanInvoice, vendor: "Reconciled Amendment Co", invoice_number: "RAC-1" });
+  await assert.rejects(
+    () => agent.amend(item.id, { args: { amount: 75 }, reason: "verified contracted cap", by: "judge" }),
+    ExecutionUncertainError
+  );
+
+  const recovered = await agent.recover(item.id, "mark_completed", "ERP entry verified by work-item reference");
+  assert.equal(recovered.status, "approved");
+  assert.equal(recovered.amended, true);
+  assert.equal(recovered.decisionReason, "verified contracted cap");
+  assert.equal(recovered.execution?.output["manuallyReconciled"], true);
+  assert.deepEqual(recovered.amendment?.correctionMemory, { applicable: true, stored: true });
+  assert.equal(recovered.telemetry?.humanTouches, 2);
+  assert.equal(calls, 1, "mark_completed never calls the sink again");
+  const hits = await memory.recall(await new FakeEmbedder().embed("corrected amount"), {
+    kind: "insight", vendor: "Reconciled Amendment Co",
+  });
+  assert.ok(hits.some((hit) => hit.metadata?.["correction"] === "amended_down"));
 });
 
 test("recovery cannot reset a live execution claim before failure or stale-claim timeout", async () => {
@@ -304,11 +839,25 @@ test("tool override is explicit, validated, and preserves proposed→approved to
   assert.equal(sinks.payments.payments()[0]!.ref, item.id, "sink key is the server work-item id");
 });
 
+test("amendments require an audit reason and canonicalize currency before durable execution", async () => {
+  const { agent, sinks } = makeAgent();
+  const item = await agent.intake({ ...cleanInvoice, vendor: "Canonical Currency Co", invoice_number: "CC-1" });
+  await assert.rejects(() => agent.amend(item.id, { args: { currency: "eur" } }), /non-empty audit reason/i);
+  assert.equal((await agent.get(item.id)).status, "pending");
+  const approved = await agent.amend(item.id, {
+    args: { currency: "eur" },
+    reason: "reviewer confirmed the source currency",
+  });
+  assert.equal(approved.decisionIntent?.args["currency"], "EUR");
+  assert.equal(approved.proposed.args["currency"], "EUR");
+  assert.equal(sinks.ledger.entries()[0]!.currency, "EUR");
+});
+
 test("runtime argument validation fails before a claim or sink call", async () => {
   const { agent, sinks } = makeAgent();
   const item = await agent.intake(cleanInvoice);
   await assert.rejects(
-    () => agent.amend(item.id, { args: { amount: -1 } }),
+    () => agent.amend(item.id, { args: { amount: -1 }, reason: "reviewer attempted an invalid negative amount" }),
     InvalidToolArgsError
   );
   assert.equal((await agent.get(item.id)).status, "pending");

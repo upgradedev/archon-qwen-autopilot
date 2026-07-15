@@ -43,6 +43,7 @@ test("intake → pending → approve → executed, end to end over HTTP", async 
   const intake = await app.inject({
     method: "POST",
     url: "/intake",
+    headers: AUTH,
     payload: { invoice: { vendor: "Globex", invoice_number: "GX-100", tax_id: "TX-1", subtotal: 500, tax: 100, total: 600, date: "2026-04-01", currency: "EUR" } },
   });
   assert.equal(intake.statusCode, 200);
@@ -86,6 +87,7 @@ test("amend over HTTP: the human's edited args are exactly what execute", async 
   const intake = await app.inject({
     method: "POST",
     url: "/intake",
+    headers: AUTH,
     payload: { invoice: { vendor: "Initech", invoice_number: "IT-7", tax_id: "TX-9", subtotal: 800, tax: 160, total: 960, date: "2026-04-02", currency: "EUR" } },
   });
   const id = intake.json().id;
@@ -106,10 +108,10 @@ test("amend over HTTP: the human's edited args are exactly what execute", async 
 
 test("memory grounds the next decision: a re-sent invoice is flagged as a duplicate", async () => {
   const payload = { invoice: { vendor: "Umbrella", invoice_number: "UM-1", tax_id: "TX-2", subtotal: 300, tax: 60, total: 360, date: "2026-04-03", currency: "EUR" } };
-  const first = await app.inject({ method: "POST", url: "/intake", payload });
+  const first = await app.inject({ method: "POST", url: "/intake", headers: AUTH, payload });
   await app.inject({ method: "POST", url: `/approve/${first.json().id}`, headers: AUTH });
 
-  const second = await app.inject({ method: "POST", url: "/intake", payload });
+  const second = await app.inject({ method: "POST", url: "/intake", headers: AUTH, payload });
   const item = second.json();
   assert.equal(item.proposed.tool, "flag_for_review");
   assert.ok(item.findings.some((f: { rule: string; passed: boolean }) => f.rule === "R5" && !f.passed));
@@ -123,6 +125,7 @@ test("amend audit trail: BOTH the proposed args and the amended args are persist
   const intake = await app.inject({
     method: "POST",
     url: "/intake",
+    headers: AUTH,
     payload: { invoice: { vendor: "Wonka", invoice_number: "WK-1", tax_id: "TX-3", subtotal: 700, tax: 140, total: 840, date: "2026-05-01", currency: "EUR" } },
   });
   const id = intake.json().id;
@@ -160,8 +163,8 @@ test("GET /decided returns approved/amended/rejected items with outcome + timest
   });
   await local.ready();
   try {
-    const a = await local.inject({ method: "POST", url: "/intake", payload: { invoice: { vendor: "Aperture", invoice_number: "AP-1", date: "2026-06-01", currency: "EUR", tax_id: "T", subtotal: 100, tax: 20, total: 120 } } });
-    const b = await local.inject({ method: "POST", url: "/intake", payload: { invoice: { vendor: "Black Mesa", invoice_number: "BM-1", date: "2026-06-02", currency: "EUR", tax_id: "T", subtotal: 200, tax: 40, total: 240 } } });
+    const a = await local.inject({ method: "POST", url: "/intake", headers: AUTH, payload: { invoice: { vendor: "Aperture", invoice_number: "AP-1", date: "2026-06-01", currency: "EUR", tax_id: "T", subtotal: 100, tax: 20, total: 120 } } });
+    const b = await local.inject({ method: "POST", url: "/intake", headers: AUTH, payload: { invoice: { vendor: "Black Mesa", invoice_number: "BM-1", date: "2026-06-02", currency: "EUR", tax_id: "T", subtotal: 200, tax: 40, total: 240 } } });
     await local.inject({ method: "POST", url: `/approve/${a.json().id}`, headers: AUTH });
     await local.inject({ method: "POST", url: `/reject/${b.json().id}`, headers: AUTH, payload: { reason: "not ours" } });
 
@@ -171,6 +174,7 @@ test("GET /decided returns approved/amended/rejected items with outcome + timest
     assert.deepEqual(statuses, ["approved", "rejected"]);
     for (const d of decided) {
       assert.ok(d.decidedAt, "each decided item carries a decision timestamp");
+      assert.equal(d.decisionIntent.by, "integration-clerk", "every decision records the server-derived reviewer identity");
     }
     // Decided items are gone from the pending queue.
     assert.equal((await local.inject({ method: "GET", url: "/pending", headers: AUTH })).json().pending.length, 0);
@@ -194,6 +198,7 @@ test("gate invariant through the STREAM path: /intake/stream proposes only; appr
     const stream = await local.inject({
       method: "POST",
       url: "/intake/stream",
+      headers: AUTH,
       payload: { invoice: { vendor: "Cyberdyne", invoice_number: "CY-1", date: "2026-06-03", currency: "EUR", tax_id: "T", subtotal: 100, tax: 20, total: 120 } },
     });
     assert.equal(stream.statusCode, 200);

@@ -17,8 +17,11 @@
 // because both point PgVectorStore at the same Alibaba Cloud database.
 
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { query, toVectorLiteral } from "../db/client.js";
-import { canonicalVendorKey } from "../ap/normalize.js";
+import { canonicalReference, canonicalVendorKey } from "../ap/normalize.js";
+import type { NormalizedInvoice } from "../types.js";
+import { isSupportedCurrency } from "../ap/currency.js";
 
 // The kinds of durable fact the autopilot remembers. `vendor` = a learned vendor
 // profile, `invoice` = a processed invoice (for duplicate detection), `action` =
@@ -27,6 +30,9 @@ export type MemoryKind = "vendor" | "invoice" | "action" | "insight";
 
 export interface MemoryInput {
   kind: MemoryKind;
+  // Stable, server-generated key for outcome writes. A retry/recovery returns the
+  // original row instead of creating duplicate action/invoice/correction evidence.
+  idempotencyKey?: string;
   vendor?: string; // defaults to '_global'
   sourceRef?: string | null; // originating id (invoice id, work-item id, …)
   content: string; // the recallable natural-language fact
@@ -59,9 +65,24 @@ export interface RecallOptions {
   kind?: MemoryKind; // pre-filter
   vendor?: string; // pre-filter
   limit?: number; // top-k, default 5
+  embedModel?: string; // semantic vectors from different models are never mixed
+}
+
+export interface EmbeddingModelStats {
+  current: number;
+  other: number;
+  models: Record<string, number>;
+}
+
+export class MemoryIdempotencyConflictError extends Error {
+  constructor() {
+    super("memory idempotency key was reused for a different logical payload");
+    this.name = "MemoryIdempotencyConflictError";
+  }
 }
 
 export interface MemoryStore {
+  getByIdempotencyKey(key: string): Promise<MemoryRecord | null>;
   remember(m: StoredMemory): Promise<string>;
   recall(queryVec: number[], opts?: RecallOptions): Promise<RecallHit[]>;
   count(vendor?: string): Promise<number>;
@@ -71,12 +92,33 @@ export interface MemoryStore {
   // approved/executed invoice facts qualify; pending/rejected uploads never become
   // amount baselines or durable duplicate evidence.
   invoiceHistory(vendor: string, limit?: number): Promise<MemoryRecord[]>;
+  // Exact, unbounded-by-history-window R5 lookup. Implementations use indexed
+  // business keys and return at most one completed invoice, so a duplicate cannot
+  // disappear when a vendor has more rows than the bounded R6 history window.
+  findProcessedDuplicate(invoice: NormalizedInvoice): Promise<MemoryRecord | null>;
+  // Deterministic correction history used by the policy signal. Corrections must
+  // never disappear merely because semantic top-k recall ranked other prose above
+  // them; semantic recall remains reviewer-facing context, not the safety index.
+  correctionHistory(vendor: string, limit?: number): Promise<MemoryRecord[]>;
+  embeddingModelStats(currentModel: string): Promise<EmbeddingModelStats>;
   clear(): Promise<void>;
 }
 
 // ── pgvector-backed store (production + CI + Alibaba Cloud) ────────────────────
 export class PgVectorStore implements MemoryStore {
   constructor(private readonly runQuery: typeof query = query) {}
+
+  async getByIdempotencyKey(key: string): Promise<MemoryRecord | null> {
+    const rows = await this.runQuery<Omit<PgRow, "distance">>(
+      `SELECT id, kind, vendor, source_ref, content, metadata, created_at
+         FROM agent_memory
+        WHERE idempotency_key = $1
+        LIMIT 1`,
+      [key]
+    );
+    const row = rows[0];
+    return row ? rowToRecord(row) : null;
+  }
 
   async remember(m: StoredMemory): Promise<string> {
     const metadata = {
@@ -85,8 +127,15 @@ export class PgVectorStore implements MemoryStore {
     };
     const rows = await this.runQuery<{ id: string }>(
       `INSERT INTO agent_memory
-         (kind, vendor, source_ref, content, metadata, embedding, embed_model, importance)
-       VALUES ($1, $2, $3, $4, $5, $6::vector, $7, $8)
+         (kind, vendor, source_ref, content, metadata, embedding, embed_model, importance, idempotency_key)
+       VALUES ($1, $2, $3, $4, $5, $6::vector, $7, $8, $9)
+       ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL
+       DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key
+       WHERE agent_memory.kind = EXCLUDED.kind
+         AND agent_memory.vendor = EXCLUDED.vendor
+         AND agent_memory.source_ref IS NOT DISTINCT FROM EXCLUDED.source_ref
+         AND agent_memory.content = EXCLUDED.content
+         AND (agent_memory.metadata - 'vendor_key') = (EXCLUDED.metadata - 'vendor_key')
        RETURNING id`,
       [
         m.kind,
@@ -97,9 +146,12 @@ export class PgVectorStore implements MemoryStore {
         toVectorLiteral(m.embedding),
         m.embedModel,
         clampImportance(m.importance),
+        m.idempotencyKey ?? null,
       ]
     );
-    return rows[0]!.id;
+    const row = rows[0];
+    if (!row) throw new MemoryIdempotencyConflictError();
+    return row.id;
   }
 
   async recall(queryVec: number[], opts: RecallOptions = {}): Promise<RecallHit[]> {
@@ -115,6 +167,10 @@ export class PgVectorStore implements MemoryStore {
       filters.push(
         `COALESCE(metadata->>'vendor_key', lower(regexp_replace(trim(vendor), '\\s+', ' ', 'g'))) = $${params.length}`
       );
+    }
+    if (opts.embedModel) {
+      params.push(opts.embedModel);
+      filters.push(`embed_model = $${params.length}`);
     }
     const where = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
     params.push(limit);
@@ -168,6 +224,74 @@ export class PgVectorStore implements MemoryStore {
     }));
   }
 
+  async findProcessedDuplicate(invoice: NormalizedInvoice): Promise<MemoryRecord | null> {
+    const vendorKey = canonicalVendorKey(invoice.vendor);
+    if (!vendorKey) return null;
+    const rows = await this.runQuery<Omit<PgRow, "distance">>(
+      `SELECT id, kind, vendor, source_ref, content, metadata, created_at, embed_model
+         FROM agent_memory
+        WHERE kind = 'invoice'
+          AND metadata->>'processing_status' IN ('approved', 'executed')
+          AND COALESCE(
+                metadata->>'vendor_key',
+                lower(regexp_replace(trim(COALESCE(metadata->>'vendor', vendor)), '\\s+', ' ', 'g'))
+              ) = $1
+          AND (
+            ($2 <> '' AND COALESCE(metadata->>'vendor_ref_key', '') = $2)
+            OR (
+              $3::double precision IS NOT NULL
+              AND $4::text <> ''
+              AND jsonb_typeof(metadata->'total') = 'number'
+              AND ABS((metadata->>'total')::double precision - $3::double precision) <= 0.01
+              AND COALESCE(metadata->>'invoice_date', '') = $4
+              AND upper(COALESCE(metadata->>'currency', '')) = $5
+            )
+          )
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [
+        vendorKey,
+        canonicalReference(invoice.vendor_ref),
+        isSupportedCurrency(invoice.currency) ? invoice.total : null,
+        invoice.invoice_date ?? "",
+        invoice.currency.toUpperCase(),
+      ]
+    );
+    return rows[0] ? rowToRecord(rows[0]) : null;
+  }
+
+  async correctionHistory(vendor: string, limit = 100): Promise<MemoryRecord[]> {
+    const vendorKey = canonicalVendorKey(vendor);
+    const bounded = Math.max(1, Math.min(limit, 500));
+    const rows = await this.runQuery<Omit<PgRow, "distance">>(
+      `SELECT id, kind, vendor, source_ref, content, metadata, created_at, embed_model
+         FROM agent_memory
+        WHERE kind = 'insight'
+          AND metadata->>'correction' IN ('amended_down', 'rejected')
+          AND COALESCE(
+                metadata->>'vendor_key',
+                lower(regexp_replace(trim(COALESCE(metadata->>'vendor', vendor)), '\\s+', ' ', 'g'))
+              ) = $1
+        ORDER BY created_at DESC
+        LIMIT $2`,
+      [vendorKey, bounded]
+    );
+    return rows.map(rowToRecord);
+  }
+
+  async embeddingModelStats(currentModel: string): Promise<EmbeddingModelStats> {
+    const rows = await this.runQuery<{ embed_model: string; n: string }>(
+      `SELECT embed_model, count(*) AS n
+         FROM agent_memory
+        GROUP BY embed_model
+        ORDER BY embed_model`
+    );
+    const models = Object.fromEntries(rows.map((row) => [row.embed_model, Number(row.n)]));
+    const current = models[currentModel] ?? 0;
+    const total = Object.values(models).reduce((sum, n) => sum + n, 0);
+    return { current, other: Math.max(0, total - current), models };
+  }
+
   async clear(): Promise<void> {
     await this.runQuery(`DELETE FROM agent_memory`);
   }
@@ -210,13 +334,47 @@ function clampImportance(v: number | undefined): number {
 // so the whole intake→decide→approve loop is verifiable with zero infra.
 interface MemRow extends MemoryRecord {
   embedding: number[];
+  embedModel: string;
   importance: number;
+  idempotencyKey: string | null;
+}
+
+function rowToRecord(r: Omit<PgRow, "distance">): MemoryRecord {
+  return {
+    id: r.id,
+    kind: r.kind,
+    vendor: r.vendor,
+    sourceRef: r.source_ref,
+    content: r.content,
+    metadata: r.metadata,
+    createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
+  };
 }
 
 export class InMemoryStore implements MemoryStore {
   private rows: MemRow[] = [];
 
+  async getByIdempotencyKey(key: string): Promise<MemoryRecord | null> {
+    const row = this.rows.find((candidate) => candidate.idempotencyKey === key);
+    if (!row) return null;
+    const {
+      embedding: _embedding,
+      embedModel: _embedModel,
+      importance: _importance,
+      idempotencyKey: _idempotencyKey,
+      ...record
+    } = row;
+    return structuredClone(record);
+  }
+
   async remember(m: StoredMemory): Promise<string> {
+    if (m.idempotencyKey) {
+      const existing = this.rows.find((row) => row.idempotencyKey === m.idempotencyKey);
+      if (existing) {
+        if (!sameLogicalMemory(existing, m)) throw new MemoryIdempotencyConflictError();
+        return existing.id;
+      }
+    }
     const id = randomUUID();
     this.rows.push({
       id,
@@ -224,10 +382,12 @@ export class InMemoryStore implements MemoryStore {
       vendor: m.vendor ?? "_global",
       sourceRef: m.sourceRef ?? null,
       content: m.content,
-      metadata: m.metadata ?? null,
+      metadata: { ...(m.metadata ?? {}), vendor_key: canonicalVendorKey(m.vendor ?? "_global") },
       createdAt: new Date().toISOString(),
       embedding: m.embedding,
+      embedModel: m.embedModel,
       importance: clampImportance(m.importance),
+      idempotencyKey: m.idempotencyKey ?? null,
     });
     return id;
   }
@@ -236,12 +396,13 @@ export class InMemoryStore implements MemoryStore {
     const limit = Math.max(1, Math.min(opts.limit ?? 5, 50));
     return this.rows
       .filter((r) => (opts.kind ? r.kind === opts.kind : true))
+      .filter((r) => (opts.embedModel ? r.embedModel === opts.embedModel : true))
       .filter((r) =>
         opts.vendor ? canonicalVendorKey(r.vendor) === canonicalVendorKey(opts.vendor) : true
       )
       .map((r) => {
         const distance = 1 - cosineSimilarity(queryVec, r.embedding);
-        const { embedding, importance, ...rec } = r;
+        const { embedding, embedModel: _embedModel, importance, idempotencyKey: _idempotencyKey, ...rec } = r;
         return { ...rec, distance, score: 1 - distance };
       })
       .sort((a, b) => a.distance - b.distance)
@@ -277,12 +438,107 @@ export class InMemoryStore implements MemoryStore {
       })
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .slice(0, bounded)
-      .map(({ embedding: _embedding, importance: _importance, ...record }) => structuredClone(record));
+      .map(({ embedding: _embedding, embedModel: _embedModel, importance: _importance, idempotencyKey: _idempotencyKey, ...record }) => structuredClone(record));
+  }
+
+  async findProcessedDuplicate(invoice: NormalizedInvoice): Promise<MemoryRecord | null> {
+    const key = canonicalVendorKey(invoice.vendor);
+    if (!key) return null;
+    const ref = canonicalReference(invoice.vendor_ref);
+    const candidate = [...this.rows]
+      .reverse()
+      .find((row) => {
+        if (row.kind !== "invoice") return false;
+        if (!["approved", "executed"].includes(String(row.metadata?.["processing_status"] ?? ""))) return false;
+        const rowVendor = typeof row.metadata?.["vendor_key"] === "string"
+          ? String(row.metadata["vendor_key"])
+          : canonicalVendorKey(
+              typeof row.metadata?.["vendor"] === "string" ? String(row.metadata["vendor"]) : row.vendor
+            );
+        if (rowVendor !== key) return false;
+        const rowRef = canonicalReference(
+          typeof row.metadata?.["vendor_ref_key"] === "string"
+            ? String(row.metadata["vendor_ref_key"])
+            : typeof row.metadata?.["vendor_ref"] === "string"
+              ? String(row.metadata["vendor_ref"])
+              : null
+        );
+        if (ref && rowRef === ref) return true;
+        return (
+          isSupportedCurrency(invoice.currency) &&
+          invoice.total != null &&
+          typeof row.metadata?.["total"] === "number" &&
+          Math.abs(Number(row.metadata["total"]) - invoice.total) <= 0.01 &&
+          Boolean(invoice.invoice_date) &&
+          row.metadata?.["invoice_date"] === invoice.invoice_date &&
+          String(row.metadata?.["currency"] ?? "").toUpperCase() === invoice.currency.toUpperCase()
+        );
+      });
+    if (!candidate) return null;
+    const {
+      embedding: _embedding,
+      embedModel: _embedModel,
+      importance: _importance,
+      idempotencyKey: _idempotencyKey,
+      ...record
+    } = candidate;
+    return structuredClone(record);
+  }
+
+  async correctionHistory(vendor: string, limit = 100): Promise<MemoryRecord[]> {
+    const key = canonicalVendorKey(vendor);
+    const bounded = Math.max(1, Math.min(limit, 500));
+    return this.rows
+      .filter((row) => row.kind === "insight")
+      .filter((row) => ["amended_down", "rejected"].includes(String(row.metadata?.["correction"] ?? "")))
+      .filter((row) => {
+        const metadataVendor = typeof row.metadata?.["vendor"] === "string"
+          ? String(row.metadata["vendor"])
+          : row.vendor;
+        return canonicalVendorKey(metadataVendor) === key;
+      })
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, bounded)
+      .map(({ embedding: _embedding, embedModel: _embedModel, importance: _importance, idempotencyKey: _idempotencyKey, ...record }) => structuredClone(record));
+  }
+
+  async embeddingModelStats(currentModel: string): Promise<EmbeddingModelStats> {
+    const models: Record<string, number> = {};
+    for (const row of this.rows) models[row.embedModel] = (models[row.embedModel] ?? 0) + 1;
+    const current = models[currentModel] ?? 0;
+    return { current, other: Math.max(0, this.rows.length - current), models };
   }
 
   async clear(): Promise<void> {
     this.rows = [];
   }
+}
+
+export function assertCompatibleIdempotentMemory(existing: MemoryRecord, incoming: MemoryInput): void {
+  if (!sameLogicalMemory(existing, incoming)) throw new MemoryIdempotencyConflictError();
+}
+
+function sameLogicalMemory(
+  existing: Pick<MemoryRecord, "kind" | "vendor" | "sourceRef" | "content" | "metadata">,
+  incoming: Pick<MemoryInput, "kind" | "vendor" | "sourceRef" | "content" | "metadata">
+): boolean {
+  return (
+    existing.kind === incoming.kind &&
+    existing.vendor === (incoming.vendor ?? "_global") &&
+    existing.sourceRef === (incoming.sourceRef ?? null) &&
+    existing.content === incoming.content &&
+    isDeepStrictEqual(
+      withoutDerivedVendorKey(existing.metadata),
+      withoutDerivedVendorKey(incoming.metadata ?? null)
+    )
+  );
+}
+
+function withoutDerivedVendorKey(metadata: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (metadata === null) return null;
+  const copy = structuredClone(metadata);
+  delete copy.vendor_key;
+  return Object.keys(copy).length === 0 ? null : copy;
 }
 
 // Cosine similarity over two equal-length vectors. Matches the direction that

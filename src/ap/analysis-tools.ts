@@ -25,12 +25,13 @@
 
 import type { ToolDef } from "../qwen/client.js";
 import type { Embedder } from "../memory/embeddings.js";
-import type { MemoryStore, RecallHit } from "../memory/store.js";
+import type { MemoryRecord, MemoryStore } from "../memory/store.js";
 import { recall } from "../memory/memory.js";
 import {
   detectAmountAnomaly,
   detectDuplicate,
   priorInvoicesFromRecall,
+  robustAmountBaseline,
   toRecalledFact,
   validateInvoice,
   type PriorInvoice,
@@ -41,6 +42,7 @@ import type {
   ValidationFinding,
 } from "../types.js";
 import { canonicalReference, canonicalVendorKey } from "./normalize.js";
+import { isSupportedCurrency } from "./currency.js";
 
 // The names of the autonomous tools (the read/analyze tier).
 export const ANALYSIS_TOOL_NAMES = [
@@ -76,7 +78,8 @@ export interface LoopState {
   priorCount: number;
   refMatch: boolean; // a prior invoice shares this vendor_ref (a fact, not a verdict)
   amountDateMatch: boolean; // a prior shares this total + date (a fact, not a verdict)
-  amountRatio: number | null; // this total ÷ the vendor's historical average
+  amountRatio: number | null; // this total ÷ the vendor's robust historical median
+  currencyChanged: boolean; // known vendor has completed history, but none in this supported currency
 
   // CONFIRMED findings — set ONLY once the owning analysis tool actually runs
   duplicate: boolean; // R5 confirmed by check_duplicate
@@ -109,6 +112,7 @@ export function newLoopState(invoice: NormalizedInvoice): LoopState {
     refMatch: false,
     amountDateMatch: false,
     amountRatio: null,
+    currencyChanged: false,
     duplicate: false,
     missingFields: false,
     reconcileIssue: false,
@@ -129,6 +133,7 @@ const CORRECTION_REBILL_MARGIN = 1.05;
 export interface AnalysisDeps {
   embedder: Embedder;
   memory: MemoryStore;
+  signal?: AbortSignal;
 }
 
 // Execute one autonomous read/analyze tool. Mutates `state` (adds findings / facts)
@@ -154,22 +159,28 @@ export async function executeAnalysisTool(
   }
 }
 
-async function runRecall(state: LoopState, { embedder, memory }: AnalysisDeps): Promise<string> {
+async function runRecall(state: LoopState, { embedder, memory, signal }: AnalysisDeps): Promise<string> {
   const inv = state.invoice;
   if (state.didRecall) return recallSummary(state); // idempotent — never re-query
   const query =
     `${inv.vendor ?? "vendor"} invoice ${inv.vendor_ref ?? ""} ` +
     `${inv.total ?? ""} ${inv.currency}`.trim();
-  const [hits, deterministicHistory] = inv.vendor
+  const [hits, boundedHistory, deterministicCorrections, exactDuplicate] = inv.vendor
     ? await Promise.all([
-        recall(embedder, memory, query, { vendor: inv.vendor, limit: 8 }),
+        recall(embedder, memory, query, { vendor: inv.vendor, limit: 8 }, signal),
         memory.invoiceHistory(inv.vendor),
+        memory.correctionHistory(inv.vendor),
+        memory.findProcessedDuplicate(inv),
       ])
-    : [[], []];
+    : [[], [], [], null];
   state.recalled = hits.map(toRecalledFact);
   // R5/R6 run over deterministic vendor history, not whichever eight semantic
-  // results happened to rank highest. Semantic hits remain the reviewer-facing
-  // evidence and correction-recall channel.
+  // results happened to rank highest. The exact indexed R5 match is injected even
+  // when it falls outside the bounded R6 history window. Semantic hits remain the
+  // reviewer-facing evidence and correction-recall channel.
+  const deterministicHistory = exactDuplicate && !boundedHistory.some((row) => row.id === exactDuplicate.id)
+    ? [exactDuplicate, ...boundedHistory]
+    : boundedHistory;
   state.priors = priorInvoicesFromRecall(deterministicHistory);
 
   // Derive raw FACTS from the recalled priors — NOT decisions. The R5/R6 verdicts
@@ -179,6 +190,24 @@ async function runRecall(state: LoopState, { embedder, memory }: AnalysisDeps): 
   );
   state.priorCount = vendorPriors.length;
   state.knownVendor = vendorPriors.length > 0;
+  const priorCurrencies = new Set(
+    vendorPriors.map((prior) => prior.currency).filter((code): code is string => isSupportedCurrency(code))
+  );
+  state.currencyChanged =
+    state.knownVendor &&
+    isSupportedCurrency(inv.currency) &&
+    priorCurrencies.size > 0 &&
+    !priorCurrencies.has(inv.currency);
+  if (state.currencyChanged) {
+    state.findings.push({
+      rule: "CURRENCY_CHANGE",
+      passed: false,
+      severity: "warn",
+      message:
+        `Currency changed to ${inv.currency}; completed history for this vendor uses ` +
+        `${[...priorCurrencies].sort().join(", ")}. Human verification is required before a money action.`,
+    });
+  }
   state.refMatch =
     !!inv.vendor_ref &&
     vendorPriors.some(
@@ -189,23 +218,30 @@ async function runRecall(state: LoopState, { embedder, memory }: AnalysisDeps): 
       inv.total != null &&
       p.total != null &&
       Math.abs(p.total - inv.total) <= 0.01 &&
-      (!p.currency || p.currency === inv.currency) &&
+      isSupportedCurrency(inv.currency) &&
+      p.currency === inv.currency &&
       !!inv.invoice_date &&
       !!p.date &&
       p.date === inv.invoice_date
   );
-  const amounts = vendorPriors.map((p) => p.total).filter((a): a is number => a != null);
+  // Amount baselines are meaningful only within the exact same currency. Mixing
+  // EUR and USD history can fabricate or hide an anomaly even when the numbers
+  // happen to look comparable.
+  const amounts = vendorPriors
+    .filter((p) => isSupportedCurrency(inv.currency) && p.currency === inv.currency)
+    .map((p) => p.total)
+    .filter((a): a is number => a != null);
   if (amounts.length > 0 && inv.total != null) {
-    const avg = amounts.reduce((s, a) => s + a, 0) / amounts.length;
-    state.amountRatio = avg > 0 ? round2(inv.total / avg) : null;
+    const baseline = robustAmountBaseline(amounts);
+    state.amountRatio = baseline != null && baseline > 0 ? round2(inv.total / baseline) : null;
   }
 
-  // THE APPROVAL GATE AS A TRAINING SIGNAL — read back any PRIOR HUMAN CORRECTIONS
+  // THE APPROVAL GATE AS A RUNTIME CORRECTION SIGNAL — read back PRIOR HUMAN CORRECTIONS
   // for this vendor from the recalled memories (written by amend()/reject()). A
   // human amending a proposal's amount DOWN or rejecting one is durable feedback the
   // next decision reasons over. Recall is already vendor-scoped, so these hits are
   // this vendor's; we lift the structured `correction` metadata back out.
-  deriveCorrections(state, hits);
+  deriveCorrections(state, deterministicCorrections);
 
   state.didRecall = true;
   return recallSummary(state);
@@ -214,7 +250,7 @@ async function runRecall(state: LoopState, { embedder, memory }: AnalysisDeps): 
 // Lift prior human-correction FACTS out of the vendor's recalled memories. Sets the
 // rejection flag, the most-recent human-corrected-down amount, and whether THIS
 // invoice re-bills materially above it — the signal the loop escalates on.
-function deriveCorrections(state: LoopState, hits: RecallHit[]): void {
+function deriveCorrections(state: LoopState, hits: MemoryRecord[]): void {
   const corrections = hits.filter(
     (h) => h.metadata && typeof h.metadata === "object" && typeof (h.metadata as Record<string, unknown>)["correction"] === "string"
   );
@@ -224,7 +260,8 @@ function deriveCorrections(state: LoopState, hits: RecallHit[]): void {
     .filter(
       (h) =>
         (h.metadata as Record<string, unknown>)["correction"] === "amended_down" &&
-        typeof (h.metadata as Record<string, unknown>)["corrected_amount"] === "number"
+        typeof (h.metadata as Record<string, unknown>)["corrected_amount"] === "number" &&
+        (h.metadata as Record<string, unknown>)["corrected_currency"] === state.invoice.currency
     )
     .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? "")); // most recent first
   if (amendedDowns.length > 0) {
@@ -249,7 +286,8 @@ function recallSummary(state: LoopState): string {
     `Recalled ${state.priorCount} prior invoice(s) for ${inv.vendor}.`,
     state.refMatch ? `A prior invoice shares this vendor reference (${inv.vendor_ref}).` : null,
     state.amountDateMatch ? `A prior invoice shares this amount and date.` : null,
-    state.amountRatio != null ? `This total is ${state.amountRatio}x the vendor's historical average.` : null,
+    state.amountRatio != null ? `This total is ${state.amountRatio}x the vendor's robust historical median.` : null,
+    state.currencyChanged ? `The invoice currency differs from this vendor's completed history and requires review.` : null,
     correctionNote(state),
   ].filter(Boolean);
   return parts.join(" ");
@@ -317,7 +355,7 @@ function runComputeVariance(state: LoopState): string {
   state.findings.push(f);
   state.anomaly = !f.passed;
   state.didComputeVariance = true;
-  const ratio = state.amountRatio != null ? ` (measured ${state.amountRatio}x the vendor average)` : "";
+  const ratio = state.amountRatio != null ? ` (measured ${state.amountRatio}x the vendor median)` : "";
   return `${f.message}${ratio}`;
 }
 
@@ -346,7 +384,7 @@ export function computeEvidence(state: LoopState): string {
     `dup_checked=${b(state.didCheckDuplicate)} variance_computed=${b(state.didComputeVariance)} ` +
     `known_vendor=${b(state.knownVendor)} dup_candidate=${b(dupCandidate)} anomaly_candidate=${b(anomalyCandidate)} ` +
     `duplicate=${b(state.duplicate)} missing_fields=${b(state.missingFields)} ` +
-    `reconcile_issue=${b(state.reconcileIssue)} anomaly=${b(state.anomaly)} no_total=${b(state.noTotal)} ` +
+    `reconcile_issue=${b(state.reconcileIssue)} anomaly=${b(state.anomaly)} currency_changed=${b(state.currencyChanged)} no_total=${b(state.noTotal)} ` +
     `prior_correction=${b(state.priorCorrection)} rebills_corrected=${b(state.rebillsCorrected)}`
   );
 }
@@ -386,7 +424,7 @@ export function analysisToolDefs(): ToolDef[] {
     ),
     def(
       "compute_variance_vs_history",
-      "ANALYZE (no side-effect): decide rule R6 — is this amount anomalous versus the vendor's historical average? Requires recall_vendor_history first."
+      "ANALYZE (no side-effect): decide rule R6 — is this amount anomalous versus the vendor's robust historical median? Requires recall_vendor_history first."
     ),
     def(
       "request_more_context",

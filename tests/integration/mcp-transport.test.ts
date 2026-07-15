@@ -60,7 +60,9 @@ test("intake → pending round-trip over MCP remains proposal-only", async () =>
     const intake = payload(await client.callTool({ name: "intake_invoice", arguments: { invoice: cleanInvoice } }));
     assert.equal(intake.status, "pending");
     assert.ok(intake.id);
-    assert.ok(intake.trace.length >= 2);
+    assert.ok(intake.traceSummary.steps >= 2);
+    assert.equal(intake.invoice, undefined, "default stdio projection withholds invoice details");
+    assert.equal(intake.proposed.args, undefined, "default stdio projection withholds executable args");
     // The sinks are empty — intake executed nothing across the wire.
     assert.equal(sinks.ledger.entries().length, 0);
 

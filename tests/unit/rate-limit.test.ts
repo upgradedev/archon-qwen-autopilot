@@ -52,10 +52,10 @@ test("per-client isolation: one client hitting its cap does NOT starve another c
   assert.equal(rl.consume("B").allowed, false);
 });
 
-test("the global backstop bounds TOTAL spend even across many distinct clients", () => {
-  // Per-client cap 1, global backstop 3: three distinct clients each spend their one
+test("the global backstop bounds TOTAL accepted workflows across many distinct clients", () => {
+  // Per-client cap 1, global backstop 3: three distinct clients each consume their one
   // slot (global now 3); the 4th client — with an empty bucket of its own — is refused
-  // on the GLOBAL tier, so total spend stays bounded no matter how many clients appear.
+  // on the GLOBAL tier, so accepted workflows stay bounded no matter how many clients appear.
   const rl = new DailyRateLimiter(1, () => new Date("2026-07-06T00:00:00Z"), 3);
   assert.equal(rl.consume("c1").allowed, true);
   assert.equal(rl.consume("c2").allowed, true);

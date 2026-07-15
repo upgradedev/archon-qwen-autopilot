@@ -20,6 +20,12 @@ import type {
   ValidationFinding,
 } from "../types.js";
 import { canonicalReference, canonicalVendorKey } from "./normalize.js";
+import { isSupportedCurrency } from "./currency.js";
+import {
+  isBoundedNonnegativeAmount,
+  isBoundedPositiveAmount,
+  MAX_FINANCIAL_AMOUNT,
+} from "./finance-policy.js";
 
 const CENT = 0.01;
 
@@ -32,8 +38,13 @@ function ruleAmountSanity(inv: NormalizedInvoice): ValidationFinding {
   if (inv.total == null) {
     return finding("R1", false, "error", "No payable total could be determined from the invoice.");
   }
-  if (!Number.isFinite(inv.total) || inv.total <= 0) {
-    return finding("R1", false, "error", `Total ${inv.total} is not a positive amount.`);
+  if (!isBoundedPositiveAmount(inv.total)) {
+    return finding(
+      "R1",
+      false,
+      "error",
+      `Total ${inv.total} must be finite, positive, and no greater than ${MAX_FINANCIAL_AMOUNT}.`
+    );
   }
   return finding("R1", true, "info", `Total ${money(inv.total, inv.currency)} is a positive amount.`);
 }
@@ -62,7 +73,18 @@ function ruleTaxConsistency(inv: NormalizedInvoice): ValidationFinding {
   if (inv.subtotal == null || inv.tax == null || inv.total == null) {
     return finding("R3", true, "warn", "Tax reconciliation skipped — subtotal/tax/total not all present.");
   }
+  if (![inv.subtotal, inv.tax, inv.total].every(isBoundedNonnegativeAmount)) {
+    return finding(
+      "R3",
+      false,
+      "error",
+      `Subtotal, tax, and total must each be finite, nonnegative, and no greater than ${MAX_FINANCIAL_AMOUNT}.`
+    );
+  }
   const expected = round2(inv.subtotal + inv.tax);
+  if (!isBoundedNonnegativeAmount(expected)) {
+    return finding("R3", false, "error", "subtotal + tax exceeds the supported financial amount bound.");
+  }
   if (Math.abs(expected - inv.total) > CENT) {
     return finding(
       "R3",
@@ -91,7 +113,34 @@ function ruleLineItems(inv: NormalizedInvoice): ValidationFinding {
       `Only ${amounts.length} of ${inv.line_items.length} line items carry a reconcilable amount; the invoice is incomplete.`
     );
   }
+  for (const [index, line] of inv.line_items.entries()) {
+    if (line.amount != null && !isBoundedNonnegativeAmount(line.amount)) {
+      return finding("R4", false, "error", `Line item ${index + 1} amount is negative, non-finite, or above the supported bound.`);
+    }
+    if (line.quantity != null && (!Number.isFinite(line.quantity) || line.quantity <= 0 || line.quantity > MAX_FINANCIAL_AMOUNT)) {
+      return finding("R4", false, "error", `Line item ${index + 1} quantity must be finite, positive, and bounded.`);
+    }
+    if (line.unit_price != null && !isBoundedNonnegativeAmount(line.unit_price)) {
+      return finding("R4", false, "error", `Line item ${index + 1} unit price is negative, non-finite, or above the supported bound.`);
+    }
+    if (line.quantity == null || line.unit_price == null || line.amount == null) continue;
+    const extended = round2(line.quantity * line.unit_price);
+    if (!isBoundedNonnegativeAmount(extended)) {
+      return finding("R4", false, "error", `Line item ${index + 1} extended amount exceeds the supported financial bound.`);
+    }
+    if (Math.abs(extended - line.amount) > CENT) {
+      return finding(
+        "R4",
+        false,
+        "warn",
+        `Line item ${index + 1} does not reconcile: quantity ${line.quantity} × unit price ${line.unit_price} = ${extended}, not ${line.amount}.`
+      );
+    }
+  }
   const sum = round2(amounts.reduce((s, a) => s + a, 0));
+  if (!isBoundedNonnegativeAmount(sum)) {
+    return finding("R4", false, "error", "Line-item total exceeds the supported financial amount bound.");
+  }
   const target = inv.subtotal ?? inv.total;
   if (target == null) {
     return finding("R4", true, "warn", `Line items sum to ${sum} but there is no subtotal/total to check against.`);
@@ -134,7 +183,8 @@ export function detectDuplicate(
       inv.total != null &&
       p.total != null &&
       Math.abs(p.total - inv.total) <= CENT &&
-      (!p.currency || p.currency === inv.currency) &&
+      isSupportedCurrency(inv.currency) &&
+      p.currency === inv.currency &&
       inv.invoice_date &&
       p.date &&
       p.date === inv.invoice_date
@@ -158,28 +208,47 @@ export function detectAmountAnomaly(
   priorInvoices: PriorInvoice[]
 ): ValidationFinding {
   if (inv.total == null) return finding("R6", true, "info", "No total to compare against vendor history.");
+  if (!isSupportedCurrency(inv.currency)) {
+    return finding("R6", true, "warn", "Amount variance skipped — the invoice has no supported comparable currency.");
+  }
   const amounts = priorInvoices
     .filter(
       (p) =>
         !!inv.vendor &&
         canonicalVendorKey(p.vendor) === canonicalVendorKey(inv.vendor) &&
-        (!p.currency || p.currency === inv.currency) &&
+        p.currency === inv.currency &&
         p.total != null
     )
     .map((p) => p.total!) as number[];
   if (amounts.length === 0) {
     return finding("R6", true, "info", "New vendor — no prior amount history to compare against.");
   }
-  const avg = amounts.reduce((s, a) => s + a, 0) / amounts.length;
-  if (avg > 0 && inv.total > avg * 3) {
+  const baseline = robustAmountBaseline(amounts);
+  if (baseline != null && baseline > 0 && inv.total > baseline * 3) {
     return finding(
       "R6",
       false,
       "warn",
-      `Amount ${money(inv.total, inv.currency)} is more than 3x this vendor's usual ~${money(round2(avg), inv.currency)}.`
+      `Amount ${money(inv.total, inv.currency)} is more than 3x this vendor's robust median ~${money(round2(baseline), inv.currency)}.`
     );
   }
-  return finding("R6", true, "info", `Amount is in line with this vendor's usual ~${money(round2(avg), inv.currency)}.`);
+  return finding(
+    "R6",
+    true,
+    "info",
+    `Amount is in line with this vendor's robust median ~${money(round2(baseline ?? 0), inv.currency)}.`
+  );
+}
+
+// Median is deterministic and resistant to isolated historical outliers that can
+// inflate a mean until a genuinely anomalous current invoice looks ordinary.
+export function robustAmountBaseline(amounts: number[]): number | null {
+  const sorted = amounts.filter((value) => Number.isFinite(value) && value > 0).sort((a, b) => a - b);
+  if (sorted.length === 0) return null;
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1
+    ? sorted[middle]!
+    : (sorted[middle - 1]! + sorted[middle]!) / 2;
 }
 
 // A compact prior-invoice fact reconstructed from a recalled memory's metadata.

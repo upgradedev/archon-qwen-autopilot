@@ -1,4 +1,4 @@
-// Learning-from-corrections eval — the approval gate as a training signal, measured.
+// Runtime-correction eval — measured behavior change; no model weights are updated.
 //
 //   npm run eval:corrections
 //
@@ -22,13 +22,12 @@
 // control), that is reported too — the learning is amount-scoped, so it must NOT
 // escalate a vendor that later bills the corrected amount (no crying wolf).
 
-import { hasQwenCreds } from "../src/qwen/client.js";
 import { runCorrections } from "./lib.js";
+import { safeOperationalSummary } from "../src/security/operational-error.js";
 
 async function main(): Promise<void> {
-  const online = hasQwenCreds();
-  console.log(`\nArchon Autopilot — learning-from-corrections (the approval gate as a training signal)`);
-  console.log(`Mode : ${online ? "ONLINE (real qwen-plus)" : "OFFLINE (deterministic Fakes)"}`);
+  console.log(`\nArchon Autopilot — runtime correction recall (no model-weight training)`);
+  console.log(`Mode : OFFLINE (deterministic regression; genuine amend → memory → recall path)`);
   console.log(`Each row runs the SAME decision invoice twice — the only difference is whether the human correction happened.\n`);
   console.log(`ID    Before (no correction)   After (with correction)   Δ changed   matches prediction`);
   console.log("-".repeat(84));
@@ -50,6 +49,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error(err);
+  console.error(`Correction evaluation failed: ${safeOperationalSummary(err, "eval-corrections")}`);
   process.exit(1);
 });

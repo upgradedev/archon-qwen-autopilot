@@ -43,6 +43,95 @@ test("cold start renders every surface with no broken tiles (header, charts, hea
   guard.assertClean();
 });
 
+test("public no-token journeys are isolated previews: no protected reads, false queue claim, actions, or CSP violations", async ({ page }) => {
+  const guard = installGuard(page);
+  const protectedRequests: string[] = [];
+  const browserPolicyViolations: string[] = [];
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (/^\/(pending|decided|impact-metrics)(?:\/|$)/.test(path) || /^\/(approve|amend|reject|recover)\//.test(path)) {
+      protectedRequests.push(`${request.method()} ${path}`);
+    }
+  });
+  page.on("console", (message) => {
+    if (/content security policy|refused to (?:apply|execute)|violates the following/i.test(message.text())) {
+      browserPolicyViolations.push(message.text());
+    }
+  });
+
+  await gotoReady(page, { reviewerToken: null });
+  await expect(page.locator("#queue")).toContainText("Reviewer workspace locked");
+  await expect(page.locator("#queue")).toContainText("isolated previews");
+  await expect(page.locator("#decided")).toContainText("Decision history is private");
+  await expect(page.locator("#impactMetrics")).toContainText("Private reviewer token required");
+  await expect(page.locator("main")).not.toContainText(/Could not load|Evidence unavailable|valid reviewer credentials/i);
+
+  // JSON intake: a proposal renders inline and is explicitly non-durable.
+  await page.locator("#loadSample").click();
+  await expect(page.locator("#processView")).toContainText("Isolated preview — nothing persisted");
+  await expect(page.locator("#processView")).toContainText("Meridian Logistics");
+  await expect(page.locator("#toast")).toContainText("Isolated preview generated");
+  await expect(page.locator("#toast")).not.toContainText(/queued.*approval/i);
+  await expect(page.locator("#processView button, #queue button.approve, #queue button.amend, #queue button.reject")).toHaveCount(0);
+
+  // Real SSE path: streamed steps finish in the same inline preview, never the queue.
+  const streamed = uniqueInvoice("Public-Preview");
+  await page.fill("#invoiceInput", JSON.stringify(streamed));
+  await page.locator("#processBtn").click();
+  await expect(page.locator("#processView .proc-step").first()).toBeVisible();
+  await expect(page.locator("#processView")).toContainText("Isolated preview — nothing persisted");
+  await expect(page.locator("#processView")).toContainText(String(streamed.vendor));
+  await expect(page.locator("#processView button")).toHaveCount(0);
+
+  // Real document path: extract, review, then process with the bound single-use ticket.
+  await page.locator("#sampleDoc").click();
+  await expect(page.locator("#extractReview")).toContainText("Extracted for review");
+  await page.locator("#processBtn").click();
+  await expect(page.locator("#processView .proc-step").first()).toBeVisible();
+  await expect(page.locator("#processView")).toContainText("Isolated preview — nothing persisted");
+  await expect(page.locator("#processView button")).toHaveCount(0);
+
+  expect(protectedRequests).toEqual([]);
+  expect(browserPolicyViolations).toEqual([]);
+  guard.assertClean();
+});
+
+test("even a duplicate-marked public SSE proposal cannot expose reviewer execution controls", async ({ page }) => {
+  const protectedWrites: string[] = [];
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (/^\/(approve|amend|reject|recover)\//.test(path)) protectedWrites.push(`${request.method()} ${path}`);
+  });
+  await gotoReady(page, { reviewerToken: null });
+
+  const invoice = uniqueInvoice("Public-Duplicate");
+  await page.route("**/intake/stream", async (route) => {
+    const proposal = {
+      id: "public-preview-only",
+      status: "preview",
+      durable: false,
+      visibility: "isolated-public-preview",
+      invoice,
+      proposed: { tool: "flag_for_review", args: { reason: "possible duplicate" }, reasoning: "Isolated preview." },
+    };
+    const body = [
+      "event: step\ndata: " + JSON.stringify({ step: 1, tool: "check_duplicate", observation: "DUPLICATE: matching supplier/reference" }),
+      "event: proposal\ndata: " + JSON.stringify(proposal),
+      "event: done\ndata: {}",
+      "",
+    ].join("\n\n");
+    await route.fulfill({ status: 200, contentType: "text/event-stream", body });
+  });
+
+  await page.fill("#invoiceInput", JSON.stringify(invoice));
+  await page.locator("#processBtn").click();
+  await expect(page.locator("#processView")).toContainText("DUPLICATE");
+  await expect(page.locator("#processView")).toContainText("Isolated preview — nothing persisted");
+  await expect(page.locator("#processView")).not.toContainText(/Pay anyway|Queue for Review|Reject Invoice/i);
+  await expect(page.locator("#processView button")).toHaveCount(0);
+  expect(protectedWrites).toEqual([]);
+});
+
 test("Load sample invoice → exactly one PENDING proposal exists and the pending chart populates — guard clean", async ({ page }) => {
   const guard = installGuard(page);
   await gotoReady(page);
@@ -228,6 +317,46 @@ test("guided tour — walking Next through every step reaches Done and closes th
     await page.locator("#tourPop button.primary", { hasText: "Next" }).click();
   }
   await expect(page.locator("#tourOverlay")).not.toHaveClass(/show/);
+
+  guard.assertClean();
+});
+
+test("judge correction challenge — three real UI steps verify stored correction, guarded rebill, and negative control", async ({ page }) => {
+  const guard = installGuard(page);
+  await gotoReady(page);
+  const reviewerToken = "e2e-only-reviewer-token-32-characters";
+  await page.locator("#reviewerToken").fill(reviewerToken);
+
+  await page.locator("#learnBaseline").click();
+  await expect(page.locator("#learnState1")).toContainText(/€3,000 approved/);
+  await expect(page.locator("#learnAmend")).toBeEnabled();
+
+  await page.locator("#learnAmend").click();
+  await expect(page.locator("#learnState2")).toContainText(/correction evidence verified/i);
+  await expect(page.locator("#learnTest")).toBeEnabled();
+
+  await page.locator("#learnTest").click();
+  await expect(page.locator("#learnResult")).toContainText(/Correction changed the next decision/i);
+  await expect(page.locator("#learnResult")).toContainText(/€5,000 re-bill → flag_for_review/);
+  await expect(page.locator("#learnResult")).toContainText(/€3,000 negative control → draft_payment/);
+  await expect(page.locator("#learnState3")).toContainText(/two fresh PENDING proposals; nothing executed/i);
+
+  // Leave the shared e2e server clean of this challenge's two pending controls.
+  const cleanup = await page.evaluate(async ({ token }) => {
+    const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+    const body = await (await fetch("/pending", { headers })).json() as { pending: any[] };
+    const pending = body.pending;
+    const ids = pending
+      .filter((item: any) => String(item.invoice?.vendor ?? "").startsWith("Correction Demo "))
+      .map((item: any) => item.id);
+    for (const id of ids) {
+      const response = await fetch(`/reject/${id}`, { method: "POST", headers, body: JSON.stringify({ reason: "e2e challenge cleanup" }) });
+      if (!response.ok) return { ok: false, status: response.status };
+    }
+    return { ok: true, count: ids.length };
+  }, { token: reviewerToken });
+  expect(cleanup.ok).toBe(true);
+  expect(cleanup.count).toBeGreaterThanOrEqual(2);
 
   guard.assertClean();
 });

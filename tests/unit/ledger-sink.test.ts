@@ -14,7 +14,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { JsonlLedgerSink, createJsonlTransport, type LedgerTransport } from "../../src/ap/ledger-sink.js";
@@ -45,6 +46,7 @@ const quietLogger = { log() {}, warn() {} };
 
 const SAMPLE: Omit<LedgerEntry, "postedAt"> = {
   ref: "INV-1",
+  currency: "EUR",
   narrative: "Accrual for Acme invoice INV-1",
   lines: [
     { account: "Office Supplies", debit: 120 },
@@ -151,6 +153,65 @@ test("fs ledger idempotency survives a sink/process restart for the same work-it
     const lines = readFileSync(path, "utf8").trim().split("\n");
     assert.equal(lines.length, 1, "restart retry did not append a second durable effect");
     assert.equal(JSON.parse(lines[0]!).ref, SAMPLE.ref);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("committed marker deduplicates after the original row ages beyond the bounded tail", () => {
+  const dir = mkdtempSync(join(tmpdir(), "archon-ledger-old-tail-"));
+  const path = join(dir, "ledger.jsonl");
+  const previous = process.env.LEDGER_DEDUPE_SCAN_BYTES;
+  process.env.LEDGER_DEDUPE_SCAN_BYTES = String(64 * 1024);
+  try {
+    new JsonlLedgerSink({ transport: createJsonlTransport(path), logger: quietLogger }).post(SAMPLE);
+    const filler = createJsonlTransport(path);
+    for (let i = 0; i < 90; i++) filler.append(JSON.stringify({ ref: `FILL-${i}`, pad: "x".repeat(1024) }));
+    assert.ok(statSync(path).size > 64 * 1024, "fixture pushes the first row outside the bounded tail");
+
+    new JsonlLedgerSink({ transport: createJsonlTransport(path), logger: quietLogger }).post(SAMPLE);
+    const rows = readFileSync(path, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { ref: string });
+    assert.equal(rows.filter((row) => row.ref === SAMPLE.ref).length, 1, "committed marker prevents an old-row duplicate without an unbounded scan");
+  } finally {
+    if (previous === undefined) delete process.env.LEDGER_DEDUPE_SCAN_BYTES;
+    else process.env.LEDGER_DEDUPE_SCAN_BYTES = previous;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a reserved marker without a confirmed row stays fail-closed after restart", () => {
+  const dir = mkdtempSync(join(tmpdir(), "archon-ledger-reserved-"));
+  const path = join(dir, "ledger.jsonl");
+  const markerDir = `${path}.refs`;
+  const marker = join(markerDir, createHash("sha256").update(SAMPLE.ref, "utf8").digest("hex"));
+  try {
+    mkdirSync(markerDir, { recursive: true });
+    writeFileSync(marker, `${JSON.stringify({ schemaVersion: 1, state: "reserved", ref: SAMPLE.ref })}\n`, "utf8");
+    const transport = createJsonlTransport(path);
+    assert.throws(
+      () => transport.appendOnce!(SAMPLE.ref, JSON.stringify(SAMPLE)),
+      /reservation exists without a confirmed row/,
+    );
+    assert.equal(existsSync(path), false, "uncertain reservation never opens a duplicate append path");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a crash after durable append but before promotion self-heals reserved → committed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "archon-ledger-promote-"));
+  const path = join(dir, "ledger.jsonl");
+  const markerDir = `${path}.refs`;
+  const marker = join(markerDir, createHash("sha256").update(SAMPLE.ref, "utf8").digest("hex"));
+  try {
+    const transport = createJsonlTransport(path);
+    transport.append(JSON.stringify(SAMPLE));
+    writeFileSync(marker, `${JSON.stringify({ schemaVersion: 1, state: "reserved", ref: SAMPLE.ref })}\n`, "utf8");
+
+    assert.equal(transport.appendOnce!(SAMPLE.ref, JSON.stringify(SAMPLE)), false);
+    const state = JSON.parse(readFileSync(marker, "utf8")) as { state: string; ref: string };
+    assert.deepEqual(state, { schemaVersion: 1, state: "committed", ref: SAMPLE.ref });
+    assert.equal(readFileSync(path, "utf8").trim().split("\n").length, 1, "confirmed crash state is deduped, not appended again");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

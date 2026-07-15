@@ -22,7 +22,7 @@ export const DEFAULT_EMBED_MODEL =
 export interface Embedder {
   readonly modelId: string;
   readonly dim: number;
-  embed(text: string): Promise<number[]>;
+  embed(text: string, signal?: AbortSignal): Promise<number[]>;
 }
 
 // Qwen text-embedding via the OpenAI-compatible Model Studio endpoint.
@@ -38,12 +38,13 @@ export class QwenEmbedder implements Embedder {
     this.dim = dim;
   }
 
-  async embed(text: string): Promise<number[]> {
+  async embed(text: string, signal?: AbortSignal): Promise<number[]> {
+    signal?.throwIfAborted();
     const res = await this.client.embeddings.create({
       model: this.modelId,
       input: text,
       dimensions: this.dim,
-    });
+    }, { signal });
     const vec = res.data?.[0]?.embedding;
     if (!Array.isArray(vec) || vec.length !== this.dim) {
       throw new Error(
@@ -65,7 +66,8 @@ export class FakeEmbedder implements Embedder {
     this.dim = dim;
   }
 
-  async embed(text: string): Promise<number[]> {
+  async embed(text: string, signal?: AbortSignal): Promise<number[]> {
+    signal?.throwIfAborted();
     const v = new Array<number>(this.dim).fill(0);
     const tokens = text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
     for (const tok of tokens) {

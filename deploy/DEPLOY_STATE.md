@@ -10,7 +10,9 @@ printed or committed.
 > Autopilot container is bound to **`127.0.0.1:9100`**, not a public security-group
 > port.
 >
-> Runtime code commit: [`be34bf8`](https://github.com/upgradedev/archon-qwen-autopilot/commit/be34bf8d8c8a90b4080403171422e82e1a888d92), merged through [PR #34](https://github.com/upgradedev/archon-qwen-autopilot/pull/34).
+> Runtime checkpoint: **historical pre-freeze deployment**. Record the final commit
+> and rerun every check below after the final redeploy; no draft commit is represented
+> as the currently verified submission revision.
 >
 > Verified 2026-07-15: real `text-embedding-v4` / `qwen-plus`, PostgreSQL mode, `/ready` 200, real-Qwen intake→pending, unauthenticated `/pending` 401 and authenticated `/pending` 200. The runtime is loopback-only, read-only, `cap-drop ALL`, `512 MiB / 1 CPU / 128 PIDs`, zero restarts, and attached to internal `data` plus `edge` with gateway priority `1`. Its durable ledger mount is owned/writable by uid 1000. Direct public 9100/5432 are blocked.
 
@@ -18,15 +20,15 @@ printed or committed.
 
 | Layer | Current state |
 |---|---|
-| Alibaba resource | ECS `i-t4ngalzjr5nwtuowbv7y`, region `ap-southeast-1`, public IP `43.106.13.19` |
-| Public edge | Ports `80` (redirect/ACME) and `443` (HTTPS) on the ECS host → `http://127.0.0.1:9100`; SSH restricted to the operator `/32` |
+| Alibaba resource | ECS in `ap-southeast-1`; instance ID and administrative principal intentionally omitted from the public runbook |
+| Public edge | Ports `80` (redirect/ACME) and `443` (HTTPS) → loopback backend; administrative access restricted out of band |
 | Autopilot runtime | Container `archon-autopilot`, internal port `9000`, restart `unless-stopped`, read-only root filesystem |
 | Internet egress | Existing MemoryAgent Compose **edge** network, used for DashScope/Qwen |
 | Database traffic | Existing MemoryAgent Compose internal **data** network, where DNS name `db` resolves |
-| PostgreSQL | The MemoryAgent's existing pgvector/PostgreSQL container and credentials are reused |
-| Data isolation | Separate logical database `autopilot` on that shared PostgreSQL service; it owns `agent_memory`, `ap_workitems`, and `ap_daily_quota` |
+| PostgreSQL | Existing pgvector/PostgreSQL service; bootstrap/admin and runtime credentials are separate |
+| Data isolation | Database `autopilot`; fixed runtime role `autopilot_app` has a 10-connection ceiling, only connect/schema usage/table DML/sequence usage, and is denied connection to the Memory database |
 | Durable ledger | Host `/var/lib/archon-autopilot/ledger` bind-mounted at `/var/lib/archon-ledger`; `LEDGER_JSONL_PATH=/var/lib/archon-ledger/ledger.jsonl` |
-| Secrets | `/root/autopilot/.env`: real `DASHSCOPE_API_KEY`, 32+ character `REVIEWER_TOKEN`, readiness settings; `/root/memoryagent/.env`: shared PostgreSQL credentials |
+| Secrets | Project-local gitignored `.env` contains runtime-only secrets; mode-0600 `.env.migration` contains bootstrap-only admin DSN + app-role password and is never passed to runtime |
 | Human decisions | Bearer-authenticated HTTP/UI only; MCP is local stdio with four proposal/read tools and no decision capability |
 
 The dual-network attachment is required. The `data` network is internal and can reach
@@ -38,23 +40,24 @@ default route instead of depending on network-name/order selection.
 ## Why the database is shared this way
 
 Starting a second PostgreSQL container would waste the small ECS host. Sharing the same
-physical pgvector service keeps operations simple, while a separate `autopilot`
-database prevents collisions with MemoryAgent's tables and memories. The runtime URL
-is constructed in memory as:
+physical pgvector service keeps operations simple. Isolation is both database- and
+principal-level: `PUBLIC` access is revoked, cross-app roles are revoked, and the
+deployment proves the runtime role is denied on the other database. The runtime DSN is:
 
 ```text
-postgresql://<shared-user>:<masked-password>@db:5432/autopilot
+postgresql://autopilot_app:<masked-password>@db:5432/autopilot
 ```
 
-Credentials are read from `/root/memoryagent/.env` and never echoed. Schema migration
-runs before replacement of the serving container and fails closed.
+The admin DSN stays in `.env.migration`, is supplied only to a one-shot bootstrap
+container and is never echoed. Schema migration and grants run before replacement of
+the serving container and fail closed.
 
 ## Authoritative redeploy
 
 Run on the ECS host from the final repository checkout:
 
 ```bash
-cd /root/autopilot
+cd <autopilot-checkout>
 git pull --ff-only
 bash deploy/redeploy.sh
 ```
@@ -64,27 +67,27 @@ and readiness probes. A normal release should not skip the smoke.
 
 `deploy/redeploy.sh` performs, in order:
 
-1. Verify Docker/curl, repository path, both MemoryAgent networks, pgvector container,
-   production Qwen credential, reviewer token, and shared DB password.
+1. Verify Docker/curl, repository path, both networks, production Qwen/reviewer
+   settings, dedicated runtime DSN, and mode-0600 migration env separation.
 2. Provision `/var/lib/archon-autopilot/ledger` as a private persistent directory for
    the image's uid/gid 1000.
-3. Create the isolated `autopilot` database if absent.
-4. Build the final backend image.
-5. Run the compiled migration on the **data** network before serving new code.
-6. Replace `archon-autopilot` with:
+3. Build the final backend image.
+4. In a one-shot container, create/rotate `autopilot_app`, create `autopilot` if
+   absent, migrate as admin, grant least privilege, and prove the runtime role cannot
+   connect to `memoryagent`.
+5. Replace `archon-autopilot` with:
    - `--network <memoryagent>_data`, then connect `<memoryagent>_edge`;
    - `-p 127.0.0.1:9100:9000`;
    - read-only root, `/tmp` tmpfs, all Linux capabilities dropped, and
      `no-new-privileges`;
    - durable ledger host bind mount;
    - explicit `DATABASE_URL`, `PORT`, and `LEDGER_JSONL_PATH` overrides after `.env`.
-7. Poll local `/health` and dependency-aware `/ready`.
-8. Submit a dedicated smoke invoice, read `/pending` with the private Bearer token,
+6. Poll `/health`, network-free `/ready`, and authenticated/metered `/ready/deep`.
+7. Submit a dedicated authenticated smoke invoice, read `/pending` with the private Bearer token,
    then delete only the smoke vendor's work-item/memory rows.
 
 Useful overrides are documented in the script header: `APP_DIR`, `IMAGE`, `CONTAINER`,
-`HOST_PORT`, `DATA_NETWORK`, `EDGE_NETWORK`, `DB_CONTAINER`, `DB_HOST`, `DB_PORT`,
-`DB_USER`, `DB_PASSWORD`, `DB_NAME`, `MEMORY_ENV_FILE`, `BASE_URL`,
+`HOST_PORT`, `DATA_NETWORK`, `EDGE_NETWORK`, `MIGRATION_ENV_FILE`, `BASE_URL`, `PUBLIC_BASE_URL`,
 `LEDGER_HOST_DIR`, and `LEDGER_CONTAINER_PATH`.
 
 ## Verification after every release

@@ -11,9 +11,9 @@ back.
 So we built the opposite of an autonomous AP bot. **Archon Autopilot** does all the
 reading, remembering, and deciding an AP clerk does — then **stops at the gate** and
 lets a human approve the exact action before anything happens. It is our Track-4
-entry, built on **Qwen** (`qwen-plus` function-calling + `text-embedding-v4`) with a
-**pgvector** memory, and it layers directly on our Track-1 [Archon
-MemoryAgent](../../qwen-memoryagent).
+  entry, built on **Qwen** (`qwen-plus` function-calling + `text-embedding-v4`) with
+  pgvector as one vendor-evidence adapter. Its product boundary is the AP state
+  machine, bounded tool loop, authenticated human gate, idempotency and ledger.
 
 This post is the build journey: the design decisions, the one that mattered most,
 and how we measured whether the agent's decisions are any good.
@@ -55,7 +55,7 @@ The four actions are OpenAI-compatible function schemas handed to Qwen:
 | Tool | When the model picks it |
 |---|---|
 | `draft_journal_entry` | clean invoice, **new** vendor → accrue the liability |
-| `draft_payment` | clean invoice, **known recurring** vendor, in range → straight-through pay |
+| `draft_payment` | clean invoice, **known recurring** vendor, in range → simulated scheduled-payment proposal |
 | `draft_vendor_reply` | required fields missing, or figures don't reconcile |
 | `flag_for_review` | suspected **duplicate**, or an **anomalous amount** |
 
@@ -85,7 +85,8 @@ So the loop's real parse-and-lift path — `tool_calls → JSON.parse(args) → 
 out reasoning/confidence → ProposedAction` — is **exercised in CI with no key**, at
 every step of the loop. The Fake reads a deterministic `EVIDENCE:` line the step
 prompt embeds (produced by `computeEvidence`) and applies the same decision
-precedence a human would; the real model reads the whole context and chooses freely.
+documented conservative precedence; the real model reads the accumulated context and
+its raw terminal choice is measured separately from deterministic safety overrides.
 Same loop code, either way.
 
 ## The human gate is an integrity guarantee, not a label
@@ -101,8 +102,10 @@ the executed action. Two design choices make it real:
    the edited args onto the proposal and executes *those*. Approve executes the
    original. A decided item can never run twice (`409`).
 
-Nothing executes at intake. The proposal is persisted **PENDING**; `execute()` is
-only ever called from `approve`/`amend`, after a person acts.
+Nothing executes at intake. A valid reviewer credential persists the proposal as
+**PENDING** with full evidence; unauthenticated HTTP returns an isolated non-durable
+preview with redacted evidence. `execute()` is only ever called from
+`approve`/`amend`, after a person acts on a durable item.
 
 ## The same gate is a defense against multi-step tool-attacks
 
@@ -115,8 +118,9 @@ block, a memory-poisoning prior. The gate above turns out to be the defense, and
   `approve`, `amend`, or `reject` — those aren't tools it's given. So the worst an
   injection can do is steer *which proposal* lands PENDING; it can't reach `execute()`.
 - Untrusted field values are fenced inside explicit `=== BEGIN/END UNTRUSTED INVOICE
-  DATA ===` markers in the prompt, and the model's self-reported `reasoning` /
-  `confidence` are re-derived — so injected text can't forge what the human sees.
+  DATA ===` markers in the prompt. The model's concise rationale is lifted and its
+  self-reported confidence is clamped, not independently verified or calibrated;
+  execution safety comes from unreachable execution verbs and the authenticated gate.
 
 An **eight-payload offline security suite** (`tests/pentest/excessive-agency.test.ts`
 and `tests/pentest/prompt-injection.test.ts`)
@@ -136,7 +140,7 @@ be **recalled** on a later, innocent invoice. The test asserts the poison genuin
 recalled into the agent's evidence (`item.recalled` contains the mark — non-vacuous), yet
 intake still yields at most a PENDING proposal with **zero** ledger/payment/email/review
 side-effects, the injected `confidence 1.0` never becomes the gate confidence (`≤ 0.95`),
-and the poison never leaks into the decider's reasoning trace — a side-effect can fire only
+and the poison remains labeled as untrusted evidence in the tool/observation trace — a side-effect can fire only
 when a human approves, and a second approve is refused. The **two real configurable
 sinks** prove the positive half. `tests/unit/smtp-sink.test.ts` shows that
 `draft_vendor_reply` leaves the SMTP transport untouched at intake, then invokes it
@@ -160,49 +164,49 @@ because real invoices arrive as PDFs and photos, `POST /extract/document` +
 `/intake/document` read an uploaded PDF/PNG/JPG into the same structured record with
 **`qwen-vl-max`** (`src/qwen/vision.ts`) before running the identical loop.
 
-## Memory is the foundation, not a bolt-on
+## Vendor history is evidence, not the product
 
 Duplicate detection and amount-anomaly checks aren't single-session heuristics —
 they read **prior invoices recalled from persistent memory**. On intake the agent
 embeds a vendor-scoped query, runs cosine ANN over `agent_memory` (pgvector live;
 an in-memory cosine store offline), and lifts prior-invoice facts from the recalled
 rows. On approval it **writes the outcome back**. That is the loop that makes the
-agent learn *your* vendors: a supplier seen once as a new-vendor journal entry is,
-next month, recognised as recurring and proposed for payment. It reuses the Track-1
-MemoryAgent's exact seams (`Embedder`, `MemoryStore`, Qwen-vs-Fakes auto-select).
+agent adapt to a vendor: a supplier seen once as a new-vendor journal entry is,
+next month, recognised as recurring and proposed for payment. This remains one
+read-only input to the independent Track-4 AP orchestration lifecycle.
 
 ## Measuring the decisions — the part demos skip
 
 An agent that chooses actions is worthless if no one checks the choices. So we built
 an eval (`eval/`, [EVAL.md](../EVAL.md)): **22 labelled AP scenarios** — clean
 new/recurring vendor, missing/unreconciled fields, suspected duplicate, amount
-anomaly, messy input, and **signal-precedence collisions** — each carrying the tool a
-human clerk would pick. The runner drives the **real decider path** and grades the
-proposed tool.
+anomaly, messy input, and signal-precedence collisions—each carrying a developer-set
+expected tool under the documented conservative AP policy. The set is tuned and not
+expert-adjudicated or held-out. The runner drives the real decider path.
 
-The honest question is whether an offline eval over a deterministic policy is
-circular. It isn't, if you're disciplined:
+The honest limitation is that an offline eval over a deterministic policy is a
+regression test, not independent model evidence:
 
-- Every label is **business ground truth** — "what should a clerk do?" — never traced
-  from the Fake.
+- Labels are developer-authored policy expectations; the Fake was tuned when `s22`
+  exposed a routing gap.
 - The pipeline up to `computeEvidence` (normalization + R1–R6 + memory-grounded
   detection) is **real logic** the eval grades against a semantic label.
 - The **precedence** scenarios carry the weight: `s17` duplicate + missing field →
   `flag_for_review` (don't pay twice); `s18` known vendor + missing field →
-  `draft_vendor_reply` (don't straight-through pay); `s19` known vendor + anomaly →
+  `draft_vendor_reply` (do not propose payment); `s19` known vendor + anomaly →
   `flag_for_review`. They grade the *order* of safety checks — a real property.
 
 The numbers:
 
-| Mode | Model | Tool-choice accuracy |
+| Mode | Model | Evidence |
 |---|---|---:|
-| **Offline** (CI-gated) | deterministic Fakes | **22 / 22 (100.0%)** |
-| **Online** (with a key) | real `qwen-plus` | *run with a key to capture* |
+| **Offline** (CI-gated) | deterministic Fakes | **22 / 22 tuned policy agreement** |
+| **Online** (three repetitions) | real `qwen-plus` | *clean-commit artifact required; not yet claimed* |
 
 Two honesty points sit behind that offline number. First, it is produced by the
 **deterministic Fakes**, so it is a **policy / regression guard** over the real
-multi-step pipeline — *not* a decision-quality claim about the model. The real
-decision-quality number is the **online** row: live `qwen-plus` choosing freely
+multi-step pipeline—not a decision-quality claim about the model. The online runner
+records raw `qwen-plus` agreement separately from guarded system outcomes
 against the same labels. That run needs a key and a few cents of spend, so we keep it
 separate rather than pass the Fake's result off as the model's. Second, that 22/22
 was **earned, not curated**: scenario `s22` (an invoice with no parseable total)
@@ -222,10 +226,10 @@ runs with zero credentials and zero spend. The identical code runs live against 
 + pgvector on Alibaba Cloud. CI is gitleaks → dep-audit → typecheck → build → the
 test pyramid → the demo smoke → the eval gate, all green on a bare clone.
 
-The verified final evidence is **240 passing Node tests** with **6 explicit real-DB
-skips** (246 total), **25/25 Playwright**, **30/30 adversarial checks**, and c8 coverage
-of **92.42% statements / 84.28% branches / 91.26% functions / 92.42% lines**. The
-offline eval is **22/22** with an average **2.5 autonomous steps**.
+The final submission commit is held to Node, real-pgvector, Playwright, adversarial,
+four-metric coverage, secret-scan, and dependency-audit CI gates. Exact suite and
+coverage totals are quoted only from that immutable run. The separately reproducible
+offline policy eval is **22/22** with an average **2.5 autonomous steps**.
 
 ## Honest scope
 

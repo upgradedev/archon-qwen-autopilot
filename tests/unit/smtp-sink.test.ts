@@ -5,7 +5,7 @@
 //      args (and, after an amend, the AMENDED args) — nothing else.
 //   2. Without a human approval no email is sent; and with no transport configured the
 //      sink cleanly SIMULATES (records + logs, sends nothing) so the offline path is
-//      safe. A delivery failure PROPAGATES so a failed send is never silent.
+//      safe. A transport-submission failure PROPAGATES and is never silent.
 //
 // The transport is a mock (MailTransport seam) — no network, no SMTP server. This is
 // the same seam a real nodemailer transport plugs into via SmtpEmailSink.fromEnv().
@@ -49,7 +49,7 @@ test("SIMULATE mode (no transport) records to the outbox and sends nothing", asy
   assert.ok(logs.some((l) => /SIMULATED/.test(l)), "simulate mode announces it sent nothing");
 });
 
-test("REAL mode delivers over the transport with exactly the given message", async () => {
+test("REAL mode submits to the transport with exactly the given message; acceptance does not claim recipient delivery", async () => {
   const transport = recordingTransport();
   const sink = new SmtpEmailSink({ from: "ap@acme.test", transport, logger: quietLogger });
   assert.equal(sink.live, true, "a wired transport → live");
@@ -72,7 +72,7 @@ test("REAL mode tolerates a transport that returns no messageId (still records +
   assert.equal(sink.outbox().length, 1);
 });
 
-test("a delivery failure PROPAGATES (never silently swallowed) but the intent is still recorded", async () => {
+test("a transport submission failure PROPAGATES (never silently swallowed) but the intent is still recorded", async () => {
   const transport: MailTransport = {
     async sendMail() {
       throw new Error("SMTP 550 mailbox unavailable");
@@ -80,7 +80,7 @@ test("a delivery failure PROPAGATES (never silently swallowed) but the intent is
   };
   const sink = new SmtpEmailSink({ from: "ap@acme.test", transport, logger: quietLogger });
   await assert.rejects(() => sink.send({ to: "v@x.test", subject: "s", body: "b" }), /550 mailbox unavailable/);
-  assert.equal(sink.outbox().length, 1, "the approved intent is recorded even though delivery failed");
+  assert.equal(sink.outbox().length, 1, "the approved intent is recorded even though SMTP submission failed");
 });
 
 test("fromEnv: no SMTP_HOST → null (caller falls back to the Fake); SMTP_HOST set → a live sink", () => {
@@ -99,9 +99,27 @@ test("fromEnv: no SMTP_HOST → null (caller falls back to the Fake); SMTP_HOST 
     assert.ok(sink, "SMTP_HOST set → a sink is built");
     assert.equal(sink!.live, true, "the env-built sink carries a real transport");
 
-    // Bare host only → the port/from/secure/auth defaults path is taken (no throw).
-    const bare = SmtpEmailSink.fromEnv({ SMTP_HOST: "smtp.bare.test" } as NodeJS.ProcessEnv);
-    assert.ok(bare && bare.live, "a bare SMTP_HOST still yields a live sink via defaults");
+    assert.throws(
+      () => SmtpEmailSink.fromEnv({ SMTP_HOST: "smtp.bare.test" } as NodeJS.ProcessEnv),
+      /SMTP_FROM.*SMTP_USER fallback/i,
+      "a bare host must fail closed instead of constructing a live sink with a blank From"
+    );
+    for (const invalid of [
+      { SMTP_HOST: "smtp.example.test", SMTP_FROM: "ap@example.test", SMTP_PORT: "NaN" },
+      { SMTP_HOST: "smtp.example.test", SMTP_FROM: "ap@example.test", SMTP_PORT: "70000" },
+      { SMTP_HOST: "smtp.example.test", SMTP_FROM: "ap@example.test", SMTP_USER: "ap@example.test" },
+      { SMTP_HOST: "smtp.example.test", SMTP_FROM: "ap@example.test", SMTP_PASS: "secret" },
+      { SMTP_HOST: "smtp.example.test", SMTP_FROM: "ap@example.test", SMTP_SECURE: "sometimes" },
+      { SMTP_CONNECTION_TIMEOUT_MS: "5000" },
+    ]) {
+      assert.throws(() => SmtpEmailSink.fromEnv(invalid as NodeJS.ProcessEnv), /invalid SMTP configuration/i);
+    }
+
+    assert.throws(
+      () => new SmtpEmailSink({ from: "safe@example.test\r\nBcc: hidden@example.test" }),
+      /safe non-empty header value/i,
+      "direct construction cannot inject SMTP headers through From"
+    );
   } finally {
     process.env = saved;
   }
@@ -135,28 +153,30 @@ test("no approval → the real sink is NEVER invoked (intake alone sends nothing
   assert.equal(transport.sent.length, 0, "no email left the building without a human approval");
 });
 
-test("approve() → the real sink is invoked ONCE with exactly the PROPOSED args", async () => {
+test("plain approve cannot send a model-selected recipient", async () => {
   const transport = recordingTransport();
   const agent = agentWith(new SmtpEmailSink({ from: "ap@acme.test", transport, logger: quietLogger }));
 
   const item = await agent.intake(CLEAN_MISSING_TAXID);
   assert.equal(transport.sent.length, 0, "still nothing before approval");
 
-  await agent.approve(item.id);
-  assert.equal(transport.sent.length, 1, "approval delivered exactly one real email");
-  assert.equal(transport.sent[0]!.from, "ap@acme.test");
-  assert.equal(transport.sent[0]!.subject, item.proposed.args["subject"], "the approved subject is what was sent");
-  assert.equal(transport.sent[0]!.text, item.proposed.args["body"], "the approved body is what was sent");
+  await assert.rejects(() => agent.approve(item.id), /to must be a non-empty string/i);
+  assert.equal(transport.sent.length, 0, "a verified reviewer recipient is required before transport submission");
 });
 
-test("amend() then approve → the real sink sends the AMENDED args, not the original", async () => {
+test("amend() then approve → the real sink submits the AMENDED args, not the original", async () => {
   const transport = recordingTransport();
   const agent = agentWith(new SmtpEmailSink({ from: "ap@acme.test", transport, logger: quietLogger }));
 
   const item = await agent.intake(CLEAN_MISSING_TAXID);
   const editedBody = "Human-edited: please also confirm the correct VAT so subtotal + tax = total.";
-  await agent.amend(item.id, { args: { body: editedBody }, by: "reviewer@acme.test", reason: "clarify the reconciliation gap" });
+  await agent.amend(item.id, {
+    args: { to: "verified-vendor@example.test", body: editedBody },
+    by: "reviewer@acme.test",
+    reason: "verified recipient and clarified the reconciliation gap",
+  });
 
-  assert.equal(transport.sent.length, 1, "the amend-approve delivered exactly one email");
-  assert.equal(transport.sent[0]!.text, editedBody, "what the human approved (the amended body) is exactly what was sent");
+  assert.equal(transport.sent.length, 1, "the amend-approve invoked the SMTP transport exactly once");
+  assert.equal(transport.sent[0]!.to, "verified-vendor@example.test");
+  assert.equal(transport.sent[0]!.text, editedBody, "the transport receives exactly the human-approved amended body");
 });

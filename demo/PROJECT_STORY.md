@@ -1,7 +1,8 @@
 # Archon Autopilot — a human-gated accounts-payable agent
 
 *Project story for the Global AI Hackathon Series with Qwen Cloud — Autopilot Agent
-track (Track 4). It layers on our Track-1 [Archon MemoryAgent](../../qwen-memoryagent).
+track (Track 4). This independent entry is an AP orchestration/state-machine product;
+vendor retrieval is one read-only evidence input.
 Method, the measured decision-quality number, and honest caveats live in
 [EVAL.md](../EVAL.md).*
 
@@ -39,14 +40,16 @@ point of consequence:
    never silently dropped.
 2. **Validate** — six cross-checks (R1 amount sanity, R2 required fields, R3 tax
    reconciliation, R4 line-item integrity, R5 duplicate, R6 amount anomaly).
-3. **Recall** — it queries its **persistent pgvector memory** (the Track-1
-   MemoryAgent foundation) for this vendor's history: seen before? usual amount? a
+3. **Recall** — it queries persistent vendor evidence in pgvector for this vendor's
+   history: seen before? usual amount? a
    likely duplicate of a prior invoice?
 4. **Decide via Qwen function-calling** — `qwen-plus` is handed a real tool set and
    **chooses exactly one** action — `draft_journal_entry`, `draft_payment`,
    `draft_vendor_reply`, or `flag_for_review` — filling its arguments and
    self-reporting a reasoning + confidence.
-5. **The gate** — the proposal is persisted as **PENDING**. **Nothing executes.** A
+5. **The gate** — with a valid reviewer credential, the proposal is persisted as
+   **PENDING**; unauthenticated HTTP receives only an isolated non-durable preview.
+   **Nothing executes.** A
    human sees the queue (`GET /pending`) and **approves**, **amends** (edits the
    args, then approves), or **rejects**.
 6. **Execute + remember** — on approval the chosen tool runs, and the outcome is
@@ -55,7 +58,7 @@ point of consequence:
 
 The headline is the loop between steps 3 and 6: the agent **recalls** to decide, and
 **remembers** the outcome — so a vendor seen once as a new-vendor journal entry is,
-next month, recognised as recurring and proposed for straight-through payment. It
+next month, recognised as recurring and given a simulated scheduled-payment proposal. It
 gets better at *your* vendors over time.
 
 **What it is, stated honestly:** the decision engine is a **genuine bounded ReAct
@@ -76,7 +79,7 @@ Below is the system architecture diagram showing the Autopilot agent loop, human
 
 ## How we built it
 
-The service is **TypeScript on Fastify** (Node ≥20, ESM), the same stack as Track 1,
+The service is **TypeScript on Fastify** (Node ≥20, ESM),
 and is **deployed and live on Alibaba Cloud** at
 `https://autopilot.43.106.13.19.sslip.io` (custom-container compute + PostgreSQL /
 pgvector). Qwen is called through the OpenAI-compatible DashScope endpoint:
@@ -108,14 +111,14 @@ arguments that execute**. Amend merges the human's edits onto those domain args
 before execution. A decided item can never be re-executed (approve/reject → `409`).
 The gate isn't a slide; it's enforced in the state machine and tested.
 
-### Memory as the foundation, not a bolt-on
+### Vendor evidence is one input, not the product
 
-The autopilot reuses the Track-1 MemoryAgent directly: the same `Embedder` seam
-(real `text-embedding-v4` vs. an offline `FakeEmbedder`), the same pgvector
-`MemoryStore` (real vs. in-memory), the same "auto-select real Qwen vs. Fakes by
-environment" design. Duplicate detection and amount-anomaly checks are
-**memory-grounded** — they read prior invoices recalled for the vendor, not a
-single-session cache.
+Duplicate detection and amount-anomaly checks read completed prior invoices from a
+vendor-scoped pgvector adapter rather than a single-session cache. The submitted
+Track-4 product is the reviewer-authenticated invoice→bounded tools→PENDING→human
+gate→atomic claim/recovery-aware execution state machine, correction feedback, and
+restart-safe ledger—not a general memory app. SMTP uses a stable intent ID but does
+not claim recipient-level exactly-once delivery.
 
 ### Structural defense against multi-step tool-attacks
 
@@ -128,8 +131,9 @@ lives behind a single `execute()` chokepoint that is only reachable from the hum
 gate. So the worst an injection can achieve is a PENDING proposal a human still has to
 approve. Untrusted field values are also fenced inside explicit `=== BEGIN/END
 UNTRUSTED INVOICE DATA ===` markers in the prompt, and the model's self-reported
-`reasoning`/`confidence` are re-derived, so injected text can't forge what the human
-sees at the gate. An **eight-payload offline security suite**
+`reasoning` is lifted from the model's terminal call and `confidence` is merely
+clamped to 0..1; neither is independently verified or calibrated. Safety comes from
+unreachable execution verbs and the authenticated human gate. An **eight-payload offline security suite**
 (`tests/pentest/excessive-agency.test.ts` and `tests/pentest/prompt-injection.test.ts`)
 plants a hijack in the documented attacker-controllable
 surface (vendor name, reference, tax id, line item, raw passthrough, fake system
@@ -159,9 +163,10 @@ confidence never the injected 1.0).
 The sink and adversarial suites turn the human-in-the-loop guarantee from a claim into
 tests.
 
-**Real SMTP, only on approval** (`tests/unit/smtp-sink.test.ts`). The configurable
-`SmtpEmailSink` delivers exactly the approved message through Nodemailer. With no
-transport it simulates; a transport failure propagates. End to end, intake leaves the
+**Real SMTP, only on approval** (`tests/unit/smtp-sink.test.ts`). `SmtpEmailSink`
+submits the approved message to the configured SMTP transport and awaits transport
+acceptance; recipient delivery is not claimed. With no transport it simulates; a
+transport failure propagates. End to end, intake leaves the
 transport untouched, approval invokes it once, and amendment sends the amended body.
 
 **A durable JSONL ledger, only on approval** (`tests/unit/ledger-sink.test.ts`). The
@@ -214,11 +219,11 @@ in CI on every commit.
 ### We measured the decisions
 
 The biggest risk in "an agent that chooses actions" is that no one checks whether the
-choices are *good*. So we built an eval (`eval/`, [EVAL.md](../EVAL.md)): 22 labelled
-AP scenarios, each carrying the tool a human clerk would pick, graded against the
-**real decider path**. Offline (deterministic Fakes, gated in CI) it scores
-**22 / 22 (100.0%)** as a policy/regression guard; online with a key it grades real
-`qwen-plus` choosing freely — the actual decision-quality number.
+choices conform to policy. So we built an eval (`eval/`, [EVAL.md](../EVAL.md)): 22
+frozen, tuned, developer-labelled AP scenarios graded through the real decider path.
+Offline it scores 22/22 as a deterministic regression guard. The separate three-run
+keyed protocol records raw Qwen choices, guarded outcomes, errors, stability and
+every miss; no live score is claimed until that clean-commit artifact exists.
 
 ## Challenges we ran into
 
@@ -235,15 +240,13 @@ AP scenarios, each carrying the tool a human clerk would pick, graded against th
   human approves; it's harder to prove the approved args are the executed args. We
   had to split the model's meta-fields out of the domain args and thread the amended
   args through execution so the two can't diverge.
-- **Proving the decisions are good — honestly.** An offline eval over a deterministic
-  policy risks being circular. We resolved it by labelling every scenario from
-  *business* ground truth (never from the Fake) and leaning the offline weight on
-  precedence scenarios that grade the *order* of safety checks. One scenario (a
+- **Testing the policy honestly.** An offline eval over a deterministic policy is a
+  tuned regression set, not independent model evidence. Its precedence scenarios
+  protect the order of safety checks. One scenario (a
   no-total invoice, `s22`) originally *failed* the deterministic policy; we shipped it
   failing and documented it — an eval that can't fail proves nothing — then resolved it
   honestly by adding the missing routing branch (no-total → query the vendor), reaching
-  a clean 22/22 offline. The offline number stays a **policy/regression guard**; the
-  decision-quality claim is the separate online `qwen-plus` run.
+  a clean 22/22 offline. Raw-model agreement is reported only by the separate keyed protocol.
 
 ## Accomplishments that we're proud of
 
@@ -268,8 +271,9 @@ AP scenarios, each carrying the tool a human clerk would pick, graded against th
 ## What we learned
 
 - **The valuable automation in AP is the reasoning, not the paying.** The moment you
-  keep a human on the money, an agent that reads, recalls, and proposes is both safe
-  *and* a genuine time-saver. "Human-gated" isn't a weaker product than "autonomous"
+  keep a human on the money, an agent that reads, recalls, and proposes leaves the
+  consequential decision auditable. We have not run a production time-and-motion
+  study. "Human-gated" isn't a weaker product than "autonomous"
   — for money movement it's the *correct* one.
 - **Memory is what makes an AP agent more than a classifier.** Duplicate detection
   and amount anomalies only exist because the agent recalls prior invoices. The

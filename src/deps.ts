@@ -10,7 +10,7 @@
 //   • DASHSCOPE_API_KEY set → real Qwen (qwen-plus decider + text-embedding-v4);
 //     absent → deterministic offline Fakes.
 //   • DATABASE_URL set → pgvector stores; absent → in-memory stores.
-//   • SMTP_HOST set → the vendor-reply email sink delivers over REAL SMTP (behind the
+//   • SMTP_HOST set → the vendor-reply email sink submits to REAL SMTP (behind the
 //     unchanged human gate); absent → the in-memory Fake email sink.
 //   • LEDGER_JSONL_PATH set → the journal-entry sink appends approved accruals to a
 //     REAL durable JSONL ledger file (behind the same human gate); absent → the

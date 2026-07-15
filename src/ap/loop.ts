@@ -29,6 +29,7 @@ import {
   type ChatMessage,
   type ChatResponse,
   type QwenChatClient,
+  requiresNonThinkingJsonOrTools,
 } from "../qwen/client.js";
 import { FakeQwenChatClient } from "./fake-chat.js";
 import type { Embedder } from "../memory/embeddings.js";
@@ -40,6 +41,7 @@ import {
   executeAnalysisTool,
   isAnalysisTool,
   newLoopState,
+  type AnalysisToolName,
   type LoopState,
 } from "./analysis-tools.js";
 import type {
@@ -50,6 +52,7 @@ import type {
   ToolName,
   TraceStep,
   ValidationFinding,
+  WorkItemTelemetry,
 } from "../types.js";
 
 export const DEFAULT_DECIDER_MODEL = process.env.QWEN_MODEL || "qwen-plus";
@@ -75,6 +78,11 @@ export interface LoopInput {
   // pure observer with no side-effect on the decision. Absent (tests, MCP, eval),
   // the loop behaves exactly as before.
   onStep?: (step: TraceStep) => void;
+  signal?: AbortSignal;
+  // Called only when a hard deadline/caller abort wins while the provider promise
+  // remains unsettled. Server/MCP callers transfer that operation to their
+  // admission lease so capacity is not released until the SDK actually settles.
+  retainProviderCallUntilSettled?: (operation: Promise<unknown>) => void;
 }
 
 export interface LoopResult {
@@ -83,6 +91,11 @@ export interface LoopResult {
   findings: ValidationFinding[];
   recalled: RecalledFact[];
   stopReason: LoopStopReason;
+  telemetry: Pick<WorkItemTelemetry,
+    "intakeToProposalMs" | "modelCalls" | "promptTokens" | "completionTokens" |
+    "totalTokens" | "readAnalyzeSteps" | "rawModelTerminalTool" |
+    "finalProposedTool" | "policyOverride" | "policyOverrideSource" |
+    "policyOverrideReason" | "fallback">;
 }
 
 export interface LoopOptions {
@@ -129,6 +142,12 @@ export class AutopilotLoop {
   }
 
   async run(input: LoopInput): Promise<LoopResult> {
+    input.signal?.throwIfAborted();
+    const startedAt = performance.now();
+    let modelCalls = 0;
+    let promptTokens = 0;
+    let completionTokens = 0;
+    let sawUsage = false;
     const state = newLoopState(input.invoice);
     const trace: TraceStep[] = [];
     const invoiceBlock = renderInvoice(input.invoice);
@@ -137,19 +156,57 @@ export class AutopilotLoop {
     // The whole-run wall-clock deadline. Every per-step call is raced against what
     // remains of this budget; if it runs out, the loop escalates gracefully.
     const deadline = Date.now() + this.deadlineMs;
+    const telemetry = (
+      finalProposedTool: ToolName,
+      rawModelTerminalTool: string | null,
+      policyOverride = false,
+      fallback = false,
+      policyOverrideSource: string | null = null,
+      policyOverrideReason: string | null = null
+    ): LoopResult["telemetry"] => ({
+      intakeToProposalMs: Math.round((performance.now() - startedAt) * 100) / 100,
+      modelCalls,
+      promptTokens: sawUsage ? promptTokens : null,
+      completionTokens: sawUsage ? completionTokens : null,
+      totalTokens: sawUsage ? promptTokens + completionTokens : null,
+      readAnalyzeSteps: trace.filter((t) => isAnalysisTool(t.tool)).length,
+      rawModelTerminalTool,
+      finalProposedTool,
+      policyOverride,
+      policyOverrideSource,
+      policyOverrideReason,
+      fallback,
+    });
+    const safeFallback = (reason: LoopStopReason, detail: string) =>
+      this.fallback(state, trace, reason, detail, telemetry("flag_for_review", null, false, true));
 
     for (let step = 1; step <= this.maxSteps; step++) {
       // Budget already spent before we even issue the next call → escalate now.
       if (Date.now() >= deadline) {
-        return this.fallback(state, trace, "deadline_fallback",
+        return safeFallback("deadline_fallback",
           `exceeded the ${this.deadlineMs}ms run budget before step ${step}`);
       }
 
-      const res = await this.callWithDeadline(invoiceBlock, trace, state, allDefs, deadline);
+      input.signal?.throwIfAborted();
+      const res = await this.callWithDeadline(
+        invoiceBlock,
+        trace,
+        state,
+        allDefs,
+        deadline,
+        input.signal,
+        input.retainProviderCallUntilSettled
+      );
       // A null result means the wall-clock deadline tripped mid-call → escalate.
       if (res === null) {
-        return this.fallback(state, trace, "deadline_fallback",
+        return safeFallback("deadline_fallback",
           `exceeded the ${this.deadlineMs}ms run budget during step ${step}`);
+      }
+      modelCalls++;
+      if (res.usage) {
+        sawUsage = true;
+        promptTokens += Number(res.usage.prompt_tokens ?? 0);
+        completionTokens += Number(res.usage.completion_tokens ?? 0);
       }
 
       const call = res.choices?.[0]?.message?.tool_calls?.[0];
@@ -174,9 +231,7 @@ export class AutopilotLoop {
           input.onStep?.(traceStep);
           noProgress++;
           if (noProgress >= MAX_NO_PROGRESS) {
-            return this.fallback(
-              state,
-              trace,
+            return safeFallback(
               "no_progress_fallback",
               `the model repeatedly proposed a terminal action before required evidence (${missingEvidence.join(", ")})`
             );
@@ -185,7 +240,6 @@ export class AutopilotLoop {
         }
 
         const { reasoning, confidence, args } = splitMeta(parsed);
-        const completeArgs = completeDomainArgs(name as ToolName, args, input.invoice);
         const override = proposalSafetyOverride(name as ToolName, state);
         if (override) {
           const guardStep: TraceStep = {
@@ -203,21 +257,66 @@ export class AutopilotLoop {
             findings: state.findings,
             recalled: state.recalled,
             stopReason: "terminal_action",
+            telemetry: telemetry(override.proposed.tool, name, true, false, "proposal_policy_guard", override.observation),
+          };
+        }
+        const bound = bindProposalArgs(name as ToolName, args, input.invoice);
+        if (bound.changes.length > 0) {
+          const observation =
+            `Corrected model-originated terminal arguments at the trust boundary: ${bound.changes.join("; ")}. ` +
+            `Only an authenticated reviewer amendment can authorize different values.`;
+          const guardStep: TraceStep = {
+            step,
+            tool: "proposal_argument_guard",
+            args: { proposedTool: name, guardedFields: bound.fields },
+            observation,
+            reasoning: "Source-derived invoice facts and verified destinations outrank model-generated action arguments.",
+          };
+          trace.push(guardStep);
+          input.onStep?.(guardStep);
+          return {
+            proposed: {
+              tool: name as ToolName,
+              args: bound.args,
+              reasoning,
+              confidence,
+              modelId: this.modelId,
+              ...(name === "draft_vendor_reply" ? { requiresReviewerInput: ["to"] } : {}),
+            },
+            trace,
+            findings: state.findings,
+            recalled: state.recalled,
+            stopReason: "terminal_action",
+            telemetry: telemetry(name as ToolName, name, true, false, "proposal_argument_guard", observation),
           };
         }
         return {
-          proposed: { tool: name as ToolName, args: completeArgs, reasoning, confidence, modelId: this.modelId },
+          proposed: {
+            tool: name as ToolName,
+            args: bound.args,
+            reasoning,
+            confidence,
+            modelId: this.modelId,
+            ...(name === "draft_vendor_reply" ? { requiresReviewerInput: ["to"] } : {}),
+          },
           trace,
           findings: state.findings,
           recalled: state.recalled,
           stopReason: "terminal_action",
+          telemetry: telemetry(name as ToolName, name, false, false),
         };
       }
 
       // AUTONOMOUS read/analyze tool → execute it (no side-effect), record the step.
       if (call && isAnalysisTool(name)) {
         const alreadyRan = hasRun(state, name);
-        const observation = await executeAnalysisTool(name, parsed, state, input);
+        const observation = await this.analysisWithDeadline(name, parsed, state, input, deadline);
+        if (observation === null) {
+          return safeFallback(
+            "deadline_fallback",
+            `exceeded the ${this.deadlineMs}ms run budget during ${name}`
+          );
+        }
         const reasoning = typeof parsed["reasoning"] === "string" ? (parsed["reasoning"] as string) : "";
         const traceStep = { step, tool: name, args: stripMeta(parsed), observation, reasoning };
         trace.push(traceStep);
@@ -225,7 +324,7 @@ export class AutopilotLoop {
         if (alreadyRan) {
           noProgress++;
           if (noProgress >= MAX_NO_PROGRESS) {
-            return this.fallback(state, trace, "no_progress_fallback",
+            return safeFallback("no_progress_fallback",
               `the model repeated already-completed read/analyze tools ${noProgress} time(s) without proposing a terminal action`);
           }
         }
@@ -235,80 +334,173 @@ export class AutopilotLoop {
       // No parseable / unknown tool call → count it as no progress and retry a step.
       noProgress++;
       if (noProgress >= MAX_NO_PROGRESS) {
-        return this.fallback(state, trace, "no_progress_fallback",
+        return safeFallback("no_progress_fallback",
           `the decision model returned no usable tool call ${noProgress} time(s)`);
       }
     }
 
     // Step budget exhausted without a terminal action → deterministic safe fallback.
-    return this.fallback(state, trace, "max_steps_fallback",
+    return safeFallback("max_steps_fallback",
       `reached the ${this.maxSteps}-step cap without a terminal action`);
   }
 
-  // Issue ONE decider call, raced against the remaining wall-clock budget. Returns
-  // the chat response, or `null` when the deadline tripped first (the caller then
-  // escalates via the flag_for_review fallback). We own the deadline here rather
-  // than trusting the client to honor AbortSignal: an upstream that ignores the
-  // signal (or a test double that never resolves) must NOT be able to hang the run.
-  // The AbortController is still wired ("belt and suspenders") so a cooperating
-  // client actually cancels the in-flight request instead of leaking it.
+  // Read/analyze work can include a real embedding request plus Postgres reads.
+  // Apply the same hard response boundary as the decider call: best-effort abort,
+  // return the safe fallback promptly, and keep admission occupied until a provider
+  // that ignored AbortSignal actually settles.
+  private async analysisWithDeadline(
+    name: AnalysisToolName,
+    args: Record<string, unknown>,
+    state: LoopState,
+    input: LoopInput,
+    deadline: number
+  ): Promise<string | null> {
+    input.signal?.throwIfAborted();
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return null;
+
+    const controller = new AbortController();
+    const abortFromCaller = () => controller.abort(input.signal?.reason);
+    input.signal?.addEventListener("abort", abortFromCaller, { once: true });
+    type RaceResult =
+      | { kind: "operation-ok"; observation: string }
+      | { kind: "operation-error"; error: unknown }
+      | { kind: "deadline" }
+      | { kind: "caller-abort" };
+    let resolveBoundary!: (result: RaceResult) => void;
+    const boundary = new Promise<RaceResult>((resolve) => { resolveBoundary = resolve; });
+    const deadlineTimer = setTimeout(() => resolveBoundary({ kind: "deadline" }), remaining);
+    const callerAborted = () => resolveBoundary({ kind: "caller-abort" });
+    input.signal?.addEventListener("abort", callerAborted, { once: true });
+
+    let operationSettled = false;
+    const operation = Promise.resolve().then(() => executeAnalysisTool(name, args, state, {
+      embedder: input.embedder,
+      memory: input.memory,
+      signal: controller.signal,
+    }));
+    const observedOperation: Promise<RaceResult> = operation.then(
+      (observation) => {
+        operationSettled = true;
+        return { kind: "operation-ok", observation };
+      },
+      (error) => {
+        operationSettled = true;
+        return { kind: "operation-error", error };
+      }
+    );
+
+    try {
+      if (input.signal?.aborted) {
+        abortFromCaller();
+        callerAborted();
+      }
+      const result = await Promise.race([observedOperation, boundary]);
+      if (result.kind === "operation-ok") return result.observation;
+      if (result.kind === "operation-error") throw result.error;
+
+      controller.abort(result.kind === "deadline"
+        ? new Error(`${name} exceeded the remaining ${remaining}ms budget`)
+        : input.signal?.reason);
+      if (!operationSettled) input.retainProviderCallUntilSettled?.(operation);
+      if (result.kind === "caller-abort") throw abortReason(input.signal!);
+      return null;
+    } finally {
+      clearTimeout(deadlineTimer);
+      input.signal?.removeEventListener("abort", abortFromCaller);
+      input.signal?.removeEventListener("abort", callerAborted);
+    }
+  }
+
+  // Issue ONE decider call under the remaining wall-clock budget. On expiry we
+  // abort the real provider request and race it against a hard local deadline. If
+  // the SDK ignores AbortSignal, ownership of its still-running promise transfers
+  // to the outer admission lease before we return the safe fallback.
   private async callWithDeadline(
     invoiceBlock: string,
     trace: TraceStep[],
     state: LoopState,
     allDefs: ReturnType<typeof toolDefs>,
-    deadline: number
+    deadline: number,
+    externalSignal?: AbortSignal,
+    retainUntilSettled?: (operation: Promise<unknown>) => void
   ): Promise<ChatResponse | null> {
+    externalSignal?.throwIfAborted();
     const remaining = deadline - Date.now();
     if (remaining <= 0) return null;
 
     const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<null>((resolve) => {
-      timer = setTimeout(() => {
-        controller.abort();
-        resolve(null);
-      }, remaining);
-    });
+    const abortFromCaller = () => controller.abort(externalSignal?.reason);
+    externalSignal?.addEventListener("abort", abortFromCaller, { once: true });
+    type RaceResult =
+      | { kind: "provider-ok"; response: ChatResponse }
+      | { kind: "provider-error"; error: unknown }
+      | { kind: "deadline" }
+      | { kind: "caller-abort" };
+    let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+    let resolveBoundary!: (result: RaceResult) => void;
+    const boundary = new Promise<RaceResult>((resolve) => { resolveBoundary = resolve; });
+    deadlineTimer = setTimeout(() => resolveBoundary({ kind: "deadline" }), remaining);
+    const callerAborted = () => resolveBoundary({ kind: "caller-abort" });
+    externalSignal?.addEventListener("abort", callerAborted, { once: true });
 
-    // The decider call. A rejection caused by OUR deadline abort maps to `null`
-    // (→ graceful deadline escalation); any OTHER rejection is a genuine upstream
-    // failure and PROPAGATES (so the /intake route can surface it as a 503). Because
-    // the promise always settles (resolves a response/null, or rejects only when it
-    // is truly unhandled by the race), there is no dangling unhandledRejection.
-    const call = this.client.chat.completions
-      .create(
-        {
-          model: this.modelId,
-          messages: this.messages(invoiceBlock, trace, state),
-          temperature: 0.1,
-          max_tokens: 512,
-          tools: allDefs,
-          // "auto" (not "required"): DashScope's OpenAI-compatible endpoint does not
-          // document "required", and an unsupported value would 500 every live call —
-          // breaking the whole loop invisibly (the offline Fake ignores tool_choice,
-          // so CI can't catch it). "auto" is safe: the system prompt instructs one tool
-          // per step, and if the model ever answers without a tool call the no-progress
-          // guard below counts it and falls back to a safe flag_for_review.
-          tool_choice: "auto",
-        },
-        { signal: controller.signal }
-      )
-      .catch((err: unknown): ChatResponse | null => {
-        if (controller.signal.aborted) return null; // our deadline abort → escalate
-        throw err; // a real upstream error → propagate (→ 503 at the route)
-      });
+    // Convert provider rejection into data before racing, so a late rejection is
+    // always observed even after the hard boundary has returned to the caller.
+    let providerSettled = false;
+    const provider = Promise.resolve().then(() => this.client.chat.completions.create(
+      {
+        model: this.modelId,
+        messages: this.messages(invoiceBlock, trace, state),
+        temperature: 0.1,
+        max_tokens: 512,
+        tools: allDefs,
+        tool_choice: "auto",
+        ...(requiresNonThinkingJsonOrTools(this.modelId) ? { enable_thinking: false } : {}),
+      },
+      { signal: controller.signal }
+    ));
+    const observedProvider: Promise<RaceResult> = provider.then(
+      (response) => {
+        providerSettled = true;
+        return { kind: "provider-ok", response };
+      },
+      (error) => {
+        providerSettled = true;
+        return { kind: "provider-error", error };
+      }
+    );
 
     try {
-      return await Promise.race([call, timeout]);
+      if (externalSignal?.aborted) {
+        abortFromCaller();
+        callerAborted();
+      }
+      const result = await Promise.race([observedProvider, boundary]);
+      if (result.kind === "provider-ok") return result.response;
+      if (result.kind === "provider-error") throw result.error;
+
+      controller.abort(result.kind === "deadline"
+        ? new Error(`decision call exceeded the remaining ${remaining}ms budget`)
+        : externalSignal?.reason);
+      if (!providerSettled) retainUntilSettled?.(provider);
+      if (result.kind === "caller-abort") throw abortReason(externalSignal!);
+      return null;
     } finally {
-      if (timer) clearTimeout(timer);
+      if (deadlineTimer) clearTimeout(deadlineTimer);
+      externalSignal?.removeEventListener("abort", abortFromCaller);
+      externalSignal?.removeEventListener("abort", callerAborted);
     }
   }
 
   // The deterministic safety net: when the loop cannot reach a terminal action, we do
   // NOT guess — we escalate to a human via flag_for_review and log why it stopped.
-  private fallback(state: LoopState, trace: TraceStep[], reason: LoopStopReason, detail: string): LoopResult {
+  private fallback(
+    state: LoopState,
+    trace: TraceStep[],
+    reason: LoopStopReason,
+    detail: string,
+    telemetry: LoopResult["telemetry"]
+  ): LoopResult {
     (this.onStop ?? ((r, d) => console.warn(`[AutopilotLoop] ${r}: ${d}`)))(reason, detail);
     return {
       proposed: {
@@ -325,6 +517,7 @@ export class AutopilotLoop {
       findings: state.findings,
       recalled: state.recalled,
       stopReason: reason,
+      telemetry,
     };
   }
 
@@ -455,8 +648,13 @@ function proposalSafetyOverride(
 ): { tool: ToolName; proposed: ProposedAction; observation: string } | null {
   if (tool !== "draft_payment" && tool !== "draft_journal_entry") return null;
 
-  if (state.duplicate || state.anomaly) {
-    const causes = [state.duplicate ? "confirmed duplicate" : null, state.anomaly ? "confirmed amount anomaly" : null]
+  if (state.duplicate || state.anomaly || state.rebillsCorrected || state.currencyChanged) {
+    const causes = [
+      state.duplicate ? "confirmed duplicate" : null,
+      state.anomaly ? "confirmed amount anomaly" : null,
+      state.rebillsCorrected ? "re-bill materially above a prior human-approved lower amount" : null,
+      state.currencyChanged ? "currency change from this vendor's completed history" : null,
+    ]
       .filter(Boolean)
       .join(" and ");
     const observation =
@@ -468,7 +666,7 @@ function proposalSafetyOverride(
       proposed: {
         tool: "flag_for_review",
         args: { reason: observation, priority: "high" },
-        reasoning: "Validated duplicate/anomaly evidence cannot produce a money action.",
+        reasoning: "Validated duplicate, anomaly, currency-change, or prior-correction evidence cannot produce a money action.",
         confidence: 0,
         modelId: "policy:proposal-safety-guard",
       },
@@ -498,29 +696,54 @@ function proposalSafetyOverride(
         reasoning: "Structural validation blocks a money action until the source is corrected.",
         confidence: 0,
         modelId: "policy:proposal-safety-guard",
+        requiresReviewerInput: ["to"],
       },
     };
   }
   return null;
 }
 
-// Fill only deterministic invoice-derived fields before the proposal is shown.
-// This keeps the HITL promise literal: every fallback value is visible in the
-// persisted args a reviewer approves, rather than being invented inside a sink.
-function completeDomainArgs(
+// Bind terminal proposal arguments to normalized source facts. Model output is an
+// untrusted recommendation, not an authority for money, currency, payee identity,
+// dates, or email destinations. The guarded args are what the reviewer sees and a
+// plain approval may execute. An authenticated amend remains the explicit route for
+// a reviewer to authorize a different, audited value.
+function bindProposalArgs(
   tool: ToolName,
   args: Record<string, unknown>,
   invoice: NormalizedInvoice
-): Record<string, unknown> {
+): { args: Record<string, unknown>; changes: string[]; fields: string[] } {
   const out = { ...args };
-  if ((tool === "draft_journal_entry" || tool === "draft_payment") && out["amount"] === undefined && invoice.total != null) {
-    out["amount"] = invoice.total;
+  const changes: string[] = [];
+  const fields: string[] = [];
+  const bind = (field: string, value: unknown, label: string): void => {
+    if (!Object.is(out[field], value)) {
+      out[field] = value;
+      changes.push(label);
+      fields.push(field);
+    }
+  };
+  if ((tool === "draft_journal_entry" || tool === "draft_payment") && invoice.total != null) {
+    bind("amount", invoice.total, "amount bound to normalized invoice total");
+  }
+  if (tool === "draft_journal_entry") {
+    bind("currency", invoice.currency, "currency bound to normalized invoice currency");
   }
   if (tool === "draft_payment") {
-    if (out["vendor"] === undefined && invoice.vendor) out["vendor"] = invoice.vendor;
-    if (out["currency"] === undefined) out["currency"] = invoice.currency;
+    if (invoice.vendor) bind("vendor", invoice.vendor, "vendor bound to normalized invoice vendor");
+    bind("currency", invoice.currency, "currency bound to normalized invoice currency");
+    if (Object.prototype.hasOwnProperty.call(out, "pay_on")) {
+      delete out["pay_on"];
+      changes.push("unverified pay_on removed");
+      fields.push("pay_on");
+    }
   }
-  return out;
+  if (tool === "draft_vendor_reply" && Object.prototype.hasOwnProperty.call(out, "to")) {
+    delete out["to"];
+    changes.push("unverified recipient removed");
+    fields.push("to");
+  }
+  return { args: out, changes, fields };
 }
 
 function safeParseArgs(raw: string): Record<string, unknown> {
@@ -534,4 +757,11 @@ function safeParseArgs(raw: string): Record<string, unknown> {
 
 function fmt(n: number | null): string {
   return n == null ? "(missing)" : String(n);
+}
+
+function abortReason(signal: AbortSignal): Error {
+  if (signal.reason instanceof Error) return signal.reason;
+  const error = new Error("operation aborted");
+  error.name = "AbortError";
+  return error;
 }

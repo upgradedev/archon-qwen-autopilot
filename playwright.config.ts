@@ -29,10 +29,6 @@ export default defineConfig({
   use: {
     baseURL: BASE_URL,
     trace: "on-first-retry",
-    // Applied by the browser context to page loads and same-origin fetches, including
-    // the initial /pending + /decided requests that occur before test code can type
-    // into the token field.
-    extraHTTPHeaders: { authorization: `Bearer ${REVIEWER_TOKEN}` },
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {

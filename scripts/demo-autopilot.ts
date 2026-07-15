@@ -17,6 +17,7 @@ import { defaultLoop } from "../src/ap/loop.js";
 import { fakeSinks } from "../src/ap/sinks.js";
 import { AutopilotAgent } from "../src/agents/autopilot-agent.js";
 import type { RawInvoice } from "../src/types.js";
+import { safeOperationalSummary } from "../src/security/operational-error.js";
 
 async function main() {
   const sinks = fakeSinks();
@@ -31,19 +32,19 @@ async function main() {
   const invoices: Array<{ label: string; raw: RawInvoice }> = [
     {
       label: "Clean invoice from a NEW vendor → draft_journal_entry",
-      raw: { vendor: "Northwind Supplies", invoice_number: "NW-1001", date: "2026-02-03", subtotal: 1000, tax: 200, total: 1200, tax_id: "TX-8842", currency: "EUR" },
+      raw: { vendor: "Pinecrest Services", invoice_number: "PS-1001", date: "2026-02-03", subtotal: 1000, tax: 200, total: 1200, tax_id: "TX-8842", currency: "EUR" },
     },
     {
       label: "Second clean invoice from the SAME (now known) vendor → draft_payment",
-      raw: { vendor: "Northwind Supplies", invoice_number: "NW-1002", date: "2026-03-03", subtotal: 1100, tax: 220, total: 1320, tax_id: "TX-8842", currency: "EUR" },
+      raw: { vendor: "Pinecrest Services", invoice_number: "PS-1002", date: "2026-03-03", subtotal: 1100, tax: 220, total: 1320, tax_id: "TX-8842", currency: "EUR" },
     },
     {
       label: "Messy invoice, missing tax_id + reconcile mismatch → draft_vendor_reply",
-      raw: { supplier: "Contoso Ltd", amount: "€ 2.500,00", date: "not-a-date", subtotal: 2000, tax: 300 },
+      raw: { supplier: "Harborline Consulting", amount: "€ 2.500,00", date: "not-a-date", subtotal: 2000, tax: 300 },
     },
     {
-      label: "Duplicate of NW-1001 → flag_for_review",
-      raw: { vendor: "Northwind Supplies", invoice_number: "NW-1001", date: "2026-02-03", subtotal: 1000, tax: 200, total: 1200, tax_id: "TX-8842", currency: "EUR" },
+      label: "Duplicate of PS-1001 → flag_for_review",
+      raw: { vendor: "Pinecrest Services", invoice_number: "PS-1001", date: "2026-02-03", subtotal: 1000, tax: 200, total: 1200, tax_id: "TX-8842", currency: "EUR" },
     },
   ];
 
@@ -62,6 +63,16 @@ async function main() {
     if (item.proposed.tool === "flag_for_review") {
       const rejected = await agent.reject(item.id, "Confirmed duplicate — do not pay twice.");
       console.log(`  HUMAN → rejected (${rejected.decisionReason})`);
+    } else if (item.proposed.tool === "draft_vendor_reply") {
+      const approved = await agent.amend(
+        item.id,
+        {
+          args: { to: "verified.vendor@example.test" },
+          reason: "Verified vendor mailbox for the offline demonstration",
+        },
+        "demo-reviewer"
+      );
+      console.log(`  HUMAN → verified recipient, amended, and approved. executed: ${approved.execution?.summary}`);
     } else {
       const approved = await agent.approve(item.id);
       console.log(`  HUMAN → approved. executed: ${approved.execution?.summary}`);
@@ -77,6 +88,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error(err);
+  console.error(`Demo failed: ${safeOperationalSummary(err, "offline-demo")}`);
   process.exit(1);
 });

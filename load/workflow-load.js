@@ -35,22 +35,28 @@
 //   RUN_RAMP      'true' → run the 0→20→50→0 ramping-vus scenario after the smoke
 //   INTAKE_RATIO  0..1, share of iterations that POST /intake (default 0.3); the rest
 //                 hit /pending (a cheap read). /health runs every iteration.
+//   K6_REVIEWER_TOKEN  reviewer credential for durable intake + approval-queue reads
 
 import http from "k6/http";
 import { check, sleep } from "k6";
 import { Rate } from "k6/metrics";
-import { textSummary } from "https://jslib.k6.io/k6-summary/0.0.1/index.js";
 
 const BASE = (__ENV.BASE_URL || __ENV.TARGET_URL || "http://localhost:9000").replace(/\/+$/, "");
 const RUN_RAMP = (__ENV.RUN_RAMP || "").toLowerCase() === "true";
 const INTAKE_RATIO = clamp01(parseFloat(__ENV.INTAKE_RATIO || "0.3"), 0.3);
+const SUMMARY_PATH = __ENV.K6_SUMMARY_PATH || "load-summary.json";
+const REVIEWER_TOKEN = (__ENV.K6_REVIEWER_TOKEN || "").trim();
+if (!REVIEWER_TOKEN) {
+  throw new Error("K6_REVIEWER_TOKEN is required: load targets durable intake and the protected approval queue");
+}
 
 function clamp01(n, fallback) {
   if (!Number.isFinite(n)) return fallback;
   return Math.min(1, Math.max(0, n));
 }
 
-const JSON_HEADERS = { "Content-Type": "application/json" };
+const REVIEWER_HEADERS = { Authorization: `Bearer ${REVIEWER_TOKEN}` };
+const JSON_HEADERS = { "Content-Type": "application/json", ...REVIEWER_HEADERS };
 
 // Two custom rates so the rate-limit behaviour is visible independent of the
 // pass/fail aggregate: how many /intake calls were accepted (200) vs correctly
@@ -162,7 +168,7 @@ function health() {
 }
 
 function pending() {
-  const res = http.get(`${BASE}/pending`, { tags: { endpoint: "pending" } });
+  const res = http.get(`${BASE}/pending`, { headers: REVIEWER_HEADERS, tags: { endpoint: "pending" } });
   check(
     res,
     {
@@ -211,11 +217,20 @@ function safeJson(res) {
 }
 
 // ── Summary artifact ────────────────────────────────────────────────────────────
-// Emit both a human-readable stdout summary and a machine-readable JSON file
-// (uploaded as a CI artifact by .github/workflows/load-test.yml).
+// Emit a dependency-free, bounded stdout summary and the full machine-readable
+// JSON artifact. Keeping summary formatting local avoids executing mutable remote
+// JavaScript during the supply-chain-locked load job.
 export function handleSummary(data) {
+  const metric = (name, value) => data.metrics?.[name]?.values?.[value];
+  const lines = [
+    "k6 Archon Autopilot summary",
+    `checks rate: ${metric("checks", "rate") ?? "n/a"}`,
+    `http p95 ms: ${metric("http_req_duration", "p(95)") ?? "n/a"}`,
+    `iterations: ${metric("iterations", "count") ?? "n/a"}`,
+    `intake valid rate: ${metric("intake_valid_response", "rate") ?? "n/a"}`,
+  ];
   return {
-    stdout: textSummary(data, { indent: " ", enableColors: true }),
-    "load-summary.json": JSON.stringify(data, null, 2),
+    stdout: `${lines.join("\n")}\n`,
+    [SUMMARY_PATH]: JSON.stringify(data, null, 2),
   };
 }

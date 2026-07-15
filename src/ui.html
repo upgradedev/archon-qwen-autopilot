@@ -230,6 +230,7 @@
     .upload input[type=file] { font-size: 12.5px; color: var(--muted); }
     .hint { color: var(--muted); font-size: 12px; }
     #processView { display: none; margin-top: 14px; border-top: 1px dashed var(--border); padding-top: 14px; }
+    #processView.show { display: block; }
     .proc-head { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text); margin-bottom: 10px; }
     .proc-head .done-check { color: var(--green-hi); font-weight: 700; }
     .proc-steps { display: grid; gap: 8px; }
@@ -237,6 +238,24 @@
     .proc-step .num { font-family: var(--mono); font-size: 11px; color: var(--muted); }
     .proc-step .tool { font-family: var(--mono); font-size: 12.5px; color: var(--accent); }
     .proc-step .obs { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+    .preview-banner {
+      margin-top: 12px; padding: 12px 14px; border-radius: 8px;
+      border: 1px solid rgba(88,166,255,.48); background: rgba(88,166,255,.08);
+      color: var(--text); font-size: 12.5px; line-height: 1.5;
+    }
+    .preview-banner b { color: var(--accent); }
+    .preview-summary {
+      margin-top: 10px; padding: 14px 16px; border: 1px solid var(--border);
+      border-radius: 8px; background: var(--panel-2); display: grid; gap: 7px;
+    }
+    .preview-summary .preview-vendor { font-weight: 600; }
+    .preview-summary .preview-action { font-family: var(--mono); color: var(--accent); }
+    .preview-summary .preview-reason { color: var(--muted); font-size: 12.5px; }
+    .locked-state {
+      padding: 18px; border: 1px dashed var(--border); border-radius: 9px;
+      color: var(--muted); background: rgba(139,148,158,.035); line-height: 1.55;
+    }
+    .locked-state b { color: var(--text); }
     /* Each streamed step fades in as it arrives — the real-time "appearing one by one" feel. */
     .reveal { animation: fadein .35s ease both; }
     @keyframes fadein { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
@@ -354,7 +373,25 @@
     .chart h3 { margin: 0 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); font-weight: 600; }
     .chart .legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 8px; font-size: 12px; color: var(--muted); }
     .chart .legend .dot { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+    .chart .legend .dot-0 { background: #3fb950; }
+    .chart .legend .dot-1 { background: #d29922; }
+    .chart .legend .dot-2 { background: #f85149; }
     .chart .zero { color: var(--muted); font-size: 12.5px; padding: 14px 0; }
+    .evidence-panel, .learning-panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; margin-bottom: 22px; }
+    .panel-title { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; margin-bottom: 8px; }
+    .panel-title h2 { margin: 0; font-size: 15px; }
+    .eyebrow { font-family: var(--mono); color: var(--purple); font-size: 11px; text-transform: uppercase; letter-spacing: .7px; }
+    .metric-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(145px,1fr)); gap: 9px; margin-top: 12px; }
+    .metric { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+    .metric .value { display: block; font-family: var(--mono); color: var(--accent); font-size: 18px; }
+    .metric .label { color: var(--muted); font-size: 11px; }
+    .learning-steps { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; margin-top: 14px; }
+    @media (max-width: 760px) { .learning-steps { grid-template-columns: 1fr; } }
+    .learning-step { border: 1px solid var(--border); border-radius: 8px; padding: 12px; background: var(--bg); }
+    .learning-step b { display: block; margin-bottom: 5px; }
+    .learning-step .state { min-height: 38px; color: var(--muted); font-size: 12px; margin: 7px 0; }
+    .learning-result { display: none; margin-top: 12px; padding: 12px; border: 1px solid rgba(46,160,67,.45); background: rgba(46,160,67,.08); border-radius: 8px; }
+    .learning-result.show { display: block; }
 
     /* ── Decided view ────────────────────────────────────────────────────────── */
     .decided-item {
@@ -386,6 +423,7 @@
     }
     #tourPop {
       position: absolute; max-width: 340px; z-index: 62;
+      top: 50%; left: 50%; transform: translate(-50%, -50%);
       background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
       padding: 16px 18px; box-shadow: 0 12px 40px rgba(0,0,0,.55);
     }
@@ -393,7 +431,39 @@
     #tourPop p { margin: 0 0 14px; font-size: 13px; color: var(--muted); line-height: 1.55; }
     #tourPop .nav { display: flex; align-items: center; gap: 8px; }
     #tourPop .step-count { flex: 1; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+    .search-bar { margin-bottom: 22px; position: relative; }
+    #searchQueue {
+      width: 100%; padding: 10px 14px; border: 1px solid var(--border);
+      border-radius: 8px; background: var(--panel-2); color: var(--text);
+      font-size: 13.5px; outline: none; transition: border-color 0.12s ease;
+    }
     #searchQueue:focus { border-color: var(--accent); }
+    #clearSearch {
+      position: absolute; right: 14px; top: 50%; transform: translateY(-50%);
+      cursor: pointer; color: var(--muted); display: none; font-size: 15px;
+      font-weight: bold; user-select: none;
+    }
+    #clearSearch.visible { display: block; }
+    .dup-head-icon { margin-right: 8px; }
+    .dup-head-text { color: var(--amber); font-weight: 700; }
+    .dup-prompt {
+      margin-top: 14px; padding: 16px; border: 1.5px solid var(--amber);
+      border-radius: 8px; background: rgba(217,164,65,.06); display: grid; gap: 12px;
+    }
+    .dup-prompt-title { font-weight: 700; font-size: 14px; color: var(--amber); }
+    .dup-prompt-copy { font-size: 12.5px; opacity: .9; }
+    .dup-prompt .prompt-buttons { display: flex; gap: 10px; margin-top: 6px; flex-wrap: wrap; }
+    .dup-prompt button { padding: 6px 14px; border-radius: 6px; cursor: pointer; }
+    .dup-prompt .force-btn-large {
+      background: #d97706; border-color: #b45309; color: #fff; font-weight: 600;
+    }
+    .dup-prompt .reject { border-color: rgba(218,54,51,.5); color: var(--red-hi); }
+    .override-notice {
+      display: none; margin-top: 10px; padding: 10px 12px; border-radius: 8px;
+      border: 1px solid rgba(210,153,34,.45); background: rgba(210,153,34,.08);
+      color: var(--amber); font-size: 12.5px; line-height: 1.5;
+    }
+    .override-notice.show { display: block; }
   </style>
 </head>
 <body>
@@ -402,11 +472,10 @@
     <span class="sub">Human-gated accounts-payable agent on Qwen — it proposes, you approve.</span>
     <span class="spacer"></span>
     <span class="pill" id="model">decider …</span>
-    <input class="token-input" id="reviewerToken" type="password" autocomplete="off" placeholder="Judge reviewer token" aria-label="Reviewer token" title="Required to read or act on the approval queue; stored only in this browser tab" />
+    <input class="token-input" id="reviewerToken" type="password" autocomplete="off" placeholder="Judge reviewer token" aria-label="Reviewer token" title="Required for the approval queue and activates a separate bounded judge intake reserve; stored only in this browser tab" />
     <button class="primary" id="loadSample" title="Queue a realistic sample vendor invoice">Load sample invoice</button>
     <button class="ghost" id="tourBtn" title="Replay the guided tour">Take the tour</button>
     <button class="ghost" id="refresh" title="Reload the queue">Refresh</button>
-    <button class="ghost" id="peerApp" type="button" onclick="window.open('https://memory.43.106.13.19.sslip.io','_blank','noopener')" title="Open the companion MemoryAgent app — the persistent, queryable memory foundation">Open MemoryAgent ↗</button>
   </header>
 
   <main>
@@ -443,6 +512,23 @@
       <div id="processView"></div>
     </section>
 
+    <section class="learning-panel" id="correctionLearning" data-tour="learning">
+      <div class="panel-title"><span class="eyebrow">Track-4 differentiator</span><h2>Correction-learning challenge</h2></div>
+      <div class="hint">A guided, auditable use of the real AP state machine: approve a €3,000 baseline, amend a €5,000 overbill down to €3,000, then compare the next €5,000 re-bill with a €3,000 negative control. Every decision uses the existing authenticated intake/amend/approve routes; no result is preloaded.</div>
+      <div class="learning-steps">
+        <div class="learning-step"><b>1 · Establish</b><span>Approve a clean €3,000 baseline.</span><div class="state" id="learnState1">Not started</div><button id="learnBaseline">Approve baseline</button></div>
+        <div class="learning-step"><b>2 · Correct</b><span>Human amends billed €5,000 → €3,000.</span><div class="state" id="learnState2">Waiting for step 1</div><button id="learnAmend" disabled>Amend & approve</button></div>
+        <div class="learning-step"><b>3 · Challenge</b><span>Re-bill €5,000 plus compliant €3,000 control.</span><div class="state" id="learnState3">Waiting for step 2</div><button id="learnTest" disabled>Run both decisions</button></div>
+      </div>
+      <div class="learning-result" id="learnResult" aria-live="polite"></div>
+    </section>
+
+    <section class="evidence-panel" id="impactEvidence">
+      <div class="panel-title"><span class="eyebrow">Measured, not estimated</span><h2>Workflow evidence</h2></div>
+      <div class="hint">Instrumentation from retained work items. This is not a labor-saving, ROI, or production error-reduction study.</div>
+      <div class="metric-grid" id="impactMetrics"><div class="metric"><span class="label">Enter the reviewer token to load evidence.</span></div></div>
+    </section>
+
     <!-- At-a-glance charts (inline SVG). Pending: clean vs flagged. Decided: approved / amended / rejected. -->
     <div class="charts" id="charts">
       <div class="chart" id="chartPending">
@@ -461,10 +547,9 @@
     </div>
 
     <!-- Live Search filter (UX Improvement) -->
-    <div class="search-bar" style="margin-bottom: 22px; position: relative;">
-      <input type="text" id="searchQueue" placeholder="Search approvals by vendor, amount, reference, proposed action or outcome..." 
-             style="width: 100%; padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); color: var(--text); font-size: 13.5px; outline: none; transition: border-color 0.12s ease;" />
-      <span id="clearSearch" style="position: absolute; right: 14px; top: 50%; transform: translateY(-50%); cursor: pointer; color: var(--muted); display: none; font-size: 15px; font-weight: bold; user-select: none;">✕</span>
+    <div class="search-bar">
+      <input type="text" id="searchQueue" placeholder="Search approvals by vendor, amount, reference, proposed action or outcome..." />
+      <span id="clearSearch">✕</span>
     </div>
 
     <section class="tabpane active" id="pane-pending">
@@ -552,13 +637,25 @@
       return (item.findings || []).every((f) => f.passed);
     }
 
+    function reviewerTokenValue() {
+      return String((($('#reviewerToken') && $('#reviewerToken').value) || sessionStorage.getItem('archonReviewerToken') || '')).trim();
+    }
+
+    function hasReviewerToken() {
+      return reviewerTokenValue().length > 0;
+    }
+
+    function reviewerHeaders(headers) {
+      const out = headers || {};
+      const token = reviewerTokenValue();
+      if (token) out.authorization = 'Bearer ' + token;
+      return out;
+    }
+
     async function api(method, path, body) {
-      const reviewerPath = /^\/(pending|decided)(?:\/|$)/.test(path) || /^\/(approve|amend|reject|recover)\//.test(path);
+      const reviewerPath = /^\/(pending|decided|impact-metrics|intake)(?:\/|$)/.test(path) || /^\/(approve|amend|reject|recover)\//.test(path);
       const headers = body ? { 'content-type': 'application/json' } : {};
-      if (reviewerPath) {
-        const token = ($('#reviewerToken') && $('#reviewerToken').value) || sessionStorage.getItem('archonReviewerToken') || '';
-        if (token) headers.authorization = 'Bearer ' + token;
-      }
+      if (reviewerPath) reviewerHeaders(headers);
       const res = await fetch(path, {
         method,
         headers,
@@ -583,7 +680,7 @@
           const forceBtn = el('button', {
             class: 'force-btn',
             type: 'button',
-            text: 'Ignore & Pay anyway'
+            text: 'Prepare exceptional override'
           });
           forceBtn.onclick = onOverride;
           kids.push(forceBtn);
@@ -644,6 +741,8 @@
       const inv = item.invoice || {};
       const p = item.proposed || {};
       const originalTool = p.tool || 'flag_for_review';
+      const requiredReviewerInputs = Array.isArray(p.requiresReviewerInput) ? p.requiresReviewerInput : [];
+      const needsVerifiedRecipient = requiredReviewerInputs.includes('to');
       let selectedTool = originalTool;
       const c = el('div', { class: 'card' });
 
@@ -675,6 +774,11 @@
           title: 'Qwen-VL source extraction confidence is separate from the decision model confidence.',
           text: 'Qwen-VL extraction confidence ' + extractionConf + (item.lowExtractionConfidence ? ' — source review required' : '')
         }) : document.createTextNode('')),
+        (needsVerifiedRecipient ? el('span', {
+          class: 'lowconf',
+          title: 'The model is not trusted to choose an email destination. Add the verified vendor-master recipient by amendment.',
+          text: 'verified recipient required'
+        }) : document.createTextNode('')),
         el('div', { class: 'reasoning', text: p.reasoning || '' }),
       ]);
 
@@ -687,7 +791,10 @@
       ]);
 
       const body = el('div', { class: 'card-body' }, [proposed, argsBlock]);
-      // The agent's multi-step reasoning trace — HOW it reached this proposal. Now a
+      const overrideNotice = el('div', { class: 'override-notice' });
+      body.appendChild(overrideNotice);
+      let overrideReason = '';
+      // The agent's auditable tool/observation trace — HOW it reached this proposal. Now a
       // COLLAPSIBLE section (default collapsed) so the queue stays compact; click the
       // chevron to expand "How the agent decided".
       if ((item.trace || []).length) {
@@ -697,7 +804,13 @@
       }
       if ((item.findings || []).length) {
         const onOverride = () => {
+          const reason = window.prompt('Required audit reason for overriding the duplicate guard (be specific):');
+          if (!reason || reason.trim().length < 12) {
+            toast('Exceptional override not prepared — enter a specific audit reason of at least 12 characters.', 'err');
+            return;
+          }
           selectedTool = 'draft_payment';
+          overrideReason = reason.trim();
           toolSpan.textContent = 'draft_payment';
           const newArgs = {
             vendor: inv.vendor,
@@ -705,7 +818,10 @@
             currency: inv.currency
           };
           ta.value = JSON.stringify(newArgs, null, 2);
-          toast('Reviewer override prepared. Review the exact payment args, then approve to record the audited tool change.', 'ok');
+          overrideNotice.textContent = 'Prepared only — nothing executed. Exact override: draft_payment · ' +
+            money(inv) + ' · reason: ' + overrideReason + '. Review the JSON, then click Amend & approve and confirm once more.';
+          overrideNotice.classList.add('show');
+          toast('Exceptional override prepared only. Review it, then use Amend & approve for the second confirmation.', 'ok');
         };
         body.appendChild(el('div', {}, [ el('div', { class: 'section-label', text: 'Validation findings' }), renderFindings(item.findings, onOverride) ]));
       }
@@ -714,31 +830,31 @@
       }
 
       const approveBtn = el('button', { class: 'approve', text: 'Approve' });
-      const amendBtn = el('button', { class: 'amend', text: 'Amend & approve' });
+      const amendBtn = el('button', { class: 'amend', text: needsVerifiedRecipient ? 'Add verified recipient & send' : 'Amend & approve' });
       const rejectBtn = el('button', { class: 'reject', text: 'Reject' });
       const gateNote = el('div', { class: 'gate-note' }, [
-        el('b', { text: 'Nothing executes until you approve.' }),
-        document.createTextNode(' You hold the gate — approve, amend, or reject.'),
+        el('b', { text: needsVerifiedRecipient ? 'Verified vendor recipient required.' : 'Nothing executes until you approve.' }),
+        document.createTextNode(needsVerifiedRecipient
+          ? ' Qwen drafted only the content; add the trusted master-data address through Amend before sending.'
+          : ' You hold the gate — approve, amend, or reject.'),
       ]);
       const actions = el('div', { class: 'actions', 'data-tour': 'actions' }, [gateNote, approveBtn, amendBtn, rejectBtn]);
 
-      const setBusy = (b) => { approveBtn.disabled = amendBtn.disabled = rejectBtn.disabled = b; };
+      approveBtn.disabled = needsVerifiedRecipient;
+      if (needsVerifiedRecipient) approveBtn.title = 'Plain approval is blocked until a verified recipient is supplied by amendment.';
+      const setBusy = (b) => {
+        approveBtn.disabled = b || needsVerifiedRecipient;
+        amendBtn.disabled = rejectBtn.disabled = b;
+      };
 
       approveBtn.onclick = async () => {
+        if (selectedTool !== originalTool) {
+          toast('This is a prepared exceptional override. Use Amend & approve, then confirm the exact tool, amount, and audit reason.', 'err');
+          return;
+        }
         setBusy(true);
         try {
-          let r;
-          if (selectedTool !== originalTool) {
-            const args = JSON.parse(ta.value || '{}');
-            r = await api('POST', '/amend/' + item.id, {
-              tool: selectedTool,
-              args,
-              confirmToolOverride: true,
-              reason: 'Duplicate warning explicitly overridden by the reviewer in the approval UI'
-            });
-          } else {
-            r = await api('POST', '/approve/' + item.id);
-          }
+          const r = await api('POST', '/approve/' + item.id);
           toast('Approved · ' + ((r.execution && r.execution.summary) || p.tool), 'ok');
           await refreshAll();
         } catch (e) { toast(e.message, 'err'); setBusy(false); }
@@ -748,6 +864,15 @@
         let args;
         try { args = JSON.parse(ta.value); }
         catch (_) { toast('Arguments are not valid JSON — fix them first.', 'err'); return; }
+        if (selectedTool !== originalTool) {
+          if (!overrideReason) {
+            toast('Prepare the exceptional override and enter its audit reason first.', 'err');
+            return;
+          }
+          const exact = selectedTool + ' · ' + String(args.currency || inv.currency || '') + ' ' +
+            String(args.amount == null ? '?' : args.amount) + ' · reason: ' + overrideReason;
+          if (!window.confirm('Second confirmation — Amend & approve this exact exceptional override?\n\n' + exact)) return;
+        }
         setBusy(true);
         try {
           const r = await api('POST', '/amend/' + item.id, {
@@ -755,7 +880,7 @@
             args,
             confirmToolOverride: selectedTool !== originalTool,
             reason: selectedTool !== originalTool
-              ? 'Tool and arguments explicitly overridden by the reviewer in the approval UI'
+              ? overrideReason
               : 'Arguments amended in the approval UI'
           });
           toast('Amended & approved · ' + ((r.execution && r.execution.summary) || p.tool), 'ok');
@@ -786,7 +911,7 @@
           if (!reason) return;
           try {
             await api('POST', '/recover/' + item.id, { action: 'retry', reason });
-            toast('Execution reset to pending after audited verification.', 'ok');
+            toast('Exact persisted intent retried once under the audited recovery lease.', 'ok');
             await refreshAll();
           } catch (e) { toast(e.message, 'err'); }
         };
@@ -800,7 +925,7 @@
           } catch (e) { toast(e.message, 'err'); }
         };
         actions.appendChild(warning);
-        actions.appendChild(retryBtn);
+        if (!(item.execution && item.execution.ok)) actions.appendChild(retryBtn);
         actions.appendChild(completeBtn);
       }
 
@@ -854,6 +979,13 @@
         ? item.execution.summary
         : (item.status === 'rejected' ? ('Rejected — nothing executed' + (item.decisionReason ? ' · ' + item.decisionReason : '')) : (p.tool || ''));
       row.appendChild(el('div', { class: 'outcome' }, [ el('span', { class: 'tool', text: p.tool || '' }), document.createTextNode('  ' + outcome) ]));
+      if (item.status === 'rejected' && item.rejectionMemory && !item.rejectionMemory.stored) {
+        row.appendChild(el('div', {
+          class: 'outcome sev-warn',
+          text: '⚠ Rejection held, but correction evidence was not stored' +
+            (item.rejectionMemory.error ? ': ' + item.rejectionMemory.error : '.'),
+        }));
+      }
       // The amend audit trail — prev → new — so a reviewer sees exactly what changed.
       if (item.amended && item.amendment) {
         row.appendChild(el('div', { class: 'section-label', text: 'Amended (prev → new)' }));
@@ -892,9 +1024,9 @@
 
     function legend(segments) {
       const wrap = el('div', { class: 'legend' });
-      segments.forEach((s) => {
+      segments.forEach((s, i) => {
         const item = el('span', {});
-        const dot = el('span', { class: 'dot' }); dot.style.background = s.color;
+        const dot = el('span', { class: 'dot dot-' + i });
         item.appendChild(dot); item.appendChild(document.createTextNode(s.label));
         wrap.appendChild(item);
       });
@@ -966,11 +1098,7 @@
     function applySearch() {
       const query = $('#searchQueue').value.toLowerCase().trim();
       const clearBtn = $('#clearSearch');
-      if (query) {
-        clearBtn.style.display = 'block';
-      } else {
-        clearBtn.style.display = 'none';
-      }
+      clearBtn.classList.toggle('visible', Boolean(query));
 
       // Filter pending
       const filteredPending = allPendingItems.filter(item => {
@@ -1023,8 +1151,72 @@
       }
     }
 
+    async function loadImpact() {
+      const host = $('#impactMetrics');
+      try {
+        const m = await api('GET', '/impact-metrics');
+        const cells = [
+          [m.proposals.total, 'proposals retained'],
+          [m.timeToProposalMs.p50 == null ? '—' : Math.round(m.timeToProposalMs.p50) + ' ms', 'p50 intake → proposal'],
+          [Number(m.orchestration.averageReadAnalyzeSteps || 0).toFixed(1), 'read/analyze steps per proposal'],
+          [m.catches.duplicate + ' / ' + m.catches.anomaly, 'duplicate / anomaly catches'],
+          [m.humanGate.touches, 'recorded human touches'],
+          [m.humanGate.amended, 'amended approvals'],
+        ];
+        host.innerHTML = '';
+        cells.forEach(([value, label]) => host.appendChild(el('div', { class: 'metric' }, [
+          el('span', { class: 'value', text: String(value) }), el('span', { class: 'label', text: String(label) })
+        ])));
+      } catch (e) {
+        host.innerHTML = '';
+        host.appendChild(el('div', { class: 'metric' }, [el('span', { class: 'label', text: 'Evidence unavailable: ' + e.message })]));
+      }
+    }
+
+    function lockedState(message) {
+      return el('div', { class: 'locked-state' }, [
+        el('b', { text: 'Reviewer workspace locked. ' }),
+        document.createTextNode(message),
+      ]);
+    }
+
+    function renderLockedReviewerPanels() {
+      allPendingItems = [];
+      allDecidedItems = [];
+      $('#count').textContent = 'locked';
+      $('#decidedCount').textContent = 'locked';
+      $('#queue').innerHTML = '';
+      $('#queue').appendChild(lockedState('Public requests run as isolated previews and are never added to this durable approval queue. Enter the private reviewer token to unlock it.'));
+      $('#decided').innerHTML = '';
+      $('#decided').appendChild(lockedState('Decision history is private. Enter the private reviewer token to load retained outcomes.'));
+      $('#impactMetrics').innerHTML = '';
+      $('#impactMetrics').appendChild(el('div', { class: 'metric' }, [
+        el('span', { class: 'label', text: 'Private reviewer token required to load measured workflow evidence.' }),
+      ]));
+      renderChart('chartPending', 'Pending — reviewer workspace locked', []);
+      renderChart('chartDecided', 'Decided — reviewer workspace locked', []);
+      $('#searchQueue').disabled = true;
+      $('#searchQueue').value = '';
+      $('#clearSearch').classList.remove('visible');
+      $('#learnBaseline').disabled = true;
+      $('#learnBaseline').title = 'Enter the private reviewer token to run authenticated decisions.';
+      $('#loadSample').title = 'Generate a one-shot isolated preview; nothing is persisted without the reviewer token.';
+    }
+
+    function renderReviewerMode() {
+      $('#searchQueue').disabled = false;
+      $('#learnBaseline').disabled = learning.baselineDone;
+      $('#learnBaseline').title = 'Run the authenticated correction-learning challenge.';
+      $('#loadSample').title = 'Queue a realistic sample vendor invoice in the durable reviewer workspace.';
+    }
+
     async function refreshAll() {
-      await Promise.all([load(), loadDecided()]);
+      if (!hasReviewerToken()) {
+        renderLockedReviewerPanels();
+        return;
+      }
+      renderReviewerMode();
+      await Promise.all([load(), loadDecided(), loadImpact()]);
       applySearch();
     }
 
@@ -1046,16 +1238,52 @@
       tax: 1248,
       total: 6448,
       line_items: [
-        { description: 'Freight and warehousing — June', quantity: 1, unit_price: 5200, amount: 5200 },
+        { description: 'Freight and warehousing - June', quantity: 1, unit_price: 5200, amount: 5200 },
       ],
     };
+
+    function previewSummary(item) {
+      const inv = (item && item.invoice) || {};
+      const proposed = (item && item.proposed) || {};
+      return el('div', { class: 'preview-summary reveal' }, [
+        el('div', { class: 'section-label', text: 'One-shot proposal preview' }),
+        el('div', { class: 'preview-vendor', text: (inv.vendor || 'Unknown vendor') + ' · ' + money(inv) }),
+        el('div', { class: 'preview-action', text: proposed.tool || 'flag_for_review' }),
+        el('div', { class: 'preview-reason', text: proposed.reasoning || 'Proposal generated from this isolated request.' }),
+        el('div', { class: 'hint', text: 'No approve, amend, or reject controls are available in preview mode because no durable work item exists.' }),
+      ]);
+    }
+
+    function previewBanner() {
+      return el('div', { class: 'preview-banner reveal' }, [
+        el('b', { text: 'Isolated preview — nothing persisted. ' }),
+        document.createTextNode('Add the private reviewer token to queue, inspect full evidence, and approve.'),
+      ]);
+    }
+
+    function renderPublicPreview(item) {
+      const pv = $('#processView');
+      pv.classList.add('show');
+      pv.innerHTML = '';
+      pv.appendChild(el('div', { class: 'proc-head' }, [
+        el('span', { class: 'done-check', text: '✓' }),
+        el('span', { text: 'Proposal generated in isolated preview mode.' }),
+      ]));
+      pv.appendChild(previewBanner());
+      pv.appendChild(previewSummary(item));
+    }
 
     async function loadSample() {
       const b = $('#loadSample');
       const prev = b.textContent;
       b.disabled = true; b.textContent = 'Loading…';
       try {
-        await api('POST', '/intake', { invoice: SAMPLE_INVOICE });
+        const item = await api('POST', '/intake', { invoice: SAMPLE_INVOICE });
+        if (item && item.durable === false) {
+          renderPublicPreview(item);
+          toast('Isolated preview generated — nothing persisted. Add the private reviewer token to queue it.', 'ok');
+          return;
+        }
         toast('Sample invoice queued — the agent proposed an action for your approval', 'ok');
         setActiveTab('pending');
         await refreshAll();
@@ -1065,6 +1293,79 @@
         b.disabled = false; b.textContent = prev;
       }
     }
+
+    // ---- Judge-ready correction-learning challenge ----------------------------
+    // Uses only the normal public intake + authenticated reviewer routes. Each
+    // button is an explicit human decision; there is no hidden demo-only backend.
+    const learning = { vendor: '', baselineDone: false, correctionDone: false };
+    function learningInvoice(ref, total, date) {
+      return { vendor: learning.vendor, invoice_number: ref, invoice_date: date, currency: 'EUR', tax_id: 'DEMO-AP-3000', subtotal: total, tax: 0, total };
+    }
+    function requireReviewerToken() {
+      const token = reviewerTokenValue();
+      if (!token) throw new Error('Enter the judge reviewer token first — every human decision is authenticated.');
+    }
+    $('#learnBaseline').onclick = async () => {
+      const b = $('#learnBaseline'); b.disabled = true;
+      try {
+        requireReviewerToken();
+        learning.vendor = 'Correction Demo ' + Date.now().toString(36).toUpperCase();
+        const item = await api('POST', '/intake', { invoice: learningInvoice('BASE-3000', 3000, '2026-04-15') });
+        const decided = await api('POST', '/approve/' + item.id);
+        learning.baselineDone = true;
+        $('#learnState1').textContent = '✓ €3,000 approved · ' + ((decided.execution && decided.execution.tool) || decided.proposed.tool);
+        $('#learnState2').textContent = 'Ready: queue the €5,000 overbill';
+        $('#learnAmend').disabled = false;
+        await refreshAll();
+      } catch (e) { b.disabled = false; $('#learnState1').textContent = 'Error: ' + e.message; toast(e.message, 'err'); }
+    };
+    $('#learnAmend').onclick = async () => {
+      const b = $('#learnAmend'); b.disabled = true;
+      try {
+        requireReviewerToken();
+        if (!learning.baselineDone) throw new Error('Complete step 1 first.');
+        const item = await api('POST', '/intake', { invoice: learningInvoice('OVERBILL-5000', 5000, '2026-05-15') });
+        const originalTool = item.proposed && item.proposed.tool;
+        const amountBearing = originalTool === 'draft_payment' || originalTool === 'draft_journal_entry';
+        const reason = 'Guided scenario: contracted amount is EUR 3,000, not the billed EUR 5,000.';
+        const patch = amountBearing
+          ? { args: { amount: 3000 }, reason }
+          : {
+              tool: 'draft_payment',
+              args: { vendor: learning.vendor, amount: 3000, currency: 'EUR', pay_on: '2026-05-15' },
+              confirmToolOverride: true,
+              reason: reason + ' Explicit reviewer override from ' + originalTool + ' to an amount-bearing payment proposal.',
+            };
+        const decided = await api('POST', '/amend/' + item.id, patch);
+        const correction = decided.amendment && decided.amendment.correctionMemory;
+        learning.correctionDone = Boolean(correction && correction.applicable && correction.stored);
+        const override = amountBearing ? '' : ' · override ' + originalTool + ' → draft_payment';
+        if (!learning.correctionDone) {
+          $('#learnState2').textContent = '⚠ amendment executed, but correction evidence was not durably verified' + override;
+          throw new Error('The amendment ran, but correction recall evidence was not stored' + (correction && correction.error ? ': ' + correction.error : '.'));
+        }
+        $('#learnState2').textContent = '✓ correction evidence verified: €5,000 → €3,000' + override;
+        $('#learnState3').textContent = 'Ready to compare re-bill vs control';
+        $('#learnTest').disabled = false;
+        await refreshAll();
+      } catch (e) { b.disabled = false; $('#learnState2').textContent = 'Error: ' + e.message; toast(e.message, 'err'); }
+    };
+    $('#learnTest').onclick = async () => {
+      const b = $('#learnTest'); b.disabled = true;
+      try {
+        if (!learning.correctionDone) throw new Error('Complete step 2 first.');
+        const rebill = await api('POST', '/intake', { invoice: learningInvoice('REBILL-5000', 5000, '2026-06-15') });
+        const control = await api('POST', '/intake', { invoice: learningInvoice('CONTROL-3000', 3000, '2026-06-15') });
+        const rebillTool = rebill.proposed && rebill.proposed.tool;
+        const controlTool = control.proposed && control.proposed.tool;
+        const passed = rebillTool === 'flag_for_review' && controlTool === 'draft_payment';
+        const host = $('#learnResult'); host.classList.add('show'); host.textContent = '';
+        host.appendChild(el('b', { text: passed ? '✓ Correction changed the next decision without crying wolf' : 'Observed live result (review the trace)' }));
+        host.appendChild(el('div', { text: '€5,000 re-bill → ' + rebillTool + ' · €3,000 negative control → ' + controlTool }));
+        $('#learnState3').textContent = '✓ two fresh PENDING proposals; nothing executed';
+        await refreshAll();
+      } catch (e) { b.disabled = false; $('#learnState3').textContent = 'Error: ' + e.message; toast(e.message, 'err'); }
+    };
 
     // ---- Upload + STREAM the reasoning live (SSE over fetch) ---------------------
     // EventSource only supports GET, so we POST and read the text/event-stream body
@@ -1096,7 +1397,8 @@
 
     // The two-step review flow holds a single-use "process ticket" minted by
     // /extract/document. When present, POST /intake/stream skips the daily limiter
-    // (the extraction already paid the slot). Any manual edit of the JSON box clears
+    // only for the unchanged extraction (the extraction already paid the slot).
+    // Any manual edit of the JSON box clears
     // it, so a hand-pasted invoice consumes normally.
     let pendingTicket = null;
 
@@ -1107,7 +1409,7 @@
       const body = ticket ? { invoice, ticket } : { invoice };
       const res = await fetch('/intake/stream', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: reviewerHeaders({ 'content-type': 'application/json' }),
         body: JSON.stringify(body),
       });
       await readSSE(res, onEvent);
@@ -1162,7 +1464,7 @@
         reviewField('Line items', items),
         reviewField('Qwen-VL extraction confidence', typeof inv.confidence === 'number' ? Math.round(inv.confidence * 100) + '%' : inv.confidence),
       ]));
-      host.appendChild(el('div', { class: 'hint', text: 'Fields are editable in the JSON box below — correct anything the extractor got wrong, then Process.' }));
+      host.appendChild(el('div', { class: 'hint', text: 'Review the JSON below. Processing it unchanged uses the extraction’s one-shot ticket; editing is allowed but consumes a normal daily intake slot.' }));
     }
 
     async function extractDocument(file, busyBtns) {
@@ -1177,7 +1479,7 @@
       try {
         const fd = new FormData();
         fd.append('file', file, file.name || 'invoice');
-        const res = await fetch('/extract/document', { method: 'POST', body: fd });
+        const res = await fetch('/extract/document', { method: 'POST', headers: reviewerHeaders({}), body: fd });
         const text = await res.text();
         let data = {};
         try { data = text ? JSON.parse(text) : {}; } catch (_) { data = {}; }
@@ -1212,10 +1514,7 @@
     // the pending queue. `busyBtns` are disabled for the duration.
     async function runProcess(headLabel, kickoff, busyBtns) {
       const pv = $('#processView');
-      // Must be an explicit non-empty display value: '' reverts to the stylesheet's
-      // `#processView { display: none }`, which would silently hide the live step
-      // stream (the bug the browser e2e caught).
-      pv.style.display = 'block';
+      pv.classList.add('show');
       pv.innerHTML = '';
       const head = el('div', { class: 'proc-head' }, [ el('span', { class: 'spin' }), el('span', { text: headLabel }) ]);
       const stepsWrap = el('div', { class: 'proc-steps' });
@@ -1223,6 +1522,8 @@
       const setHead = (txt) => { head.innerHTML = ''; head.appendChild(el('span', { class: 'spin' })); head.appendChild(el('span', { text: txt })); };
       (busyBtns || []).forEach((b) => { if (b) b.disabled = true; });
       let hasDuplicate = false;
+      let proposalResult = null;
+      let processFailed = false;
 
       try {
         await kickoff((event, data) => {
@@ -1262,102 +1563,37 @@
               ]),
             ]));
           } else if (event === 'proposal') {
+            proposalResult = data || {};
             const p = (data && data.proposed) || {};
-            
+
+            if (data && data.durable === false) {
+              hasDuplicate = false;
+              head.innerHTML = '';
+              head.appendChild(el('span', { class: 'done-check', text: '✓' }));
+              head.appendChild(el('span', { text: 'Proposal generated in isolated preview mode.' }));
+              stepsWrap.appendChild(previewBanner());
+              stepsWrap.appendChild(previewSummary(data));
+              return;
+            }
+
             if (hasDuplicate) {
               head.innerHTML = '';
-              const warnIcon = el('span', { text: '⚠️', style: 'margin-right: 8px;' });
+              const warnIcon = el('span', { class: 'dup-head-icon', text: '⚠️' });
               head.appendChild(warnIcon);
-              head.appendChild(el('span', { text: 'Duplicate reference detected — awaiting confirmation…', style: 'color: var(--amber); font-weight: bold;' }));
-              
-              const itemId = data.id;
+              head.appendChild(el('span', { class: 'dup-head-text', text: 'Duplicate risk held for reviewer inspection.' }));
               const inv = data.invoice || {};
-              
-              const promptDiv = el('div', {
-                class: 'dup-prompt reveal',
-                style: 'margin-top: 14px; padding: 16px; border: 1.5px solid var(--amber); border-radius: 8px; background: rgba(217, 164, 65, 0.06); display: grid; gap: 12px;'
-              }, [
-                el('div', { text: '⚠️ Duplicate Invoice Detected', style: 'font-weight: bold; font-size: 14px; color: var(--amber);' }),
-                el('div', { 
-                  text: 'This invoice (' + (inv.vendor || 'Unknown') + ' ref: ' + (inv.vendor_ref || 'None') + ') has the same supplier and reference (or amount and date) as a previously processed invoice.',
-                  style: 'font-size: 12.5px; opacity: 0.9;'
+              const promptDiv = el('div', { class: 'dup-prompt reveal' }, [
+                el('div', { class: 'dup-prompt-title', text: '⚠️ Duplicate guard held this proposal' }),
+                el('div', {
+                  class: 'dup-prompt-copy',
+                  text: 'This invoice (' + (inv.vendor || 'Unknown') + ' ref: ' + (inv.vendor_ref || 'None') + ') has the same supplier and reference (or amount and date) as a previously processed invoice.'
                 }),
-                el('div', { class: 'prompt-buttons', style: 'display: flex; gap: 10px; margin-top: 6px;' }, [
-                  el('button', {
-                    class: 'primary force-btn-large',
-                    text: 'Ignore & Pay anyway',
-                    style: 'background: #d97706; border-color: #b45309; color: #fff; padding: 6px 14px; border-radius: 6px; font-weight: 600; cursor: pointer;'
-                  }),
-                  el('button', {
-                    class: 'ghost',
-                    text: 'Queue for Review',
-                    style: 'padding: 6px 14px; border-radius: 6px; cursor: pointer;'
-                  }),
-                  el('button', {
-                    class: 'reject',
-                    text: 'Reject Invoice',
-                    style: 'border-color: rgba(218,54,51,.5); color: var(--red-hi); padding: 6px 14px; border-radius: 6px; cursor: pointer;'
-                  })
-                ])
+                el('div', {
+                  class: 'dup-prompt-copy',
+                  text: 'It is now in the authenticated pending queue as flag_for_review. No action executes from this stream. Any exceptional override must be prepared in the queue with a specific audit reason, then explicitly confirmed with Amend & approve.'
+                }),
               ]);
-              
               stepsWrap.appendChild(promptDiv);
-              
-              const [payBtn, reviewBtn, rejectBtn] = promptDiv.querySelectorAll('button');
-              
-              const clearPrompt = () => {
-                promptDiv.remove();
-                head.innerHTML = '';
-                head.appendChild(el('span', { class: 'done-check', text: '✓' }));
-                head.appendChild(el('span', { text: 'Decision recorded — queue updated.' }));
-              };
-              
-              payBtn.onclick = async () => {
-                payBtn.disabled = reviewBtn.disabled = rejectBtn.disabled = true;
-                try {
-                  const payArgs = {
-                    vendor: inv.vendor,
-                    amount: inv.total,
-                    currency: inv.currency
-                  };
-                  await api('POST', '/amend/' + itemId, {
-                    tool: 'draft_payment',
-                    args: payArgs,
-                    confirmToolOverride: true,
-                    reason: 'Duplicate warning explicitly overridden by the reviewer during upload'
-                  });
-                  clearPrompt();
-                  toast('Invoice force-approved as payment!', 'ok');
-                  setActiveTab('pending');
-                  await refreshAll();
-                } catch (err) {
-                  toast('Error: ' + err.message, 'err');
-                  payBtn.disabled = reviewBtn.disabled = rejectBtn.disabled = false;
-                }
-              };
-              
-              reviewBtn.onclick = async () => {
-                reviewBtn.disabled = payBtn.disabled = rejectBtn.disabled = true;
-                clearPrompt();
-                toast('Invoice queued for review.', 'ok');
-                setActiveTab('pending');
-                await refreshAll();
-              };
-              
-              rejectBtn.onclick = async () => {
-                rejectBtn.disabled = payBtn.disabled = reviewBtn.disabled = true;
-                try {
-                  await api('POST', '/reject/' + itemId, { reason: 'Duplicate rejected by user during upload' });
-                  clearPrompt();
-                  toast('Invoice rejected successfully.', 'ok');
-                  setActiveTab('pending');
-                  await refreshAll();
-                } catch (err) {
-                  toast('Error: ' + err.message, 'err');
-                  rejectBtn.disabled = payBtn.disabled = reviewBtn.disabled = true;
-                }
-              };
-              
               return;
             }
 
@@ -1365,16 +1601,22 @@
             head.appendChild(el('span', { class: 'done-check', text: '✓' }));
             head.appendChild(el('span', { text: 'Proposed: ' + (p.tool || '—') + ' — awaiting your approval in the queue below.' }));
           } else if (event === 'error') {
+            processFailed = true;
             toast((data && data.error) || 'processing failed', 'err');
             head.innerHTML = '';
             head.appendChild(el('span', { text: 'Could not process: ' + ((data && data.error) || 'processing failed') }));
           }
         });
-        if (!hasDuplicate) {
-          toast('Invoice processed — see the proposal in the pending queue', 'ok');
-          setActiveTab('pending');
-          await refreshAll();
+        if (processFailed) return;
+        if (proposalResult && proposalResult.durable === false) {
+          toast('Isolated preview generated — nothing persisted. Add the private reviewer token to queue it.', 'ok');
+          return;
         }
+        toast(hasDuplicate
+          ? 'Duplicate risk held — inspect the flag_for_review proposal in the authenticated queue.'
+          : 'Invoice processed — see the proposal in the pending queue', 'ok');
+        setActiveTab('pending');
+        await refreshAll();
       } catch (e) {
         toast(e.message, 'err');
         head.innerHTML = '';
@@ -1417,6 +1659,10 @@
         title: 'Upload an invoice — watch it work',
         body: 'Upload or paste a vendor invoice and click Process. The agent streams every reasoning step LIVE — recall history, validate, check for a duplicate, test the amount — then proposes one action. Nothing is paid or posted until you approve it.',
       }, {
+        el: () => $('#correctionLearning'),
+        title: 'The differentiator: corrections change later decisions',
+        body: 'Run three explicit human-gated steps. After a reviewer amends a €5,000 bill down to €3,000, the next €5,000 re-bill is escalated while a compliant €3,000 control remains a payment proposal. The UI calls the normal authenticated routes; no answer is preloaded.',
+      }, {
         el: () => $('#queue'),
         title: 'The approval queue',
         body: 'This is Archon Autopilot — a human-gated accounts-payable agent on Qwen. Every incoming vendor invoice arrives here as a proposal. Nothing executes until you approve it.',
@@ -1444,7 +1690,7 @@
         steps.push({
           el: () => firstCard.querySelector('[data-tour="trace"]'),
           title: 'How the agent decided',
-          body: 'The multi-step reasoning trace — click to expand it. The agent recalls vendor history, validates the invoice, checks for a duplicate, tests the amount variance, then reaches a terminal proposal. Every step is read-only — no side effects.',
+          body: 'The tool/observation trace — click to expand it. The agent recalls vendor history, validates the invoice, checks for a duplicate, tests the amount variance, then reaches a terminal proposal with a concise model rationale. Every step is read-only — no side effects.',
         });
       }
       steps.push({
@@ -1456,32 +1702,9 @@
     }
 
     function placeTour(step) {
-      const hl = $('#tourHighlight'), pop = $('#tourPop'), bd = $('#tourBackdrop');
       const target = step && step.el ? step.el() : null;
       if (target && target.getBoundingClientRect) {
-        target.scrollIntoView({ block: 'center' });
-        const r = target.getBoundingClientRect();
-        hl.style.display = 'block';
-        hl.style.top = (r.top - 6) + 'px';
-        hl.style.left = (r.left - 6) + 'px';
-        hl.style.width = (r.width + 12) + 'px';
-        hl.style.height = (r.height + 12) + 'px';
-        bd.style.background = 'transparent';
-        const pw = pop.offsetWidth || 340, ph = pop.offsetHeight || 170;
-        let top = r.bottom + 14;
-        if (top + ph > window.innerHeight - 12) top = Math.max(12, r.top - ph - 14);
-        let left = r.left;
-        if (left + pw > window.innerWidth - 12) left = window.innerWidth - pw - 12;
-        if (left < 12) left = 12;
-        pop.style.top = top + 'px';
-        pop.style.left = left + 'px';
-        pop.style.transform = 'none';
-      } else {
-        hl.style.display = 'none';
-        bd.style.background = '';
-        pop.style.top = '50%';
-        pop.style.left = '50%';
-        pop.style.transform = 'translate(-50%, -50%)';
+        target.scrollIntoView({ block: 'center', behavior: 'smooth' });
       }
     }
 

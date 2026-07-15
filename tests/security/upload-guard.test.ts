@@ -36,9 +36,14 @@ delete process.env.DASHSCOPE_API_KEY; // guarantee the offline Fakes
 const REVIEWER_TOKEN = "upload-guard-reviewer-token-32-chars";
 const AUTH = { authorization: `Bearer ${REVIEWER_TOKEN}` };
 
-// Minimal buffers carrying each real magic-byte signature (plus a trailing byte or
-// two — the Fake extractor ignores the content).
-const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01]);
+// Minimal bounded PNG header with a real IHDR width/height. The Fake extractor ignores
+// pixels, but production preflight intentionally requires a parseable canvas header.
+const PNG = Buffer.alloc(24);
+Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(PNG);
+PNG.writeUInt32BE(13, 8);
+PNG.write("IHDR", 12, "ascii");
+PNG.writeUInt32BE(1, 16);
+PNG.writeUInt32BE(1, 20);
 const PDF = Buffer.from("%PDF-1.7\n1 0 obj\n");
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
 
@@ -168,7 +173,7 @@ test("injection (e2e): an uploaded invoice with an injected note → security.in
   };
   await withServer({ extractor: new FakeExtractionClient(injected) }, async (app) => {
     const { payload, headers } = multipartFile("invoice.png", "image/png", PNG);
-    const res = await app.inject({ method: "POST", url: "/extract/document", payload, headers });
+    const res = await app.inject({ method: "POST", url: "/extract/document", payload, headers: { ...headers, ...AUTH } });
     assert.equal(res.statusCode, 200);
     const body = res.json();
 
@@ -185,6 +190,7 @@ test("injection (e2e): an uploaded invoice with an injected note → security.in
     const proc = await app.inject({
       method: "POST",
       url: "/intake/stream",
+      headers: AUTH,
       payload: { invoice: body.invoice, ticket: body.ticket },
     });
     assert.equal(proc.statusCode, 200);
@@ -208,7 +214,7 @@ test("injection (e2e): the streaming upload emits a security event while autonom
   const injected: RawInvoice = { vendor: "Globex", invoice_number: "G-1", subtotal: 100, tax: 20, total: 120, notes: INJECTION, confidence: 0.9 };
   await withServer({ extractor: new FakeExtractionClient(injected) }, async (app) => {
     const { payload, headers } = multipartFile("invoice.png", "image/png", PNG);
-    const res = await app.inject({ method: "POST", url: "/intake/document", payload, headers });
+    const res = await app.inject({ method: "POST", url: "/intake/document", payload, headers: { ...headers, ...AUTH } });
     assert.equal(res.statusCode, 200);
     assert.match(res.body, /event: security/);
     assert.match(res.body, /autonomous execution remains blocked/i);
