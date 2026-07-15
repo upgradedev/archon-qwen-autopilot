@@ -21,3 +21,4 @@ demo/*
 !demo/sample-invoice.png
 scripts/*
 !scripts/apply-schema.ts
+!scripts/bootstrap-db.ts

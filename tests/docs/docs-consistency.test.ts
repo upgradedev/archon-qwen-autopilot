@@ -533,7 +533,34 @@ test("CHECK 7 · supply chain: immutable Actions + hash-locked demo-video Python
   assert.equal(nodeImages.length, 2, "both Docker stages must use the pinned Node image");
   for (const image of nodeImages) assert.equal(image, NODE_IMAGE);
 
+  const dockerIgnore = readFileSync(join(ROOT, ".dockerignore"), "utf8");
+  const scriptCopy = dockerfile.match(/^COPY\s+(.+?)\s+\.\/scripts\/\s*$/m);
+  assert.ok(scriptCopy, "Dockerfile must copy the production database scripts into the build stage");
+  const copiedScripts = scriptCopy[1]!.trim().split(/\s+/);
+  assert.deepEqual(copiedScripts, ["scripts/apply-schema.ts", "scripts/bootstrap-db.ts"]);
+  for (const source of copiedScripts) {
+    assert.match(
+      dockerIgnore,
+      new RegExp(`^!${source.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m"),
+      `${source} must be explicitly present in the production Docker build context`,
+    );
+  }
+
+  const attributes = readFileSync(join(ROOT, ".gitattributes"), "utf8");
+  for (const frozenText of ["eval/dataset.sha256", "eval/vision/manifest.json", "eval/vision/fixtures.sha256"]) {
+    assert.match(
+      attributes,
+      new RegExp(`^${frozenText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+text\\s+eol=lf$`, "m"),
+      `${frozenText} must remain byte-stable across Windows and Linux checkouts`,
+    );
+  }
+
   const ciWorkflow = readFileSync(join(ROOT, ".github", "workflows", "ci.yml"), "utf8");
+  assert.match(
+    ciWorkflow,
+    /name:\s+Build the exact production Docker image\s+run:\s+docker build --tag archon-qwen-autopilot:ci \./,
+    "hosted CI must build the same production Dockerfile used by deploy/redeploy.sh",
+  );
   const pgvectorImages = [...ciWorkflow.matchAll(/^\s*image:\s+(pgvector\/pgvector:\S+)/gm)].map(
     (match) => match[1]!,
   );
