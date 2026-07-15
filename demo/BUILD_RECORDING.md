@@ -15,8 +15,9 @@ project, a chat attachment, or a desktop scratch file as the only copy.
   **`321b6c5440a365fe346d2c446e141e9c5d33854c`**.
 - Project-contained redacted release evidence records exact checkout, immutable
   post-merge CI, production build, schema/bootstrap, least privilege,
-  cross-database denial, health/readiness/deep readiness, a real-Qwen
-  intake→PENDING smoke with targeted cleanup, and public TLS canaries for that SHA.
+  cross-database denial, health/readiness/deep readiness, a live
+  `qwen-vl-max` extraction, a real `qwen-plus` multi-step intake→PENDING smoke with
+  authenticated rejection and targeted cleanup, and public TLS canaries for that SHA.
 - A later documentation/media-only submission commit may legitimately differ from
   the deployed application SHA. Record both identities and describe them accurately.
 - Any later change to runtime code, dependencies, Docker context, deployment scripts,
@@ -83,14 +84,14 @@ Acceptance is all-or-nothing:
   visible in the captured frame.
 - [x] An authenticated synthetic invoice reached durable `PENDING`; its proposal
   carries the final decision model ID and no sink has fired.
-- [ ] A fresh sample document extraction carries the final vision model ID, then
-  feeds the same bounded loop.
+- [x] A fresh sample document extraction carried the final vision model ID and then
+  fed the same bounded loop.
 - [x] An unauthenticated `/pending` request fails closed, while the private reviewer
   path works. Do not display the credential.
 - [x] Smoke work items and vendor-memory rows were removed through the approved cleanup
   path after capture; no stale PENDING card is left for judges.
 - [x] Public UI, `/health`, `/ready`, and TLS were tested after the exact deployment.
-- [ ] Recheck `/docs`, the private judge path, and the fresh vision flow while making
+- [ ] Recheck `/docs`, the private judge path, and the proven vision flow while making
   the sanitized incognito/off-network final capture.
 
 Do not claim a model from configuration alone. A configured model ID proves intent;
