@@ -493,7 +493,7 @@ def scene_eval(cap):
     d.text((x0 + 520, y0 + 66), "final policy agreement", font=font("sans", 42), fill=TEXT)
     d.text((x0 + 520, y0 + 128), "not a live-Qwen accuracy claim", font=font("mono", 30), fill=EMERALD)
     d.text((x0 + 44, y0 + 200),
-           "avg 2.5 autonomous read/analyze steps before any proposal",
+           "avg 2.4 autonomous read/analyze steps before any proposal",
            font=font("sans", 36), fill=MUTED)
     # Zero misses.
     fy = y0 + 340
@@ -639,7 +639,7 @@ def build_beats(assets) -> list[Beat]:
     # 6 · Measured evidence
     add("06-evidence",
         "The deterministic workflow matches all twenty-two developer-labelled regression "
-        "cases, with an average two-point-five autonomous evidence steps before a proposal. "
+        "cases, with an average two-point-four autonomous evidence steps before a proposal. "
         "That is not live-model accuracy. Separate same-attempt, hash-bound Qwen decision "
         "and vision protocols retain raw outcomes, errors, stability, latency and promotion gates.",
         lambda: scene_eval(

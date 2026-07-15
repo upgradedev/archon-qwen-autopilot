@@ -46,7 +46,7 @@ point of consequence:
 4. **Decide via Qwen function-calling** — `qwen-plus` is handed a real tool set and
    **chooses exactly one** action — `draft_journal_entry`, `draft_payment`,
    `draft_vendor_reply`, or `flag_for_review` — filling its arguments and
-   self-reporting a reasoning + confidence.
+   self-reporting a concise rationale + confidence.
 5. **The gate** — with a valid reviewer credential, the proposal is persisted as
    **PENDING**; unauthenticated HTTP receives only an isolated non-durable preview.
    **Nothing executes.** A
@@ -139,9 +139,10 @@ plants a hijack in the documented attacker-controllable
 surface (vendor name, reference, tax id, line item, raw passthrough, fake system
 prompt) and asserts the same invariant for each: at most a PENDING proposal, **no**
 side-effect sink fires, the proposed tool is never the attacker's payment, and
-`confidence != 1`. We captured the same defense against **live `qwen-plus`** on a
-cleanly reconciling invoice (all rules pass, so there is no math excuse): it proposed
-a routine journal entry, PENDING, never the demanded payment.
+`confidence != 1`. The final release proof re-runs the same cleanly reconciling
+hostile-input canary on the configured Qwen path. We claim that live result only when
+the exact-release capture exists; the structural gate remains the safety evidence
+even if a model proposes the attacker's requested action.
 
 We then extended that same defense to the **document-input vector** — the front door
 where a judge uploads a real file, not JSON. Three added layers: a **magic-byte sniff**
@@ -183,7 +184,7 @@ invoice. The test asserts the poison genuinely **is** recalled into the agent's 
 (`item.recalled` contains the mark — non-vacuous), yet intake yields at most a **PENDING**
 proposal with **zero** ledger/payment/email/review side-effects, the injected
 `confidence 1.0` never forges the gate confidence (`≤ 0.95`), and the poison never leaks
-into the decider's reasoning/observation trace. Exactly **one** side-effect fires — and
+into the tool/observation trace and concise model rationale. Exactly **one** side-effect fires — and
 only when a human approves; a second approve is refused (the gate is terminal).
 
 ### An MCP server + a custom-skills catalog
@@ -257,7 +258,8 @@ every miss; no live score is claimed until that clean-commit artifact exists.
   decider path — **22 / 22 (100.0%)** offline as a gated regression guard (a
   deterministic-policy number, not a model-quality claim), with the online `qwen-plus`
   decision-quality number captured by running with a key. Every scenario takes at
-  least two autonomous steps; the verified average is **2.5**.
+  least two autonomous steps; the verified average is **2.4** (53/22, rounded to one
+  decimal).
 - **The memory write-back loop, working end to end.** A vendor seen once is
   recognised next time; the new-vendor → recurring-vendor transition is demonstrable
   on screen and covered by tests.

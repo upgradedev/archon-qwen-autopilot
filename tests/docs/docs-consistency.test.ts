@@ -6,8 +6,9 @@
 //            tool catalog EXCLUDES the human terminal actions approve/amend/reject).
 //   CHECK 2  Mermaid diagram ↔ modules — every code-component node maps to a real file.
 //   CHECK 3  A committed golden (claims.golden.json) pins the headline numbers (eval
-//            22/22, MCP tools, skill split, the security invariant) and asserts the
-//            README's stated versions match, so future drift is caught.
+//            22/22 + measured autonomy, MCP tools, skill split, the security
+//            invariant) and asserts the README's stated versions match, so future
+//            drift is caught.
 //   CHECK 4  Every local README link resolves, and every Markdown fragment points to
 //            a real GitHub-style heading anchor (no silently broken judge navigation).
 //   CHECK 5  Judge-facing SMTP claims stop at awaited transport acceptance and never
@@ -43,6 +44,7 @@ import { analysisToolDefs, ANALYSIS_TOOL_NAMES } from "../../src/ap/analysis-too
 import { toolDefs, TERMINAL_TOOL_NAMES } from "../../src/ap/tools.js";
 import { listSkills } from "../../src/skills/catalog.js";
 import { EVAL_SET } from "../../eval/dataset.js";
+import { runScenario, summarizeRows } from "../../eval/lib.js";
 
 // Offline: no key means the decider + embedder + extractor auto-select the Fakes.
 delete process.env.DASHSCOPE_API_KEY;
@@ -348,9 +350,28 @@ test("CHECK 2 · architecture: every code-component node in the Mermaid diagram 
 // CHECK 3 — Snapshot the key claims (golden)
 // ════════════════════════════════════════════════════════════════════════════════
 
-test("CHECK 3 · golden: the eval numbers pinned in claims.golden.json match the README and the dataset", () => {
+test("CHECK 3 · golden: eval result + measured autonomy match the README, dataset and live offline pipeline", async () => {
   // Code anchor: the dataset really has `total` scenarios.
   assert.equal(EVAL_SET.length, GOLDEN.eval.total, "eval dataset size must match the golden total");
+
+  // Behavioral anchor: drive the same deterministic offline pipeline used by the
+  // canonical eval. This prevents a stale hand-copied average from agreeing only
+  // with a stale README/golden pair.
+  const rows = [];
+  for (const scenario of EVAL_SET) rows.push(await runScenario(scenario, "offline"));
+  const summary = summarizeRows(rows);
+  assert.equal(summary.correct, GOLDEN.eval.pass, "offline policy result must match golden");
+  assert.equal(summary.multiStep, GOLDEN.eval.total, "every eval case must remain multi-step");
+  assert.equal(
+    rows.reduce((total, row) => total + row.steps, 0),
+    GOLDEN.eval.totalAutonomousSteps,
+    "measured total autonomous steps must match golden"
+  );
+  assert.equal(
+    Number(summary.avgSteps.toFixed(1)),
+    GOLDEN.eval.avgAutonomousSteps,
+    "measured one-decimal autonomous-step average must match golden"
+  );
 
   // README anchor: it states the eval result as digits — parse and compare within tolerance.
   const m = README.match(/\*\*(\d+)\s*\/\s*(\d+)\s*\((\d+(?:\.\d+)?)%\)\*\*/);
@@ -360,7 +381,7 @@ test("CHECK 3 · golden: the eval numbers pinned in claims.golden.json match the
   assert.ok(Math.abs(Number(m![3]) - GOLDEN.eval.percent) < 0.1, "README eval % must match golden within 0.1");
 
   const avg = README.match(/avg\s+(\d+(?:\.\d+)?)/i);
-  assert.ok(avg, "README should state the average autonomous-step count ('avg 2.5')");
+  assert.ok(avg, "README should state the average autonomous-step count ('avg 2.4')");
   assert.ok(Math.abs(Number(avg![1]) - GOLDEN.eval.avgAutonomousSteps) < 0.05, "README avg-steps must match golden within 0.05");
 });
 

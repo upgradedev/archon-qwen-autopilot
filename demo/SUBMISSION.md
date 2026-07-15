@@ -1,6 +1,6 @@
 # Archon Autopilot — Devpost submission description
 
-*Paste the body below into the Devpost "description" field. Track 4. ~390 words.*
+*Paste the body below into the Devpost "description" field. Track 4. ~495 words.*
 
 ---
 
@@ -20,7 +20,8 @@ surfaced at the approval gate, while safety does not depend on detecting every p
 - **Bounded multi-step ReAct loop** over `qwen-plus` **function-calling**: the agent
   chains autonomous, side-effect-free tools — recall vendor history → validate
   (R1–R6) → check duplicate → compute amount variance — before proposing **exactly
-  one** terminal action. The 22-scenario eval averages **2.5 autonomous steps**.
+  one** terminal action. The 22-scenario eval averages **2.4 autonomous steps**
+  (53 total, rounded to one decimal).
 - **Human-in-the-loop gate**: reviewer-authenticated proposals persist as PENDING
   **with the auditable tool/observation trace plus concise model rationale**; public
   intake is an isolated non-durable preview with redacted evidence. Nothing executes until a person approves, amends, or rejects a durable item.
@@ -43,7 +44,7 @@ surfaced at the approval gate, while safety does not depend on detecting every p
   authenticated decision path; an **MCP server exposes four proposal/read-only tools**
   (`intake_invoice`, `list_pending`, `recall_vendor`, `list_skills`) and cannot decide
   or execute. A **9-skill custom catalog** remains introspectable. The measured offline
-  policy eval is **22/22**, averaging 2.5 autonomous steps. The final Node,
+  policy eval is **22/22**, averaging 2.4 autonomous steps. The final Node,
   real-pgvector, Playwright, adversarial, coverage, and audit totals come directly
   from the immutable CI run for the submitted commit, avoiding stale copied counts.
 
@@ -58,16 +59,19 @@ OpenAI-compatible DashScope endpoint.
 **Live:** https://autopilot.43.106.13.19.sslip.io · **Track 4** · Repo:
 https://github.com/upgradedev/archon-qwen-autopilot
 
+**Architecture:**
+https://github.com/upgradedev/archon-qwen-autopilot/blob/main/docs/judge-architecture.svg
+
 **Eligibility:** first repository commit `8a6359f` on 2026-07-04, after the
 2026-05-26 start; the Track-4 project was materially built during the submission
 period.
 
 ---
 
-**Alibaba Cloud proof:** the DashScope OpenAI-compatible client (base URL + Qwen
-instantiation) is
+**Alibaba Cloud proof:** the required code proof is the DashScope OpenAI-compatible
+client (base URL + Qwen instantiation) in
 [`src/qwen/client.ts`](https://github.com/upgradedev/archon-qwen-autopilot/blob/main/src/qwen/client.ts);
-the final app-specific identity, readiness, decision-canary and vision-canary proof
-will be captured after the final deploy in the nine-beat
-`demo/final-media/autopilot-demo.mp4`. Devpost will use its
-unrestricted Public hosted URL after publication, not a repository blob link.
+the public demo video and gallery proof show the final release's sanitized
+app-specific identity, exact release provenance, readiness, decision canary, and
+vision canary. Devpost uses the video's unrestricted Public hosted URL, not a
+repository blob link.

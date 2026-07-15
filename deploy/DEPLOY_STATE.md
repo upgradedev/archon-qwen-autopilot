@@ -10,11 +10,20 @@ printed or committed.
 > Autopilot container is bound to **`127.0.0.1:9100`**, not a public security-group
 > port.
 >
-> Runtime checkpoint: **historical pre-freeze deployment**. Record the final commit
-> and rerun every check below after the final redeploy; no draft commit is represented
-> as the currently verified submission revision.
+> Release-truth boundary: the hostname being live does not prove which source
+> revision it serves. The audited application release candidate is
+> `321b6c5440a365fe346d2c446e141e9c5d33854c`; it is represented as the final runtime
+> only after the exact checkout, immutable CI, redeploy, readiness, decision and
+> vision canaries pass. See [`../demo/BUILD_RECORDING.md`](../demo/BUILD_RECORDING.md).
+> A later docs/media-only submission HEAD may differ and must be labelled separately.
 >
-> Verified 2026-07-15: real `text-embedding-v4` / `qwen-plus`, PostgreSQL mode, `/ready` 200, real-Qwen intake→pending, unauthenticated `/pending` 401 and authenticated `/pending` 200. The runtime is loopback-only, read-only, `cap-drop ALL`, `512 MiB / 1 CPU / 128 PIDs`, zero restarts, and attached to internal `data` plus `edge` with gateway priority `1`. Its durable ledger mount is owned/writable by uid 1000. Direct public 9100/5432 are blocked.
+> Historical infrastructure checkpoint (not final-release evidence): real
+> `text-embedding-v4` / `qwen-plus`, PostgreSQL mode, real-Qwen intake→pending,
+> unauthenticated `/pending` 401 and authenticated `/pending` 200 were verified on
+> 2026-07-15. Runtime hardening was loopback-only, read-only, `cap-drop ALL`,
+> `512 MiB / 1 CPU / 128 PIDs`, zero restarts, dual `data` + `edge` networks, and a
+> uid-1000 writable durable-ledger mount; direct public 9100/5432 were blocked. These
+> facts must be re-proven for the selected application SHA rather than copied forward.
 
 ## Current production topology
 

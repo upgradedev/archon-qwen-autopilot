@@ -21,7 +21,7 @@
 | Node + real-pgvector suites | Exact pass/fail/skip totals come from the final immutable CI run |
 | Browser end to end | Exact Playwright total comes from the final immutable CI run |
 | Coverage | CI enforces ≥80% statements, branches, functions, and lines; quote final measured values from CI |
-| Decision eval | **22/22 tool choice · 22/22 argument sanity · 22/22 autonomy**, average **2.5** autonomous steps |
+| Decision eval | **22/22 tool choice · 22/22 argument sanity · 22/22 autonomy**, average **2.4** autonomous steps (53/22, rounded) |
 | Readiness | Machine-gated at ≥95% automatable completion; publication items remain user-gated |
 | Adversarial suite | Exact total comes from the final immutable CI run |
 | Dependency audits | Final result comes from the submitted commit's audit job |
