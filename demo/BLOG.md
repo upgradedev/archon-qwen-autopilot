@@ -127,10 +127,11 @@ and `tests/pentest/prompt-injection.test.ts`)
 plants a hijack in the documented attacker-controllable surfaces (vendor name, reference, tax
 id, line item, raw passthrough, fake system prompt) and asserts the same invariant
 for each: **at most a PENDING proposal, no side-effect sink fires, the proposed tool
-is never the attacker's payment, and `confidence != 1`.** We also captured it against
-**live `qwen-plus`** on a *cleanly reconciling* invoice — all six rules pass, so there
-is no math excuse — and the agent still refused the injection, proposing a routine
-journal entry (PENDING), never the demanded payment.
+is never the attacker's payment, and `confidence != 1`.** The final release proof
+re-runs a cleanly reconciling hostile-input canary on the configured Qwen path; do not
+publish a live-model result unless that exact-release capture exists. The structural
+claim does not depend on a favorable model response: even a compromised model cannot
+cross the authenticated execution gate.
 
 Two more suites close the subtler holes and prove the *positive* half of the gate.
 **Poisoned recalled memory** (`tests/pentest/prompt-injection.test.ts`) plants
@@ -229,7 +230,8 @@ test pyramid → the demo smoke → the eval gate, all green on a bare clone.
 The final submission commit is held to Node, real-pgvector, Playwright, adversarial,
 four-metric coverage, secret-scan, and dependency-audit CI gates. Exact suite and
 coverage totals are quoted only from that immutable run. The separately reproducible
-offline policy eval is **22/22** with an average **2.5 autonomous steps**.
+offline policy eval is **22/22** with an average **2.4 autonomous steps** (53/22,
+rounded to one decimal).
 
 ## Honest scope
 

@@ -4,7 +4,8 @@
     "pass": 22,
     "total": 22,
     "percent": 100.0,
-    "avgAutonomousSteps": 2.5
+    "totalAutonomousSteps": 53,
+    "avgAutonomousSteps": 2.4
   },
   "mcpToolCount": 4,
   "skills": {

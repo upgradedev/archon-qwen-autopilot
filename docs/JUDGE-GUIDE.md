@@ -1,7 +1,8 @@
 # Judge guide — Archon Autopilot in five minutes
 
 This is the shortest reproducible path through the Track-4 submission. The public
-intake accepts invoices and streams the agent's reasoning. Queue reads and every
+intake accepts invoices and streams the agent's evidence-gathering tool/observation
+steps. Queue reads and every
 reviewer mutation require the private Bearer credential supplied in the Devpost
 testing instructions. Never put that credential in a screenshot, recording, post,
 repository file, or public URL.
@@ -13,6 +14,11 @@ repository file, or public URL.
 - **Local:** exact Node 24.18.0 (`.nvmrc`), `npm ci`, then start with a reviewer token as shown below.
 - **Supply-chain pins:** [`SUPPLY_CHAIN.md`](SUPPLY_CHAIN.md) records the exact runtime,
   container, k6, Action, and Python locks plus the remaining nondeterministic surfaces.
+- **Security boundary:** [`../SECURITY.md`](../SECURITY.md) states the threat model,
+  enforced invariants, credential handling, and honest residual risks.
+- **Exact release proof:** [`../demo/BUILD_RECORDING.md`](../demo/BUILD_RECORDING.md)
+  distinguishes source target, deployed application SHA, submission HEAD, and
+  exercised runtime model IDs.
 
 ## 90-second judge path
 

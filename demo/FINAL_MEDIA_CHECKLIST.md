@@ -4,6 +4,18 @@ All automatable engineering checks are green. What remains requires a human brow
 recording voice, public hosting, or publication account. Never show the reviewer token,
 `.env`, terminal history containing credentials, cloud keys, or a real vendor address.
 
+Run [`BUILD_RECORDING.md`](BUILD_RECORDING.md) first, then use the concise operator
+sheet in [`VIDEO_RECORDING_CHECKLIST.md`](VIDEO_RECORDING_CHECKLIST.md). The audited
+application release `321b6c5440a365fe346d2c446e141e9c5d33854c` was exact-deployed
+and passed production build, database isolation, health/readiness/deep readiness,
+live `qwen-vl-max` extraction, multi-step `qwen-plus` intake→PENDING, authenticated
+rejection with targeted cleanup, and public TLS canaries on 2026-07-15. The final
+media pass only needs to recapture that proven flow visually and sanitize the proof
+composite. A later documentation/media-only submission HEAD may differ and must be
+labelled separately.
+Recheck the [official rules](https://qwencloud-hackathon.devpost.com/rules) immediately
+before submission; this pack was reconciled to them on 2026-07-15.
+
 ## 1 · Capture these fresh screenshots
 
 Use a clean browser profile at 1440×900 or larger, 100% zoom, no bookmarks/personal
@@ -104,11 +116,16 @@ because they predated the final authenticated UI and were not approved evidence.
 - [ ] Paste [`SUBMISSION.md`](SUBMISSION.md) / [`PROJECT_STORY.md`](PROJECT_STORY.md)
   into the matching fields and remove Markdown that Devpost does not render.
 - [ ] Add the public GitHub repository and confirm the MIT license is visible.
+- [ ] Confirm GitHub identifies the repository as **Public** and detects **MIT** in
+  the repository About/header area, as required by the rules.
 - [ ] Add the live Alibaba HTTPS URL, architecture image, Alibaba/Qwen code proof, and
   final public video URL.
 - [ ] Put the reviewer Bearer token only in Devpost's private testing instructions.
 - [ ] Add the optional public post URL.
 - [ ] Test every link and the full judge flow in a signed-out/incognito window.
+- [ ] Keep the live app, TLS, active private reviewer credential, judge reserve,
+  database, and Qwen quota free and available through the end of judging:
+  **2026-08-11 2:00 PM PDT**.
 - [ ] Submit before **2026-07-20 2:00 PM PDT** and save the confirmation screenshot.
 
 ## Final claim lock

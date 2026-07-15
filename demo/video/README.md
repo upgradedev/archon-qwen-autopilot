@@ -23,8 +23,8 @@ Python 3.11, ffmpeg, and the reviewed hash-locked Pillow/edge-tts dependency gra
 ```bash
 python -m pip install --require-hashes --only-binary=:all: -r demo/video/requirements.lock
 python -m pip check
-PUBLIC_APP_URL=https://FINAL-AUTOPILOT-HOST \
-VIDEO_MODEL_LABEL='VERIFIED-DECIDER · VERIFIED-VISION' \
+PUBLIC_APP_URL=https://autopilot.43.106.13.19.sslip.io \
+VIDEO_MODEL_LABEL='qwen-plus · qwen-vl-max · text-embedding-v4' \
 VOICE_RIGHTS_ATTESTED=true \
 python scripts/build_video.py
 ```

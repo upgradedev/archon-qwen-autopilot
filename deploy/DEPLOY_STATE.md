@@ -10,11 +10,24 @@ printed or committed.
 > Autopilot container is bound to **`127.0.0.1:9100`**, not a public security-group
 > port.
 >
-> Runtime checkpoint: **historical pre-freeze deployment**. Record the final commit
-> and rerun every check below after the final redeploy; no draft commit is represented
-> as the currently verified submission revision.
+> **Exact application release verified 2026-07-15:**
+> `321b6c5440a365fe346d2c446e141e9c5d33854c`. The release controller checked out that
+> SHA, built the production image, bootstrapped the dedicated database role and
+> schema, proved cross-database denial, replaced the hardened container, and passed
+> `/health`, `/ready`, authenticated `/ready/deep`, and a real-Qwen
+> intake→PENDING→targeted-cleanup smoke. Public UI, health and readiness also
+> returned `200` over valid TLS. The deployment record is redacted and retained only
+> in this project's ignored `.artifacts/` evidence directory.
 >
-> Verified 2026-07-15: real `text-embedding-v4` / `qwen-plus`, PostgreSQL mode, `/ready` 200, real-Qwen intake→pending, unauthenticated `/pending` 401 and authenticated `/pending` 200. The runtime is loopback-only, read-only, `cap-drop ALL`, `512 MiB / 1 CPU / 128 PIDs`, zero restarts, and attached to internal `data` plus `edge` with gateway priority `1`. Its durable ledger mount is owned/writable by uid 1000. Direct public 9100/5432 are blocked.
+> The exercised release proves all three baseline model paths: a
+> `text-embedding-v4` deep probe, `qwen-vl-max` extraction of the bundled synthetic
+> invoice, and a multi-step `qwen-plus` decision that stopped at `PENDING`. The
+> canary was rejected through the authenticated human gate and exactly its work item
+> and vendor-memory row were removed. Final screenshots/video must capture this
+> evidence; configuration alone is never substituted for an exercised model claim.
+> A later docs/media-only submission HEAD may differ from the deployed application
+> SHA and must be labelled separately. See
+> [`../demo/BUILD_RECORDING.md`](../demo/BUILD_RECORDING.md).
 
 ## Current production topology
 

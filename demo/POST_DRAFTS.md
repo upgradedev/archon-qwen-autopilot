@@ -1,7 +1,9 @@
 # Ready-to-publish post drafts
 
 Replace `[VIDEO_URL]` and `[POST_IMAGE_ALT]` only after the final public assets exist.
-The repository and live URLs are already final. Do not include the reviewer token.
+The repository and public hostname are fixed, but publish only after the exact-release
+proof in [`BUILD_RECORDING.md`](BUILD_RECORDING.md) passes. Do not include the reviewer
+token.
 
 ## LinkedIn / long-form social
 
@@ -31,7 +33,7 @@ Two post-approval transports are real when configured: an SMTP vendor reply and 
 restart-safe, fsynced append-only JSONL double-entry ledger. Payment and specialist
 review stay simulated—no claim of a bank or ERP integration.
 
-Measured evidence: **22/22 offline policy eval with 2.5 average autonomous steps**,
+Measured evidence: **22/22 offline policy eval with 2.4 average autonomous steps**,
 plus Node, real-pgvector, Playwright, adversarial, coverage and audit gates. Copy the
 exact final totals from the immutable CI run before publishing; do not reuse an old
 count. The deterministic eval is a regression measurement, not live-model accuracy.
@@ -49,7 +51,7 @@ Demo: [VIDEO_URL]
 Archon Autopilot for the Qwen Cloud Hackathon (Track 4): Qwen recalls, validates,
 dedupes and checks variance. Public callers get an isolated PREVIEW; reviewer-authenticated
 proposals stop PENDING at a human gate. No approve/pay model tool.
-22/22 tuned offline policy · avg 2.5 steps · full security/browser/DB CI gates.
+22/22 tuned offline policy · avg 2.4 steps · full security/browser/DB CI gates.
 
 https://github.com/upgradedev/archon-qwen-autopilot
 
@@ -66,7 +68,7 @@ proposal/read only; authenticated HTTP/UI alone owns decisions.
 
 **3/4** Two real configurable effects live after approval: SMTP vendor reply + a
 restart-safe append-only JSONL ledger. Payment/review are intentionally simulated.
-Evidence: 22/22 offline policy eval, avg 2.5 steps, with final security/browser/DB
+Evidence: 22/22 offline policy eval, avg 2.4 steps, with final security/browser/DB
 totals linked from the submitted commit's immutable CI run.
 
 **4/4** Live on Alibaba Cloud / Qwen, MIT licensed:
@@ -86,7 +88,7 @@ post-approval transports: SMTP and a restart-safe durable JSONL ledger.
 The final submitted commit must have green Node, real-pgvector, Playwright,
 adversarial, four-metric coverage, secret-scan and dependency-audit gates; paste its
 exact immutable CI totals here immediately before publishing. The deterministic
-policy eval is 22/22 and averages 2.5 autonomous steps. Full evidence and honest
+policy eval is 22/22 and averages 2.4 autonomous steps. Full evidence and honest
 limitations are mapped in the repository.
 
 ## Suggested image alt text

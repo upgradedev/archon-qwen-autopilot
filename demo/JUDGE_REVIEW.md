@@ -125,7 +125,7 @@ fail-safe review behavior.
 
 | Measurement | Result | Correct interpretation |
 |---|---:|---|
-| Offline decision eval | **22/22 tool · 22/22 args · 22/22 autonomy; avg 2.5 steps** | Deterministic policy/regression evidence over the real pipeline, not live-Qwen accuracy |
+| Offline decision eval | **22/22 tool · 22/22 args · 22/22 autonomy; avg 2.4 steps (53/22)** | Deterministic policy/regression evidence over the real pipeline, not live-Qwen accuracy |
 | Node + real-pgvector suites | **Final immutable CI totals** | Real-Postgres cases execute in CI; local no-DB skips are explicit |
 | Playwright | **Final immutable CI total** | Served UI flows in Chromium with deterministic providers |
 | Coverage | **Four-metric ≥80% gate; final values from CI** | Statements, branches, functions, and lines all gate the commit |

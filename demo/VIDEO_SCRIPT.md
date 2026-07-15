@@ -31,11 +31,11 @@ not permitted as renderer inputs or gallery evidence.
 ## Build and acceptance
 
 ```bash
-$env:PUBLIC_APP_URL='https://FINAL-AUTOPILOT-HOST'
-$env:VIDEO_MODEL_LABEL='VERIFIED-DECIDER · VERIFIED-VISION'
+$env:PUBLIC_APP_URL='https://autopilot.43.106.13.19.sslip.io'
+$env:VIDEO_MODEL_LABEL='qwen-plus · qwen-vl-max · text-embedding-v4'
 $env:VOICE_RIGHTS_ATTESTED='true' # only after confirming public-use rights
-# Set VIDEO_PROMOTION_EVIDENCE to the repo-contained promotion-pass JSON if the
-# model label contains qwen3.7.
+# Replace the baseline label and set VIDEO_PROMOTION_EVIDENCE to the repo-contained,
+# same-release promotion-pass JSON only if the final model label contains qwen3.7.
 python scripts/build_video.py
 ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 demo/final-media/autopilot-demo.mp4
 ```

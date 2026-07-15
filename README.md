@@ -3,10 +3,17 @@
 [![CI](https://github.com/upgradedev/archon-qwen-autopilot/actions/workflows/ci.yml/badge.svg)](https://github.com/upgradedev/archon-qwen-autopilot/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-Alibaba%20Cloud-ff6a00?logo=alibabacloud&logoColor=white)](https://autopilot.43.106.13.19.sslip.io)
-[![Demo Video](https://img.shields.io/badge/Demo%20Video-final%20capture%20pending-lightgrey?logo=youtube)](demo/FINAL_MEDIA_CHECKLIST.md)
+[![Final Media](https://img.shields.io/badge/Final%20Media-recording%20runbook-lightgrey?logo=youtube)](demo/VIDEO_RECORDING_CHECKLIST.md)
 [![Tests](https://img.shields.io/badge/Tests-full%20pyramid%20CI--gated-brightgreen)](.github/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/Coverage-%E2%89%A580%25%20four--metric%20gate-brightgreen)](.github/workflows/ci.yml)
 [![Project Story](https://img.shields.io/badge/Project%20Story-Devpost-003e54)](demo/PROJECT_STORY.md)
+
+Judge shortcuts: [5-minute guide](docs/JUDGE-GUIDE.md) ·
+[16:9 architecture](docs/judge-architecture.svg) ·
+[claim/evidence matrix](docs/CLAIM_EVIDENCE_MATRIX.md) ·
+[security boundaries](SECURITY.md) ·
+[exact release proof](demo/BUILD_RECORDING.md) ·
+[final recording run sheet](demo/VIDEO_RECORDING_CHECKLIST.md)
 
 Archon Autopilot is a **human-gated accounts-payable (AP) agent**. For each
 incoming vendor invoice it runs a **bounded multi-step ReAct loop** over **Qwen
@@ -332,7 +339,7 @@ curl -s -X POST localhost:9000/approve/<id> -H "authorization: Bearer $REVIEWER_
 **Archon Autopilot is deployed and live on Alibaba Cloud**, over HTTPS:
 
 - **Approval UI:** **https://autopilot.43.106.13.19.sslip.io/** — the browser
-  approval queue (review each Qwen-proposed action + its reasoning + arguments, then
+  approval queue (review each Qwen-proposed action + its concise rationale + arguments, then
   approve / amend / reject). Also at `/ui`.
 - **Health:** https://autopilot.43.106.13.19.sslip.io/health
 - **Readiness:** https://autopilot.43.106.13.19.sslip.io/ready
@@ -367,13 +374,13 @@ Port 9100 must **not** be public. The authoritative runbook is
 
 This agent runs **live on Alibaba Cloud**, on the shared ECS box. Two halves of proof:
 
-**1. App-specific proof (pending final deploy)** — capture the Autopilot ECS/deployment identity plus
-its own `/health`, `/ready`, proposal and authenticated PENDING evidence using
-[`demo/FINAL_MEDIA_CHECKLIST.md`](./demo/FINAL_MEDIA_CHECKLIST.md). The sanitized
-deployment proof will be saved at `demo/final-media/autopilot-alibaba-proof.png`; the
-same evidence will be included in the reviewed nine-beat
-`demo/final-media/autopilot-demo.mp4` after the final revision is deployed and
-re-verified.
+**1. App-specific proof (final-media gated)** — the public hostname is not, by
+itself, proof of the final revision. Accept the deployment claim only when the exact
+application SHA, its immutable CI run, this app's `/health` + `/ready`, authenticated
+`/ready/deep`, and exercised decision + vision model IDs have been freshly captured
+using [`demo/BUILD_RECORDING.md`](./demo/BUILD_RECORDING.md). The sanitized composite
+belongs at `demo/final-media/autopilot-alibaba-proof.png`; the same evidence belongs
+in the reviewed nine-beat `demo/final-media/autopilot-demo.mp4`.
 
 The final sanitized proof must show the app-specific ECS region/service identity
 without exposing instance IDs, administrative principals, key paths or secret-file
@@ -397,8 +404,9 @@ canaries. Runtime model IDs must match the final promoted configuration.
 **same Fastify backend** — no framework, no build step, no CDN. It offers:
 
 - **Upload + real-time process view** — upload a `.json` invoice (or paste one) and
-  click **Process**. The page opens `POST /intake/stream` and renders **each reasoning
-  step live as it arrives** (recall → validate → check duplicate → variance), each
+  click **Process**. The page opens `POST /intake/stream` and renders **each
+  evidence-gathering tool/observation step live as it arrives** (recall → validate →
+  check duplicate → variance), each
   fading in, under a "processing…" header — then shows the proposed action. The
   agent's work is visible *as it happens*, not just the final answer.
 - **Pending queue** — for each proposal: the vendor, amount, the Qwen-proposed tool +
@@ -850,7 +858,8 @@ npm run eval:live -- --write eval/results/qwen-plus-attempt-01.json
 
 - **Offline (deterministic Fakes, gated in CI):** **22 / 22 (100.0%)** tuned policy
   agreement, with **every one of the 22 scenarios taking ≥2 autonomous read/analyze
-  steps** (avg 2.5) before the terminal action — a **policy / regression** guard
+  steps** (**53 total steps / 22 cases = avg 2.4**, rounded to one decimal) before
+  the terminal action — a **policy / regression** guard
   over the real multi-step pipeline. The previous routing gap for no-parseable-total
   invoices (Scenario 22) is fully resolved: they are now correctly routed to the
   vendor-reply email tool (`draft_vendor_reply`).
