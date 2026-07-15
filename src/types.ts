@@ -104,7 +104,8 @@ export type LoopStopReason =
   | "max_steps_fallback" // the step budget was exhausted → deterministic flag_for_review
   | "no_progress_fallback" // the model looped without progress → deterministic flag_for_review
   | "deadline_fallback" // the wall-clock run budget was exceeded → deterministic flag_for_review
-  | "extraction_confidence_guard"; // Qwen-VL read was too uncertain → deterministic human review
+  | "extraction_confidence_guard" // Qwen-VL confidence was too low → deterministic human review
+  | "source_extraction_guard"; // a critical payable value was inferred, not read → deterministic review
 
 // ── Work item (a unit of AP work moving through the HITL gate) ──────────────────
 

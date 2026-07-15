@@ -815,8 +815,9 @@ runs the eval (22/22), measures the learning-from-corrections delta, drives a
 prompt-injection through the real agent (asserting no auto-execute + no forged gate),
 invokes **both real sinks** through their transport seams, and verifies the
 docs/video/architecture surface. Checks that need a human with credentials or a browser
-— live SMTP transport evidence, a hosted video URL, a live-box redeploy — are reported
-`user-gated`, never auto-claimed.
+— final playback review, a hosted video URL, a live-box redeploy — are reported
+`user-gated`, never auto-claimed. Recipient delivery is a deliberate non-claim, not an
+unfinished gate: SMTP evidence stops at tested transport submission/acceptance.
 
 The final report and adversarial totals are read from the immutable CI artifact for
 the submission commit. User-owned publication/deployment checks remain visibly

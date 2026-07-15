@@ -381,6 +381,34 @@ test("low Qwen-VL extraction confidence is distinct in trace and forces human re
   assert.ok(item.findings.some((finding) => finding.rule === "SOURCE_CONFIDENCE" && !finding.passed));
 });
 
+test("a document payable total inferred from subtotal and tax is never treated as source-read", async () => {
+  const { agent } = makeAgent();
+  const { total: _omitted, ...withoutPrintedTotal } = cleanInvoice;
+  const item = await agent.intake({ ...withoutPrintedTotal, confidence: 0.95 });
+
+  assert.equal(item.invoice.total, 120, "normalization keeps the useful arithmetic inference visible");
+  assert.ok(item.invoice.notes.some((note) => note.startsWith("total inferred from subtotal + tax = ")));
+  assert.equal(item.proposed.tool, "flag_for_review");
+  assert.equal(item.proposed.modelId, "policy:source-extraction-guard");
+  assert.equal(item.stopReason, "source_extraction_guard");
+  const sourceStep = item.trace.find((step) => step.tool === "source_extraction_guard");
+  assert.ok(sourceStep);
+  assert.match(sourceStep!.observation, /did not return a readable payable total/i);
+  assert.ok(item.findings.some((finding) => finding.rule === "SOURCE_PAYABLE_TOTAL" && !finding.passed));
+  assert.equal(item.telemetry?.structuralBlock, true);
+});
+
+test("ordinary JSON may retain a transparent total inference without a document-only false positive", async () => {
+  const { agent } = makeAgent();
+  const { total: _omitted, ...withoutTotal } = cleanInvoice;
+  const item = await agent.intake(withoutTotal);
+
+  assert.equal(item.invoice.extraction_confidence, null);
+  assert.equal(item.invoice.total, 120);
+  assert.notEqual(item.stopReason, "source_extraction_guard");
+  assert.ok(!item.findings.some((finding) => finding.rule === "SOURCE_PAYABLE_TOTAL"));
+});
+
 test("uncertain sink failure stays executing, never auto-retries, and supports audited safe recovery", async () => {
   const memory = new InMemoryStore();
   const store = new InMemoryWorkItemStore();

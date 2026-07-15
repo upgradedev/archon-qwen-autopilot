@@ -6,7 +6,7 @@
 //   1. it runs to completion and EXITS 0 (the gate passed);
 //   2. it emits a well-formed readiness.json with automatable completion ≥ 95%;
 //   3. the four rubric criteria are all present, and the honest `user-gated` items
-//      (SMTP-live send, hosted video, live-box redeploy) are surfaced, not auto-claimed.
+//      (final playback, hosted video, live-box redeploy) are surfaced, not auto-claimed.
 //
 // Spawning the real script (rather than importing main(), which calls process.exit)
 // is the point: it proves the CI job's exact command path is green and self-reporting.
@@ -53,13 +53,15 @@ test("readiness gate runs offline, exits 0, and reports ≥95% automatable compl
     "the four criteria carry the Track-4 rubric weights (30/30/25/15)"
   );
 
-  // Honest user-gated items are surfaced (a real SMTP send + hosted video + live box),
-  // never auto-claimed as passing.
+  // Honest user-gated items are surfaced (human playback + hosting + live box),
+  // never auto-claimed as passing. SMTP recipient delivery is intentionally not a
+  // claim and therefore is not mislabeled as unfinished submission work.
   assert.ok(report.totals.userGated >= 3, `expected ≥3 user-gated items, got ${report.totals.userGated}`);
   const gatedIds = new Set(report.userGated.map((g: { id: string }) => g.id));
-  for (const id of ["smtp-live-send", "video-hosted", "live-box-redeploy"]) {
+  for (const id of ["video-present", "video-hosted", "live-box-redeploy"]) {
     assert.ok(gatedIds.has(id), `user-gated item '${id}' must be surfaced`);
   }
+  assert.ok(!gatedIds.has("smtp-live-send"), "recipient delivery is a bounded non-claim, not a release blocker");
 
   // Both real terminal-action sinks are reported wired (the Part-A "agent actually executes" claim).
   const problem = report.criteria.find((c: { name: string }) => c.name === "Problem value");

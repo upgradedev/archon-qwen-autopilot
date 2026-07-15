@@ -77,7 +77,8 @@ token and enforces at least 32 characters.
 
 This evidences a bounded, tool-using `qwen-plus` ReAct loop rather than a one-shot
 classification. Upload validation runs before quota consumption; low or unknown
-extraction confidence is forced to human review.
+extraction confidence, or a payable total inferred because it was not readable in
+the source document, is forced to human review.
 
 ## 2 · Inspect the PENDING proposal
 

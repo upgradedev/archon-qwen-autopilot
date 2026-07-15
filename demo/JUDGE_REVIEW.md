@@ -110,8 +110,9 @@ execution tool, and a reviewer must authorize the exact action.
 Document intake accepts PDF/PNG/JPG and defaults to a 10 MiB/three-page limit. A PDF
 above the cap is rejected as a whole; it is never silently truncated. Extension/MIME and magic bytes are checked; PDFs are
 rasterized under a timeout, Qwen calls have a timeout, and model output is narrowed to
-canonical fields. Low or missing extraction confidence and incomplete finance fields
-force review. Still:
+canonical fields. Low or missing extraction confidence, incomplete finance fields,
+and a payable total inferred because the document total was unreadable force review.
+Still:
 
 - magic-byte sniffing is not malware scanning or content disarm;
 - relevance and injection findings are advisory rather than hard rejection;
@@ -130,7 +131,7 @@ fail-safe review behavior.
 | Playwright | **Final immutable CI total** | Served UI flows in Chromium with deterministic providers |
 | Coverage | **Four-metric ≥80% gate; final values from CI** | Statements, branches, functions, and lines all gate the commit |
 | Adversarial | **Final immutable CI total** | Repository threat cases, not proof against every future attack |
-| Readiness | **≥95% automatable gate + explicit user-gated work** | Live mailbox/video/deploy evidence is never auto-claimed |
+| Readiness | **≥95% automatable gate + explicit user-gated work** | Final playback/hosting and deployment capture are never auto-claimed; recipient delivery is not a claim |
 | Audits | **Final immutable CI result** | Snapshot of advisories for the submitted commit, not a permanent guarantee |
 
 ## Remaining action

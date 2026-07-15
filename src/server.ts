@@ -64,6 +64,7 @@ import { scanForInjection } from "./qwen/injection-scan.js";
 import { assessRelevance } from "./qwen/relevance.js";
 import {
   EXTRACTION_REVIEW_THRESHOLD,
+  hasInferredPayableTotal,
   hasLowExtractionConfidence,
 } from "./ap/extraction-confidence.js";
 import { hasQwenCreds } from "./qwen/client.js";
@@ -1547,16 +1548,22 @@ export const LOW_CONFIDENCE_THRESHOLD = Number(process.env.LOW_CONFIDENCE_THRESH
 export function withReviewFlags(item: WorkItem): WorkItem & {
   lowConfidence: boolean;
   lowExtractionConfidence: boolean;
+  inferredPayableTotal: boolean;
   requiresCarefulReview: boolean;
 } {
   const c = item.proposed?.confidence;
   const lowConfidence = typeof c === "number" && c < LOW_CONFIDENCE_THRESHOLD;
   const lowExtractionConfidence = hasLowExtractionConfidence(item.invoice.extraction_confidence);
+  const inferredPayableTotal = hasInferredPayableTotal(
+    item.invoice.extraction_confidence,
+    item.invoice.notes ?? []
+  );
   return {
     ...item,
     lowConfidence,
     lowExtractionConfidence,
-    requiresCarefulReview: lowConfidence || lowExtractionConfidence,
+    inferredPayableTotal,
+    requiresCarefulReview: lowConfidence || lowExtractionConfidence || inferredPayableTotal,
   };
 }
 
@@ -1585,7 +1592,7 @@ export function buildImpactMetrics(
     catches: {
       duplicate: items.filter((i) => i.telemetry?.duplicateCaught || i.findings.some((f) => f.rule === "R5" && !f.passed)).length,
       anomaly: items.filter((i) => i.telemetry?.anomalyCaught || i.findings.some((f) => f.rule === "R6" && !f.passed)).length,
-      structural: items.filter((i) => i.telemetry?.structuralBlock || i.findings.some((f) => ["R1", "R2", "R3", "R4", "SOURCE_CONFIDENCE"].includes(f.rule) && !f.passed)).length,
+      structural: items.filter((i) => i.telemetry?.structuralBlock || i.findings.some((f) => ["R1", "R2", "R3", "R4", "SOURCE_CONFIDENCE", "SOURCE_PAYABLE_TOTAL"].includes(f.rule) && !f.passed)).length,
     },
     humanGate: {
       touches: items.reduce((s, i) => s + (i.telemetry?.humanTouches ?? (i.decidedAt ? 1 : 0)), 0),

@@ -31,7 +31,11 @@ import { AutopilotLoop } from "../ap/loop.js";
 import { canonicalReference, canonicalVendorKey, normalizeInvoice } from "../ap/normalize.js";
 import { assertValidToolArgs, toolByName } from "../ap/tools.js";
 import { toRecalledFact } from "../ap/validate.js";
-import { EXTRACTION_REVIEW_THRESHOLD, hasLowExtractionConfidence } from "../ap/extraction-confidence.js";
+import {
+  EXTRACTION_REVIEW_THRESHOLD,
+  hasInferredPayableTotal,
+  hasLowExtractionConfidence,
+} from "../ap/extraction-confidence.js";
 import type { Sinks } from "../ap/sinks.js";
 import { sameMaterialInvoice, type WorkItemStore } from "../ap/workitem-store.js";
 import type {
@@ -127,49 +131,72 @@ export class AutopilotAgent {
     opts.signal?.throwIfAborted();
 
     // Qwen-VL extraction confidence and Qwen's decision confidence are different
-    // signals. A low-quality source read deterministically overrides any proposed
-    // financial action with human review, and the override is explicit in the trace.
-    if (hasLowExtractionConfidence(invoice.extraction_confidence)) {
+    // signals. A low-quality source read, or a payable total inferred because the
+    // source did not provide it, deterministically overrides any proposed financial
+    // action with human review. The exact source reason stays explicit in the trace.
+    const lowExtractionConfidence = hasLowExtractionConfidence(invoice.extraction_confidence);
+    const inferredPayableTotal = hasInferredPayableTotal(invoice.extraction_confidence, invoice.notes);
+    if (lowExtractionConfidence || inferredPayableTotal) {
       const sourceConfidence = invoice.extraction_confidence!;
       const originalTool = proposed.tool;
+      const sourceReasons = [
+        ...(lowExtractionConfidence
+          ? [
+              `Qwen-VL extraction confidence ${sourceConfidence.toFixed(3)} is below the ` +
+                `${EXTRACTION_REVIEW_THRESHOLD.toFixed(3)} source-quality threshold.`,
+            ]
+          : []),
+        ...(inferredPayableTotal
+          ? [
+              `Qwen-VL did not return a readable payable total; normalization inferred ` +
+                `${invoice.currency} ${invoice.total?.toFixed(2) ?? "unknown"} from subtotal + tax.`,
+            ]
+          : []),
+      ];
+      const guardName = inferredPayableTotal ? "source_extraction_guard" : "extraction_confidence_guard";
       const observation =
-        `Qwen-VL extraction confidence ${sourceConfidence.toFixed(3)} is below the ` +
-        `${EXTRACTION_REVIEW_THRESHOLD.toFixed(3)} source-quality threshold. ` +
-        `The ${originalTool} proposal was replaced with mandatory human review.`;
+        `${sourceReasons.join(" ")} The ${originalTool} proposal was replaced ` +
+        "with mandatory human review.";
       const guardStep: TraceStep = {
         step: trace.length + 1,
-        tool: "extraction_confidence_guard",
-        args: { extractionConfidence: sourceConfidence, threshold: EXTRACTION_REVIEW_THRESHOLD },
+        tool: guardName,
+        args: {
+          extractionConfidence: sourceConfidence,
+          threshold: EXTRACTION_REVIEW_THRESHOLD,
+          payableTotalWasInferred: inferredPayableTotal,
+        },
         observation,
-        reasoning: "A weak document read must be verified before any AP action is approved.",
+        reasoning: "A weak or inferred document read must be verified before any AP action is approved.",
       };
       trace = [...trace, guardStep];
       opts.onStep?.(guardStep);
       findings = [
         ...findings,
-        {
-          rule: "SOURCE_CONFIDENCE",
-          passed: false,
-          severity: "warn",
-          message: observation,
-        },
+        ...(lowExtractionConfidence
+          ? [{ rule: "SOURCE_CONFIDENCE", passed: false, severity: "warn" as const, message: observation }]
+          : []),
+        ...(inferredPayableTotal
+          ? [{ rule: "SOURCE_PAYABLE_TOTAL", passed: false, severity: "warn" as const, message: observation }]
+          : []),
       ];
       proposed = {
         tool: "flag_for_review",
         args: {
-          reason: `Verify the Qwen-VL extraction before processing (source confidence ${sourceConfidence.toFixed(3)}).`,
+          reason: inferredPayableTotal
+            ? "Verify the payable total against the source document; it was inferred from subtotal + tax."
+            : `Verify the Qwen-VL extraction before processing (source confidence ${sourceConfidence.toFixed(3)}).`,
           priority: "high",
         },
-        reasoning: "Deterministic source-quality guard: low Qwen-VL extraction confidence requires human review.",
+        reasoning: "Deterministic source-quality guard: weak or inferred Qwen-VL evidence requires human review.",
         confidence: 0,
-        modelId: "policy:extraction-confidence-guard",
+        modelId: inferredPayableTotal ? "policy:source-extraction-guard" : "policy:extraction-confidence-guard",
       };
-      stopReason = "extraction_confidence_guard";
+      stopReason = guardName;
       telemetry = {
         ...telemetry,
         finalProposedTool: "flag_for_review",
         policyOverride: true,
-        policyOverrideSource: "extraction_confidence_guard",
+        policyOverrideSource: guardName,
         policyOverrideReason: observation,
       };
     }
@@ -190,7 +217,7 @@ export class AutopilotAgent {
         intakeToProposalMs: Math.round((performance.now() - intakeStartedAt) * 100) / 100,
         duplicateCaught: failed("R5"),
         anomalyCaught: failed("R6"),
-        structuralBlock: ["R1", "R2", "R3", "R4", "SOURCE_CONFIDENCE"].some(failed),
+        structuralBlock: ["R1", "R2", "R3", "R4", "SOURCE_CONFIDENCE", "SOURCE_PAYABLE_TOTAL"].some(failed),
         humanTouches: 0,
       },
       inputSecurity: {
