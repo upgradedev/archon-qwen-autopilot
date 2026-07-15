@@ -4,7 +4,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { TOOLS, toolByName, toolDefs, META_FIELDS } from "../../src/ap/tools.js";
+import { TOOLS, toolByName, toolDefs, META_FIELDS, assertValidToolArgs } from "../../src/ap/tools.js";
 import { fakeSinks } from "../../src/ap/sinks.js";
 import { normalizeInvoice } from "../../src/ap/normalize.js";
 
@@ -66,6 +66,23 @@ test("draft_vendor_reply sends an email to the Fake outbox", async () => {
   await toolByName("draft_vendor_reply")!.execute({ subject: "Query", body: "Please confirm your tax id." }, inv, sinks);
   assert.equal(sinks.email.outbox().length, 1);
   assert.equal(sinks.email.outbox()[0]!.subject, "Query");
+});
+
+test("draft_vendor_reply accepts exactly one canonical mailbox and rejects recipient lists", () => {
+  const base = { to: "billing@example.test", subject: "Invoice query", body: "Please confirm the missing invoice details." };
+  assert.doesNotThrow(() => assertValidToolArgs("draft_vendor_reply", base, inv));
+  for (const to of [
+    "one@example.test,two@example.test",
+    "one@example.test;two@example.test",
+    "Vendor Billing <one@example.test>",
+    "bad@@example.test",
+    "one@localhost",
+  ]) {
+    assert.throws(
+      () => assertValidToolArgs("draft_vendor_reply", { ...base, to }, inv),
+      /exactly one canonical mailbox/i
+    );
+  }
 });
 
 test("flag_for_review raises an escalation and clamps an invalid priority to normal", async () => {

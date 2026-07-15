@@ -30,6 +30,7 @@ test("defaultSinks(): SMTP_HOST + LEDGER_JSONL_PATH set → both REAL sinks are 
   const saved = { ...process.env };
   try {
     process.env.SMTP_HOST = "smtp.example.test";
+    process.env.SMTP_FROM = "ap@example.test";
     process.env.LEDGER_JSONL_PATH = "/tmp/archon-readiness-unused.jsonl"; // never written (no post() here)
     const s = defaultSinks();
     assert.ok(s.email instanceof SmtpEmailSink, "SMTP_HOST set → real SMTP email sink");
@@ -46,6 +47,7 @@ test("defaultSinks(): only SMTP_HOST set → real email, Fake ledger (each sink 
   const saved = { ...process.env };
   try {
     process.env.SMTP_HOST = "smtp.example.test";
+    process.env.SMTP_FROM = "ap@example.test";
     delete process.env.LEDGER_JSONL_PATH;
     const s = defaultSinks();
     assert.ok(s.email instanceof SmtpEmailSink, "SMTP_HOST set → real email sink");

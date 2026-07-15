@@ -14,16 +14,22 @@
 
 import { expect, type Page, type Locator } from "@playwright/test";
 
-// A minimal valid PNG: the 8-byte signature the upload magic-byte sniff requires,
-// then filler. The offline FakeExtractionClient ignores the bytes and returns the
-// canonical demo invoice (Meridian Logistics), so extraction is deterministic.
-const PNG_SIG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+export const E2E_REVIEWER_TOKEN = "e2e-only-reviewer-token-32-characters";
+
+// A genuinely valid 1 x 1 PNG. The document preflight validates the mandatory
+// IHDR dimensions (not just the signature), while the offline FakeExtractionClient
+// ignores the pixels and returns the canonical demo invoice deterministically.
+const MINIMAL_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+  "base64",
+);
+const PNG_SIG = [...MINIMAL_PNG.subarray(0, 8)];
 
 export function pngFile(name = "invoice.png") {
   return {
     name,
     mimeType: "image/png",
-    buffer: Buffer.concat([Buffer.from(PNG_SIG), Buffer.from(" e2e fake png bytes")]),
+    buffer: Buffer.from(MINIMAL_PNG),
   };
 }
 
@@ -81,7 +87,7 @@ export function installGuard(page: Page): { violations: string[]; assertClean: (
     const status = res.status();
     if (status < 400) return;
     if (/\/favicon\.ico(\?|$)/.test(url)) return;
-    // Only guard the app's own origin — external links (the peer MemoryAgent) are
+    // Only guard the app's own origin — external links are
     // never navigated in these journeys, but be explicit.
     if (!/^https?:\/\/127\.0\.0\.1|^https?:\/\/localhost/.test(url)) return;
     violations.push(`${status} ${res.request().method()} ${url}`);
@@ -105,9 +111,18 @@ export async function dismissTour(page: Page) {
 
 // Navigate to the app and wait until the initial queue load has completed (the
 // pending count label is populated by load()). Dismisses the auto-tour by default.
-export async function gotoReady(page: Page, opts: { dismiss?: boolean } = {}) {
+export async function gotoReady(
+  page: Page,
+  opts: { dismiss?: boolean; reviewerToken?: string | null } = {},
+) {
+  const reviewerToken = opts.reviewerToken === undefined ? E2E_REVIEWER_TOKEN : opts.reviewerToken;
+  await page.addInitScript((token) => {
+    const storage = (globalThis as any).sessionStorage;
+    if (token) storage.setItem("archonReviewerToken", token);
+    else storage.removeItem("archonReviewerToken");
+  }, reviewerToken);
   await page.goto("/");
-  await expect(page.locator("#count")).toContainText("item");
+  await expect(page.locator("#count")).toContainText(reviewerToken ? "item" : "locked");
   if (opts.dismiss !== false) await dismissTour(page);
 }
 
@@ -117,13 +132,19 @@ export async function gotoReady(page: Page, opts: { dismiss?: boolean } = {}) {
 // state other tests left behind (we only ever assert on the DELTA around an action).
 export function pendingCount(page: Page): Promise<number> {
   return page.evaluate(async () => {
-    const j = (await (await fetch("/pending")).json()) as { pending: unknown[] };
+    const token = (globalThis as any).sessionStorage.getItem("archonReviewerToken") || "";
+    const response = await fetch("/pending", { headers: { authorization: `Bearer ${token}` } });
+    if (!response.ok) throw new Error(`pending count failed: HTTP ${response.status}`);
+    const j = (await response.json()) as { pending: unknown[] };
     return j.pending.length;
   });
 }
 export function decidedCount(page: Page): Promise<number> {
   return page.evaluate(async () => {
-    const j = (await (await fetch("/decided")).json()) as { decided: unknown[] };
+    const token = (globalThis as any).sessionStorage.getItem("archonReviewerToken") || "";
+    const response = await fetch("/decided", { headers: { authorization: `Bearer ${token}` } });
+    if (!response.ok) throw new Error(`decided count failed: HTTP ${response.status}`);
+    const j = (await response.json()) as { decided: unknown[] };
     return j.decided.length;
   });
 }

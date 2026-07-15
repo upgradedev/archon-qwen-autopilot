@@ -9,6 +9,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { getPool, closePool } from "../src/db/client.js";
+import { safeOperationalSummary } from "../src/security/operational-error.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const schemaPath = join(here, "..", "src", "db", "schema.sql");
@@ -53,6 +54,6 @@ function stripComments(fragment: string): string {
 }
 
 main().catch((err) => {
-  console.error("Schema apply failed:", err);
+  console.error(`Schema apply failed: ${safeOperationalSummary(err, "schema-apply")}`);
   process.exit(1);
 });

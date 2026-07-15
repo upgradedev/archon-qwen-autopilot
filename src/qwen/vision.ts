@@ -23,10 +23,10 @@
 // tax id, subtotal, tax, total). No locale, language, or national-scheme reference.
 
 import { spawn } from "node:child_process";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createQwenClient, hasQwenCreds } from "./client.js";
+import { createQwenClient, hasQwenCreds, requiresNonThinkingJsonOrTools } from "./client.js";
 import type { RawInvoice } from "../types.js";
 
 // The vision model. qwen-vl-max is the DashScope vision model verified for this
@@ -42,11 +42,30 @@ function pdftoppmBin(): string {
 }
 
 // Upload guardrails. 10 MB is generous for a single invoice while bounding memory
-// and the vision spend; only the first few PDF pages are ever rasterized.
+// and the vision spend; PDFs above the page cap are rejected rather than silently
+// extracting a partial document as though it were complete.
 export const MAX_DOCUMENT_BYTES = boundedEnvInt("MAX_DOCUMENT_BYTES", 10 * 1024 * 1024, 1024, 25 * 1024 * 1024);
-const MAX_PDF_PAGES = boundedEnvInt("MAX_PDF_PAGES", 3, 1, 10);
-const VISION_TIMEOUT_MS = boundedEnvInt("VISION_TIMEOUT_MS", 45_000, 1_000, 120_000);
-const POPPLER_TIMEOUT_MS = boundedEnvInt("POPPLER_TIMEOUT_MS", 20_000, 1_000, 60_000);
+export const MAX_PDF_PAGES = boundedEnvInt("MAX_PDF_PAGES", 3, 1, 10);
+// Poppler output is bounded independently from the compressed upload. The longest
+// side of every rendered page is capped, and the combined PNG files must remain
+// within a second byte budget before any file is read/base64-expanded in Node.
+export const MAX_PDF_RENDER_DIMENSION = boundedEnvInt("MAX_PDF_RENDER_DIMENSION", 2200, 512, 4096);
+export const MAX_PDF_RENDERED_BYTES = boundedEnvInt(
+  "MAX_PDF_RENDERED_BYTES",
+  48 * 1024 * 1024,
+  1024 * 1024,
+  128 * 1024 * 1024
+);
+// Compressed PNG/JPEG bytes are a poor proxy for decode cost. Parse only the
+// bounded image headers before quota/provider admission and reject decompression
+// bombs whose canvas would exceed the container/provider safety envelope.
+export const MAX_IMAGE_DIMENSION = boundedEnvInt("MAX_IMAGE_DIMENSION", 8192, 512, 32_768);
+export const MAX_IMAGE_PIXELS = boundedEnvInt("MAX_IMAGE_PIXELS", 32_000_000, 1_000_000, 100_000_000);
+export const VISION_TIMEOUT_MS = boundedEnvInt("VISION_TIMEOUT_MS", 45_000, 1_000, 120_000);
+export const POPPLER_TIMEOUT_MS = boundedEnvInt("POPPLER_TIMEOUT_MS", 20_000, 1_000, 60_000);
+export const POPPLER_STDERR_MAX_BYTES = boundedEnvInt("POPPLER_STDERR_MAX_BYTES", 8192, 1024, 65_536);
+
+export class DocumentPageLimitError extends Error {}
 
 // The accepted document types, keyed by extension → mime, so validation can check
 // BOTH the filename and the declared content-type (defence in depth).
@@ -72,7 +91,15 @@ export interface ExtractionResult {
 
 export interface ExtractionClient {
   readonly modelId: string;
-  extract(doc: UploadedDocument): Promise<ExtractionResult>;
+  extract(doc: UploadedDocument, options?: ExtractionOptions): Promise<ExtractionResult>;
+}
+
+export interface ExtractionOptions {
+  signal?: AbortSignal;
+  // Internal response boundary. Server callers pass admission ownership so an SDK
+  // promise that ignores AbortSignal cannot free its occupied provider/document slots.
+  retainProviderCallUntilSettled?: (operation: Promise<unknown>) => void;
+  deadlineMs?: number;
 }
 
 // ── Validation ────────────────────────────────────────────────────────────────
@@ -217,10 +244,11 @@ export class QwenVisionExtractionClient implements ExtractionClient {
     this.client = client ?? (createQwenClient() as unknown as VisionChat);
   }
 
-  async extract(doc: UploadedDocument): Promise<ExtractionResult> {
+  async extract(doc: UploadedDocument, options: ExtractionOptions = {}): Promise<ExtractionResult> {
+    options.signal?.throwIfAborted();
     const isPdf = extname(doc.filename) === ".pdf" || doc.mimetype === "application/pdf";
     const pages: Array<{ b64: string; mime: string }> = isPdf
-      ? await renderPdfToImages(doc.buffer)
+      ? await renderPdfToImages(doc.buffer, options.signal)
       : [{ b64: doc.buffer.toString("base64"), mime: imageMime(doc.filename, doc.mimetype) }];
 
     if (pages.length === 0) {
@@ -235,19 +263,72 @@ export class QwenVisionExtractionClient implements ExtractionClient {
 
     // The vision surface is the SAME OpenAI-compatible chat-completions API; the
     // multi-part user content (image_url + text) is what qwen-vl-max expects.
-    const res = await withTimeout(
-      this.client.chat.completions.create({
-        model: this.modelId,
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content },
-        ],
-        max_tokens: 2048,
-        temperature: 0.1,
-      }),
-      VISION_TIMEOUT_MS,
-      "Qwen vision extraction"
+    const candidate = requiresNonThinkingJsonOrTools(this.modelId);
+    const controller = new AbortController();
+    const abortFromCaller = () => controller.abort(options.signal?.reason);
+    options.signal?.addEventListener("abort", abortFromCaller, { once: true });
+    type VisionRaceResult =
+      | { kind: "provider-ok"; response: { choices: Array<{ message: { content: string | null } }> } }
+      | { kind: "provider-error"; error: unknown }
+      | { kind: "deadline" }
+      | { kind: "caller-abort" };
+    const deadlineMs = Number.isFinite(options.deadlineMs)
+      ? Math.max(1, Math.min(VISION_TIMEOUT_MS, Math.trunc(options.deadlineMs!)))
+      : VISION_TIMEOUT_MS;
+    let resolveBoundary!: (result: VisionRaceResult) => void;
+    const boundary = new Promise<VisionRaceResult>((resolve) => { resolveBoundary = resolve; });
+    const timer = setTimeout(() => resolveBoundary({ kind: "deadline" }), deadlineMs);
+    const callerAborted = () => resolveBoundary({ kind: "caller-abort" });
+    options.signal?.addEventListener("abort", callerAborted, { once: true });
+
+    let providerSettled = false;
+    const provider = Promise.resolve().then(() => this.client.chat.completions.create({
+      model: this.modelId,
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content },
+      ],
+      temperature: 0.1,
+      ...(candidate
+        ? { response_format: { type: "json_object" as const }, enable_thinking: false }
+        : { max_tokens: 2048 }),
+    }, { signal: controller.signal }));
+    const observedProvider: Promise<VisionRaceResult> = provider.then(
+      (response) => {
+        providerSettled = true;
+        return { kind: "provider-ok", response };
+      },
+      (error) => {
+        providerSettled = true;
+        return { kind: "provider-error", error };
+      }
     );
+
+    let res: { choices: Array<{ message: { content: string | null } }> };
+    try {
+      // Close the small check→listener race if the caller aborted between them.
+      if (options.signal?.aborted) {
+        abortFromCaller();
+        callerAborted();
+      }
+      const result = await Promise.race([observedProvider, boundary]);
+      if (result.kind === "provider-ok") {
+        res = result.response;
+      } else if (result.kind === "provider-error") {
+        throw result.error;
+      } else {
+        controller.abort(result.kind === "deadline"
+          ? new Error(`Qwen vision extraction timed out after ${deadlineMs}ms`)
+          : options.signal?.reason);
+        if (!providerSettled) options.retainProviderCallUntilSettled?.(provider);
+        if (result.kind === "caller-abort") throw abortReason(options.signal!);
+        throw new Error(`Qwen vision extraction timed out after ${deadlineMs}ms`);
+      }
+    } finally {
+      clearTimeout(timer);
+      options.signal?.removeEventListener("abort", abortFromCaller);
+      options.signal?.removeEventListener("abort", callerAborted);
+    }
 
     const raw = res.choices?.[0]?.message?.content ?? "{}";
     const data = safeParseJson(cleanJson(raw));
@@ -283,7 +364,8 @@ export const FAKE_EXTRACTED_INVOICE: RawInvoice = {
 export class FakeExtractionClient implements ExtractionClient {
   readonly modelId = "fake-vision";
   constructor(private readonly invoice: RawInvoice = FAKE_EXTRACTED_INVOICE) {}
-  async extract(doc: UploadedDocument): Promise<ExtractionResult> {
+  async extract(doc: UploadedDocument, options: ExtractionOptions = {}): Promise<ExtractionResult> {
+    options.signal?.throwIfAborted();
     const isPdf = extname(doc.filename) === ".pdf" || doc.mimetype === "application/pdf";
     // Deep-clone so a caller mutating the result can't poison the canned fixture.
     return {
@@ -304,22 +386,117 @@ export function defaultExtractionClient(): ExtractionClient {
 // ── PDF → page images via poppler `pdftoppm` ───────────────────────────────────
 // poppler is a system dependency (apt: poppler-utils), installed in the Docker
 // image. It is invoked ONLY on the real extraction path, so CI (which uses the
-// fake) never needs it. Renders at 150 dpi — enough for the vision model to read
-// small print — capping at MAX_PDF_PAGES.
+// fake) never needs it. The page count, longest-side pixels, compressed rendered
+// bytes, execution time, and diagnostic stderr are all independently bounded.
 
-async function renderPdfToImages(pdf: Buffer): Promise<Array<{ b64: string; mime: string }>> {
+export function pdfRenderArgs(inPath: string, outPrefix: string): string[] {
+  return [
+    "-png",
+    "-scale-to",
+    String(MAX_PDF_RENDER_DIMENSION),
+    "-l",
+    String(MAX_PDF_PAGES + 1),
+    inPath,
+    outPrefix,
+  ];
+}
+
+export function validateImageDimensions(buffer: Buffer, ext: string): ValidationOk | ValidationErr {
+  if (ext === ".pdf") return { ok: true, ext, isPdf: true };
+  let dimensions: { width: number; height: number } | null = null;
+  if (ext === ".png") dimensions = pngDimensions(buffer);
+  else if (ext === ".jpg" || ext === ".jpeg") dimensions = jpegDimensions(buffer);
+  if (!dimensions) {
+    return {
+      ok: false,
+      status: 400,
+      error: `the uploaded ${ext.slice(1).toUpperCase()} has no valid bounded image-dimension header`,
+    };
+  }
+  const { width, height } = dimensions;
+  const pixels = width * height;
+  if (width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION || pixels > MAX_IMAGE_PIXELS) {
+    return {
+      ok: false,
+      status: 413,
+      error:
+        `image canvas ${width}x${height} exceeds the ${MAX_IMAGE_DIMENSION}px side / ` +
+        `${MAX_IMAGE_PIXELS}-pixel safety limit`,
+    };
+  }
+  return { ok: true, ext, isPdf: false };
+}
+
+function pngDimensions(buffer: Buffer): { width: number; height: number } | null {
+  // PNG requires IHDR to be the first chunk after the 8-byte signature.
+  if (buffer.length < 24 || buffer.readUInt32BE(8) !== 13 || buffer.toString("ascii", 12, 16) !== "IHDR") {
+    return null;
+  }
+  const width = buffer.readUInt32BE(16);
+  const height = buffer.readUInt32BE(20);
+  return width > 0 && height > 0 ? { width, height } : null;
+}
+
+function jpegDimensions(buffer: Buffer): { width: number; height: number } | null {
+  if (buffer.length < 4 || buffer[0] !== 0xff || buffer[1] !== 0xd8) return null;
+  let offset = 2;
+  const isSof = (marker: number) =>
+    marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker);
+  while (offset < buffer.length) {
+    while (offset < buffer.length && buffer[offset] === 0xff) offset++;
+    if (offset >= buffer.length) return null;
+    const marker = buffer[offset++]!;
+    if (marker === 0xd9 || marker === 0xda) return null;
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue;
+    if (offset + 2 > buffer.length) return null;
+    const length = buffer.readUInt16BE(offset);
+    if (length < 2 || offset + length > buffer.length) return null;
+    if (isSof(marker)) {
+      if (length < 7) return null;
+      const height = buffer.readUInt16BE(offset + 3);
+      const width = buffer.readUInt16BE(offset + 5);
+      return width > 0 && height > 0 ? { width, height } : null;
+    }
+    offset += length;
+  }
+  return null;
+}
+
+export function assertRenderedPdfBudget(sizes: number[]): void {
+  let total = 0;
+  for (const size of sizes) {
+    if (!Number.isSafeInteger(size) || size < 0) throw new Error("invalid rendered PDF output size");
+    total += size;
+    if (total > MAX_PDF_RENDERED_BYTES) {
+      throw new Error(
+        `rendered PDF exceeds the ${MAX_PDF_RENDERED_BYTES}-byte output budget; upload a lower-resolution PDF or image`
+      );
+    }
+  }
+}
+
+async function renderPdfToImages(pdf: Buffer, signal?: AbortSignal): Promise<Array<{ b64: string; mime: string }>> {
+  signal?.throwIfAborted();
   const dir = await mkdtemp(join(tmpdir(), "archon-doc-"));
   const inPath = join(dir, "in.pdf");
   const outPrefix = join(dir, "page");
   try {
     await readFileWrite(inPath, pdf);
-    await runPdftoppm(["-png", "-r", "150", "-l", String(MAX_PDF_PAGES), inPath, outPrefix]);
+    await runPdftoppm(pdfRenderArgs(inPath, outPrefix), signal);
     /* c8 ignore start -- reached only once real poppler produced page PNGs; the offline suite asserts the pdftoppm-missing path instead */
     const files = (await readdir(dir))
       .filter((f) => f.startsWith("page") && f.endsWith(".png"))
       .sort();
+    if (files.length > MAX_PDF_PAGES) {
+      throw new DocumentPageLimitError(
+        `PDF has more than ${MAX_PDF_PAGES} pages; split it or upload only the complete invoice document within the page limit`
+      );
+    }
+    const sizes: number[] = [];
+    for (const f of files) sizes.push((await stat(join(dir, f))).size);
+    assertRenderedPdfBudget(sizes);
     const pages: Array<{ b64: string; mime: string }> = [];
-    for (const f of files.slice(0, MAX_PDF_PAGES)) {
+    for (const f of files) {
       const buf = await readFile(join(dir, f));
       pages.push({ b64: buf.toString("base64"), mime: "image/png" });
     }
@@ -330,22 +507,41 @@ async function renderPdfToImages(pdf: Buffer): Promise<Array<{ b64: string; mime
   }
 }
 
-function runPdftoppm(args: string[]): Promise<void> {
+function runPdftoppm(args: string[], signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
-    let stderr = "";
+    let stderr = Buffer.alloc(0);
+    let stderrTruncated = false;
     let proc: ReturnType<typeof spawn> | undefined;
     let settled = false;
-    let timer: NodeJS.Timeout;
+    let timer: NodeJS.Timeout | undefined;
+    let killFallback: NodeJS.Timeout | undefined;
+    let stopError: Error | undefined;
+    const stopChild = (error: Error) => {
+      stopError = error;
+      if (!proc) return finish(error);
+      proc.kill("SIGKILL");
+      // Normal settlement is always the child's `close` event. This bounded last-
+      // resort prevents a broken platform child-process implementation from
+      // pinning one admission lease forever after SIGKILL.
+      killFallback ??= setTimeout(() => finish(error), 5_000);
+      killFallback.unref?.();
+    };
+    const onAbort = () => {
+      stopChild(abortReason(signal!));
+    };
     const finish = (err?: Error) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
+      if (killFallback) clearTimeout(killFallback);
+      signal?.removeEventListener("abort", onAbort);
       err ? reject(err) : resolve();
     };
     timer = setTimeout(() => {
-      proc?.kill("SIGKILL");
-      finish(new Error(`pdftoppm timed out after ${POPPLER_TIMEOUT_MS}ms`));
+      stopChild(new Error(`pdftoppm timed out after ${POPPLER_TIMEOUT_MS}ms`));
     }, POPPLER_TIMEOUT_MS);
+    if (signal?.aborted) return finish(abortReason(signal));
+    signal?.addEventListener("abort", onAbort, { once: true });
     try {
       proc = spawn(pdftoppmBin(), args, { stdio: ["ignore", "ignore", "pipe"] });
     } catch (err) {
@@ -353,12 +549,23 @@ function runPdftoppm(args: string[]): Promise<void> {
       return;
     }
     proc.on("error", (err) => finish(wrapPopplerError(err)));
-    proc.stderr?.on("data", (d) => (stderr += String(d)));
-    proc.on("close", (code) =>
-      code === 0
-        ? finish()
-        : finish(new Error(`pdftoppm exited with code ${code}${stderr ? `: ${stderr.trim()}` : ""}`))
-    );
+    proc.stderr?.on("data", (value: Buffer | string) => {
+      const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
+      const remaining = POPPLER_STDERR_MAX_BYTES - stderr.length;
+      if (remaining > 0) stderr = Buffer.concat([stderr, chunk.subarray(0, remaining)]);
+      if (chunk.length > Math.max(0, remaining)) stderrTruncated = true;
+    });
+    proc.on("close", (code) => {
+      if (stopError) return finish(stopError);
+      if (code === 0) return finish();
+      const diagnostic = stderr.toString("utf8").trim();
+      const suffix = diagnostic
+        ? `: ${diagnostic}${stderrTruncated ? " [truncated]" : ""}`
+        : stderrTruncated
+          ? ": [stderr truncated]"
+          : "";
+      finish(new Error(`pdftoppm exited with code ${code}${suffix}`));
+    });
   });
 }
 
@@ -453,18 +660,11 @@ function boundedEnvInt(name: string, fallback: number, min: number, max: number)
   return Math.max(min, Math.min(max, Math.trunc(parsed)));
 }
 
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<T>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
+function abortReason(signal: AbortSignal): Error {
+  if (signal.reason instanceof Error) return signal.reason;
+  const error = new Error("operation aborted");
+  error.name = "AbortError";
+  return error;
 }
 
 // Minimal shape of the OpenAI-compatible vision chat call we use — the real
@@ -478,7 +678,10 @@ export interface VisionChat {
         messages: Array<{ role: string; content: unknown }>;
         max_tokens?: number;
         temperature?: number;
-      }): Promise<{ choices: Array<{ message: { content: string | null } }> }>;
+        response_format?: { type: "json_object" };
+        // Alibaba Node/OpenAI-compatible request-body extension (top-level).
+        enable_thinking?: boolean;
+      }, options?: { signal?: AbortSignal }): Promise<{ choices: Array<{ message: { content: string | null } }> }>;
     };
   };
 }

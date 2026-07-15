@@ -3,7 +3,7 @@
 --
 -- Two tables:
 --   agent_memory  — the persistent, cross-session MEMORY the autopilot reasons
---                   over (the Track-1 MemoryAgent foundation). Every durable fact
+--                   over as one internal vendor-evidence input. Every durable fact
 --                   the agent learns — a vendor profile, a processed invoice, an
 --                   executed action outcome — is a natural-language "memory" plus
 --                   its Qwen embedding, recalled by MEANING (cosine) across
@@ -33,8 +33,14 @@ CREATE TABLE IF NOT EXISTS agent_memory (
     embedding     VECTOR(1024) NOT NULL,    -- Qwen text-embedding-v4 embedding of `content`
     embed_model   TEXT NOT NULL,
     importance    REAL NOT NULL DEFAULT 0.5,   -- 0..1 salience
+    idempotency_key TEXT,
     created_at    TIMESTAMPTZ DEFAULT now()
 );
+
+-- Additive upgrade for databases created before crash-safe outcome memory.
+ALTER TABLE agent_memory ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_memory_idempotency_key
+    ON agent_memory (idempotency_key) WHERE idempotency_key IS NOT NULL;
 
 -- HNSW cosine index — no training step, built incrementally as rows are inserted.
 -- `ORDER BY embedding <=> $q LIMIT k` is index-accelerated for semantic recall.
@@ -45,12 +51,19 @@ CREATE INDEX IF NOT EXISTS idx_agent_memory_embedding
 CREATE INDEX IF NOT EXISTS idx_agent_memory_kind ON agent_memory (kind);
 CREATE INDEX IF NOT EXISTS idx_agent_memory_vendor ON agent_memory (vendor);
 CREATE INDEX IF NOT EXISTS idx_agent_memory_source_ref ON agent_memory (source_ref);
+CREATE INDEX IF NOT EXISTS idx_agent_memory_embed_model ON agent_memory (embed_model);
 -- Deterministic duplicate lookup keys (new rows carry both in metadata). These
 -- expression indexes keep R5 independent of semantic top-k recall.
 CREATE INDEX IF NOT EXISTS idx_agent_memory_invoice_vendor_key
     ON agent_memory ((metadata->>'vendor_key')) WHERE kind = 'invoice';
 CREATE INDEX IF NOT EXISTS idx_agent_memory_invoice_vendor_ref_key
     ON agent_memory ((metadata->>'vendor_ref_key')) WHERE kind = 'invoice';
+CREATE INDEX IF NOT EXISTS idx_agent_memory_invoice_processed_ref
+    ON agent_memory ((metadata->>'vendor_key'), (metadata->>'vendor_ref_key'))
+    WHERE kind = 'invoice' AND metadata->>'processing_status' IN ('approved', 'executed');
+CREATE INDEX IF NOT EXISTS idx_agent_memory_invoice_processed_fingerprint
+    ON agent_memory ((metadata->>'vendor_key'), (metadata->>'currency'), (metadata->>'invoice_date'))
+    WHERE kind = 'invoice' AND metadata->>'processing_status' IN ('approved', 'executed');
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- AP WORK ITEMS  ← the human-in-the-loop approval queue
@@ -115,3 +128,31 @@ CREATE TABLE IF NOT EXISTS ap_daily_quota (
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (day, client_key)
 );
+
+-- Durable entitlement for the upload -> review -> process handoff. The reviewed
+-- extraction digest is fixed at issue and must match the submitted JSON;
+-- reviewed_digest records that verified claim. claim_id/claimed_at form a recoverable
+-- lease so a transient pre-proposal failure can release without granting replay
+-- after a completed proposal.
+CREATE TABLE IF NOT EXISTS ap_process_tickets (
+    -- The opaque bearer value returned to the client is never persisted.
+    ticket_hash     TEXT PRIMARY KEY,
+    extraction_id   UUID NOT NULL UNIQUE,
+    tier            TEXT NOT NULL CHECK (tier IN ('public', 'reviewer')),
+    binding_hash    TEXT NOT NULL,
+    day             DATE NOT NULL,
+    expires_at      TIMESTAMPTZ NOT NULL,
+    source_digest   TEXT NOT NULL,
+    reviewed_digest TEXT,
+    claim_id        UUID,
+    claimed_at      TIMESTAMPTZ,
+    state           TEXT NOT NULL DEFAULT 'issued' CHECK (state IN ('issued', 'consumed')),
+    consumed_at     TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK ((claim_id IS NULL) = (claimed_at IS NULL)),
+    CHECK ((state = 'consumed') = (consumed_at IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_ap_process_tickets_expiry
+    ON ap_process_tickets (expires_at);
+CREATE INDEX IF NOT EXISTS idx_ap_process_tickets_created
+    ON ap_process_tickets (created_at, ticket_hash);

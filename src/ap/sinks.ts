@@ -15,6 +15,7 @@
 
 export interface LedgerEntry {
   ref: string;
+  currency: string;
   narrative: string;
   lines: Array<{ account: string; debit?: number; credit?: number }>;
   postedAt: string;

@@ -8,7 +8,8 @@ it builds the video BEAT-BY-BEAT:
 
   1. Each beat carries its own narration line (scripts/make_frames.build_beats).
   2. Synthesize that line to its own clip (ElevenLabs when XI_API_KEY is set — same
-     voice/model as the CI workflow — else the free edge-tts fallback; one consistent
+     voice/model as the CI workflow — else the explicitly rights-attested edge-tts
+     fallback; one consistent
      voice for the whole video).
   3. Decode the clip to WAV, MEASURE its real duration, snap (duration + tail) to a
      whole number of frames, and pad the audio with silence to exactly that length.
@@ -24,8 +25,13 @@ Env:
   EDGE_VOICE            edge-tts voice (default en-US-GuyNeural)
   TAIL_SECONDS          fixed tail of silence per beat (default 0.30)
   FPS                   output framerate (default 30)
-  OUTPUT                final mp4 (default demo/video/final/archon-autopilot-demo.mp4)
-  WORKDIR               scratch dir (default a temp dir)
+  ASSETS_DIR            sanitized captures (default demo/final-media)
+  PUBLIC_APP_URL        final HTTPS Autopilot URL (required)
+  VIDEO_MODEL_LABEL     verified decider + vision model label (required)
+  VIDEO_PROMOTION_EVIDENCE  promotion-pass JSON when the label contains qwen3.7
+  VOICE_RIGHTS_ATTESTED must be true for public-use TTS generation (required)
+  OUTPUT                final mp4 (default demo/final-media/autopilot-demo.mp4)
+  WORKDIR               scratch dir inside the repository (default .artifacts/video-build)
   FFMPEG / FFPROBE      binaries
 """
 from __future__ import annotations
@@ -34,13 +40,13 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
 import time
 import urllib.request
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(HERE, "scripts"))
 import make_frames  # noqa: E402
+from path_safety import repo_contained_path  # noqa: E402
 
 FFMPEG = os.environ.get("FFMPEG", "ffmpeg")
 FFPROBE = os.environ.get("FFPROBE", "ffprobe")
@@ -159,11 +165,25 @@ def build_audio(beats, seg_mp3s, workdir):
 
 
 def main():
-    assets = os.environ.get("ASSETS_DIR", os.path.join(HERE, "demo", "video", "assets"))
-    output = os.environ.get("OUTPUT",
-                            os.path.join(HERE, "demo", "video", "final",
-                                         "archon-autopilot-demo.mp4"))
-    workdir = os.environ.get("WORKDIR") or tempfile.mkdtemp(prefix="autopilot_build_")
+    if os.environ.get("VOICE_RIGHTS_ATTESTED", "").strip().lower() != "true":
+        raise SystemExit(
+            "VOICE_RIGHTS_ATTESTED=true is required: confirm the selected voice/service "
+            "is authorized for this public competition video"
+        )
+    def inside_repo(value, label):
+        return repo_contained_path(value, label, HERE)
+
+    assets = inside_repo(
+        os.environ.get("ASSETS_DIR", os.path.join(HERE, "demo", "final-media")),
+        "ASSETS_DIR",
+    )
+    output = inside_repo(os.environ.get("OUTPUT",
+                            os.path.join(HERE, "demo", "final-media",
+                                         "autopilot-demo.mp4")), "OUTPUT")
+    workdir = inside_repo(
+        os.environ.get("WORKDIR") or os.path.join(HERE, ".artifacts", "video-build"),
+        "WORKDIR",
+    )
     os.makedirs(workdir, exist_ok=True)
     os.makedirs(os.path.dirname(output), exist_ok=True)
 
@@ -176,19 +196,25 @@ def main():
     # durations.json + narration.txt (regenerated from the beats = single source of truth)
     with open(os.path.join(workdir, "durations.json"), "w", encoding="utf-8") as f:
         json.dump(durations, f)
-    narration_txt = os.path.join(HERE, "demo", "video", "narration.txt")
+    narration_txt = inside_repo(
+        os.path.join(HERE, "demo", "video", "narration.txt"),
+        "narration output",
+    )
     with open(narration_txt, "w", encoding="utf-8") as f:
         f.write("\n\n".join(b.narration for b in beats) + "\n")
 
     # Render per-beat scenes with the SAME durations, then mux from t=0.
-    scenes = os.path.join(os.getcwd(), "scenes.mp4")
+    scenes = os.path.join(workdir, "scenes.mp4")
     make_frames.render_scenes(beats, durations, scenes, fps=FPS, ffmpeg=FFMPEG)
     run([FFMPEG, "-y", "-i", scenes, "-i", voice_wav,
          "-map", "0:v:0", "-map", "1:a:0",
          "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest", output])
 
-    # voiceover.mp3 artifact (for the workflow upload), emitted at CWD.
-    voice_mp3 = os.environ.get("VOICE_MP3", os.path.join(os.getcwd(), "voiceover.mp3"))
+    # voiceover.mp3 artifact (for the workflow upload), repo-contained in WORKDIR by default.
+    voice_mp3 = inside_repo(
+        os.environ.get("VOICE_MP3", os.path.join(workdir, "voiceover.mp3")),
+        "VOICE_MP3",
+    )
     run([FFMPEG, "-y", "-i", voice_wav, "-c:a", "libmp3lame", "-q:a", "2", voice_mp3])
 
     # ---- Global sync guard: video == audio == sum(durations) within one frame ----
@@ -200,8 +226,8 @@ def main():
           f"sum(durations)={total:.3f}s video={vdur:.3f}s audio={adur:.3f}s")
     assert abs(vdur - total) <= frame + 0.05, f"video {vdur} vs sum {total}"
     assert abs(adur - total) <= frame + 0.05, f"audio {adur} vs sum {total}"
-    assert vdur <= 180.0, f"video {vdur}s exceeds the 3:00 ceiling"
-    print(f"[ok] {output}  duration={vdur:.3f}s ({engine})  <= 180s, frame-aligned")
+    assert vdur < 175.0, f"video {vdur}s exceeds the 175s publication safety limit"
+    print(f"[ok] {output}  duration={vdur:.3f}s ({engine})  < 175s, frame-aligned")
 
     # Emit the per-beat windows so a caller can verify step-vs-spoken sync.
     starts, t = [], 0.0

@@ -23,6 +23,7 @@ import { InMemoryStore } from "../../src/memory/store.js";
 import { InMemoryWorkItemStore } from "../../src/ap/workitem-store.js";
 import { fakeSinks } from "../../src/ap/sinks.js";
 import { AutopilotAgent } from "../../src/agents/autopilot-agent.js";
+import { InvalidToolArgsError } from "../../src/ap/tools.js";
 import { normalizeInvoice } from "../../src/ap/normalize.js";
 import type {
   ChatCreateArgs,
@@ -31,6 +32,7 @@ import type {
   QwenChatClient,
   ToolCall,
 } from "../../src/qwen/client.js";
+import { SOTA_CANDIDATE_MODEL } from "../../src/qwen/client.js";
 import type { LoopStopReason } from "../../src/types.js";
 
 delete process.env.DASHSCOPE_API_KEY; // guarantee the offline Fakes
@@ -57,6 +59,22 @@ function scriptedClient(calls: ToolCall[]): QwenChatClient {
 function toolCall(name: string, args: Record<string, unknown>): ToolCall {
   return { function: { name, arguments: JSON.stringify(args) } };
 }
+
+test("versioned qwen3.7 candidate explicitly disables thinking on every tool call", async () => {
+  const calls: ChatCreateArgs[] = [];
+  const fake = new FakeQwenChatClient();
+  const client: QwenChatClient = { chat: { completions: { create: async (args, opts) => {
+    calls.push(args);
+     return fake.chat.completions.create(args);
+  } } } };
+  const loop = new AutopilotLoop(client, SOTA_CANDIDATE_MODEL);
+  const invoice = normalizeInvoice({ vendor: "Candidate Co", invoice_number: "C-1", date: "2026-01-01", currency: "EUR", tax_id: "T", subtotal: 100, tax: 20, total: 120 });
+  const result = await loop.run({ invoice, ...loopDeps() });
+  assert.equal(result.proposed.tool, "draft_journal_entry");
+  assert.ok(calls.length >= 3);
+  assert.ok(calls.every((call) => call.enable_thinking === false));
+  assert.ok(calls.every((call) => !("extra_body" in call)), "Python-only extra_body must never be sent by Node");
+});
 
 test("clean new vendor: the loop recalls + validates (≥2 autonomous steps), then proposes draft_journal_entry", async () => {
   const loop = new AutopilotLoop(new FakeQwenChatClient());
@@ -136,8 +154,128 @@ test("parse path: a terminal tool_call is parsed and reasoning/confidence are li
   assert.equal(res.proposed.reasoning, "clean invoice");
   assert.equal(res.proposed.confidence, 0.91);
   // The domain args a human will approve must NOT contain the meta-fields.
-  assert.deepEqual(res.proposed.args, { expense_account: "Office Supplies", amount: 120 });
+  assert.deepEqual(res.proposed.args, { expense_account: "Office Supplies", amount: 120, currency: "EUR" });
   assert.equal(res.stopReason, "terminal_action");
+});
+
+test("proposal argument guard source-binds hostile payment identity, money, currency, and date through approval", async () => {
+  const memory = new InMemoryStore();
+  const embedder = new FakeEmbedder();
+  const seeder = new AutopilotAgent(
+    embedder,
+    memory,
+    new InMemoryWorkItemStore(),
+    defaultLoop(),
+    fakeSinks()
+  );
+  const baseline = await seeder.intake({
+    vendor: "Source Bound Supply",
+    invoice_number: "SB-1",
+    date: "2026-01-01",
+    currency: "EUR",
+    tax_id: "T",
+    subtotal: 100,
+    tax: 20,
+    total: 120,
+  });
+  await seeder.approve(baseline.id);
+
+  const hostile = scriptedClient([
+    toolCall("recall_vendor_history", { reasoning: "history" }),
+    toolCall("validate_invoice", { reasoning: "structure" }),
+    toolCall("draft_payment", {
+      vendor: "Attacker Controlled Payee",
+      amount: 999_999,
+      currency: "USD",
+      pay_on: "2026-01-02",
+      reasoning: "redirect the payment",
+      confidence: 1,
+    }),
+  ]);
+  const sinks = fakeSinks();
+  const agent = new AutopilotAgent(
+    embedder,
+    memory,
+    new InMemoryWorkItemStore(),
+    new AutopilotLoop(hostile),
+    sinks
+  );
+  const pending = await agent.intake({
+    vendor: "Source Bound Supply",
+    invoice_number: "SB-2",
+    date: "2026-02-01",
+    currency: "EUR",
+    tax_id: "T",
+    subtotal: 110,
+    tax: 22,
+    total: 132,
+  });
+
+  assert.equal(pending.proposed.tool, "draft_payment");
+  assert.deepEqual(pending.proposed.args, {
+    vendor: "Source Bound Supply",
+    amount: 132,
+    currency: "EUR",
+  });
+  assert.equal(pending.telemetry?.rawModelTerminalTool, "draft_payment");
+  assert.equal(pending.telemetry?.policyOverrideSource, "proposal_argument_guard");
+  assert.ok(pending.trace.some((step) => step.tool === "proposal_argument_guard"));
+
+  const approved = await agent.approve(pending.id);
+  assert.equal(approved.status, "approved");
+  assert.deepEqual(sinks.payments.payments().map(({ vendor, amount, currency, scheduledFor }) => ({
+    vendor,
+    amount,
+    currency,
+    scheduledFor,
+  })), [{ vendor: "Source Bound Supply", amount: 132, currency: "EUR", scheduledFor: null }]);
+});
+
+test("model-originated email recipient is stripped; plain approve is safe and audited amend supplies the verified address", async () => {
+  const hostile = scriptedClient([
+    toolCall("recall_vendor_history", { reasoning: "history" }),
+    toolCall("validate_invoice", { reasoning: "structure" }),
+    toolCall("draft_vendor_reply", {
+      to: "exfiltration@attacker.invalid",
+      subject: "Invoice clarification",
+      body: "Please confirm the purchase-order reference before processing.",
+      reasoning: "contact vendor",
+      confidence: 0.8,
+    }),
+  ]);
+  const sinks = fakeSinks();
+  const agent = new AutopilotAgent(
+    new FakeEmbedder(),
+    new InMemoryStore(),
+    new InMemoryWorkItemStore(),
+    new AutopilotLoop(hostile),
+    sinks
+  );
+  const pending = await agent.intake({
+    vendor: "Verified Contact Co",
+    invoice_number: "VC-1",
+    date: "2026-01-01",
+    currency: "EUR",
+    tax_id: "T",
+    total: 120,
+  });
+
+  assert.equal(pending.proposed.tool, "draft_vendor_reply");
+  assert.equal(pending.proposed.args["to"], undefined);
+  assert.equal(pending.telemetry?.policyOverrideSource, "proposal_argument_guard");
+  await assert.rejects(() => agent.approve(pending.id), InvalidToolArgsError);
+  assert.equal((await agent.get(pending.id)).status, "pending");
+  assert.equal(sinks.email.outbox().length, 0);
+
+  const amended = await agent.amend(pending.id, {
+    args: { to: "billing@verified-contact.example" },
+    reason: "Verified recipient from the signed vendor master record",
+    by: "reviewer@example.test",
+  });
+  assert.equal(amended.status, "approved");
+  assert.equal(amended.amendment?.proposedArgs["to"], undefined);
+  assert.equal(amended.amendment?.amendedArgs["to"], "billing@verified-contact.example");
+  assert.equal(sinks.email.outbox()[0]?.to, "billing@verified-contact.example");
 });
 
 test("parse path: terminal confidence is clamped to [0,1]", async () => {
@@ -190,6 +328,39 @@ test("proposal policy guard replaces a malicious payment over a confirmed duplic
   assert.ok(res.trace.some((step) => step.tool === "proposal_policy_guard"));
 });
 
+test("proposal policy guard preserves raw Qwen choice while blocking payment on a corrected-amount rebill", async () => {
+  const memory = new InMemoryStore();
+  const embedder = new FakeEmbedder();
+  const seeder = new AutopilotAgent(embedder, memory, new InMemoryWorkItemStore(), defaultLoop(), fakeSinks());
+  const invoice = (ref: string, total: number, date: string) => ({
+    vendor: "CorrectionGuardCo", invoice_number: ref, date, currency: "EUR", tax_id: "T",
+    subtotal: total, tax: 0, total,
+  });
+  const baseline = await seeder.intake(invoice("CG-1", 3000, "2026-01-01"));
+  await seeder.approve(baseline.id);
+  const overbill = await seeder.intake(invoice("CG-2", 5000, "2026-02-01"));
+  const amended = await seeder.amend(overbill.id, { args: { amount: 3000 }, reason: "contract amount" });
+  assert.deepEqual(amended.amendment?.correctionMemory, { applicable: true, stored: true });
+
+  // Simulate a real model ignoring the recalled correction and asking to pay anyway.
+  const ignoresCorrection = scriptedClient([
+    toolCall("recall_vendor_history", { reasoning: "history" }),
+    toolCall("validate_invoice", { reasoning: "structure" }),
+    toolCall("compute_variance_vs_history", { reasoning: "variance" }),
+    toolCall("draft_payment", { vendor: "CorrectionGuardCo", amount: 5000, currency: "EUR", reasoning: "ignore correction", confidence: 0.99 }),
+  ]);
+  const result = await new AutopilotLoop(ignoresCorrection).run({
+    invoice: normalizeInvoice(invoice("CG-3", 5000, "2026-03-01")), embedder, memory,
+  });
+
+  assert.equal(result.telemetry.rawModelTerminalTool, "draft_payment");
+  assert.equal(result.telemetry.finalProposedTool, "flag_for_review");
+  assert.equal(result.telemetry.policyOverride, true);
+  assert.equal(result.telemetry.policyOverrideSource, "proposal_policy_guard");
+  assert.match(result.telemetry.policyOverrideReason ?? "", /prior human-approved lower amount/i);
+  assert.equal(result.proposed.tool, "flag_for_review");
+});
+
 test("proposal policy guard blocks money actions for unknown currency and incomplete line items", async () => {
   const unknownCurrency = normalizeInvoice({
     vendor: "AmbiguousCo", invoice_number: "A-1", date: "2026-01-01", tax_id: "T", total: 100,
@@ -210,6 +381,41 @@ test("proposal policy guard blocks money actions for unknown currency and incomp
   const routed = await new AutopilotLoop(new FakeQwenChatClient()).run({ invoice: incomplete, ...loopDeps() });
   assert.equal(routed.proposed.tool, "draft_vendor_reply");
   assert.ok(routed.findings.some((finding) => finding.rule === "R4" && !finding.passed));
+});
+
+test("conflicting source aliases cannot become model-bound money arguments", async () => {
+  const malicious = scriptedClient([
+    toolCall("recall_vendor_history", { reasoning: "history" }),
+    toolCall("validate_invoice", { reasoning: "structure" }),
+    toolCall("draft_payment", {
+      vendor: "Attacker Payee",
+      amount: 10_000,
+      currency: "USD",
+      reasoning: "choose the attacker aliases",
+      confidence: 1,
+    }),
+  ]);
+  const invoice = normalizeInvoice({
+    vendor: "Source Vendor",
+    payee: "Attacker Payee",
+    invoice_number: "SAFE-1",
+    ref: "ATTACK-1",
+    date: "2026-04-01",
+    currency: "EUR",
+    tax_id: "T",
+    total: 100,
+    amount_due: 10_000,
+    subtotal: 100,
+    tax: 0,
+  });
+  const result = await new AutopilotLoop(malicious).run({ invoice, ...loopDeps() });
+
+  assert.equal(invoice.vendor, null);
+  assert.equal(invoice.total, null);
+  assert.equal(result.proposed.tool, "draft_vendor_reply");
+  assert.equal(result.proposed.modelId, "policy:proposal-safety-guard");
+  assert.equal(result.telemetry.rawModelTerminalTool, "draft_payment");
+  assert.ok(result.findings.some((finding) => finding.rule === "R1" && !finding.passed));
 });
 
 test("loop guard: max-steps cap falls back to a safe flag_for_review", async () => {
@@ -256,10 +462,17 @@ test("loop guard: a wall-clock deadline aborts a hung call and escalates via fla
   const hung: QwenChatClient = {
     chat: {
       completions: {
-        create: (_args: ChatCreateArgs) =>
-          new Promise<ChatResponse>((resolve) =>
-            setTimeout(() => resolve({ choices: [{ message: { content: null, tool_calls: [toolCall("draft_payment", { reasoning: "late", confidence: 1 })] } }] }), 1000)
-          ),
+        create: (_args: ChatCreateArgs, opts) =>
+          new Promise<ChatResponse>((resolve, reject) => {
+            const timer = setTimeout(
+              () => resolve({ choices: [{ message: { content: null, tool_calls: [toolCall("draft_payment", { reasoning: "late", confidence: 1 })] } }] }),
+              1000
+            );
+            opts?.signal?.addEventListener("abort", () => {
+              clearTimeout(timer);
+              reject(opts.signal?.reason ?? new Error("aborted"));
+            }, { once: true });
+          }),
       },
     },
   };
@@ -274,6 +487,72 @@ test("loop guard: a wall-clock deadline aborts a hung call and escalates via fla
   assert.equal(res.proposed.confidence, 0);
   assert.deepEqual(reasons, ["deadline_fallback"]);
   assert.ok(elapsed < 500, `expected the deadline to fire fast, took ${elapsed}ms`);
+});
+
+test("hard deadline returns even when the SDK ignores AbortSignal and transfers the live promise", async () => {
+  let settle!: (response: ChatResponse) => void;
+  let signalSeen: AbortSignal | undefined;
+  const ignoredAbort: QwenChatClient = {
+    chat: {
+      completions: {
+        create: (_args: ChatCreateArgs, opts) => {
+          signalSeen = opts?.signal;
+          return new Promise<ChatResponse>((resolve) => { settle = resolve; });
+        },
+      },
+    },
+  };
+  const retained: Promise<unknown>[] = [];
+  const loop = new AutopilotLoop(ignoredAbort, "qwen-plus", { deadlineMs: 20, onStop: () => {} });
+  const invoice = normalizeInvoice({ vendor: "A", invoice_number: "1", tax_id: "T", total: 1 });
+  const started = Date.now();
+  const result = await loop.run({
+    invoice,
+    ...loopDeps(),
+    retainProviderCallUntilSettled: (operation) => retained.push(operation),
+  });
+
+  assert.equal(result.stopReason, "deadline_fallback");
+  assert.ok(Date.now() - started < 500, "the local response deadline must not depend on SDK cancellation");
+  assert.equal(signalSeen?.aborted, true, "the provider still receives best-effort cancellation");
+  assert.equal(retained.length, 1, "the unsettled provider operation transfers to admission ownership");
+
+  settle({ choices: [{ message: { content: null } }] });
+  await retained[0];
+});
+
+test("whole-run deadline also bounds a recall embedding that ignores AbortSignal", async () => {
+  let settle!: () => void;
+  let signalSeen: AbortSignal | undefined;
+  const ignoredEmbedding = {
+    modelId: "ignored-abort-embedder",
+    dim: 4,
+    embed: (_text: string, signal?: AbortSignal) => {
+      signalSeen = signal;
+      return new Promise<number[]>((resolve) => { settle = () => resolve([1, 0, 0, 0]); });
+    },
+  };
+  const retained: Promise<unknown>[] = [];
+  const loop = new AutopilotLoop(
+    scriptedClient([toolCall("recall_vendor_history", { reasoning: "gather history" })]),
+    "qwen-plus",
+    { deadlineMs: 20, onStop: () => {} }
+  );
+  const invoice = normalizeInvoice({ vendor: "A", invoice_number: "1", tax_id: "T", total: 1 });
+  const started = Date.now();
+  const result = await loop.run({
+    invoice,
+    embedder: ignoredEmbedding,
+    memory: new InMemoryStore(),
+    retainProviderCallUntilSettled: (operation) => retained.push(operation),
+  });
+
+  assert.equal(result.stopReason, "deadline_fallback");
+  assert.ok(Date.now() - started < 500, "a hung recall embedding cannot hold the response open");
+  assert.equal(signalSeen?.aborted, true, "the embedding receives best-effort cancellation");
+  assert.equal(retained.length, 1, "the unsettled analysis operation transfers to admission ownership");
+  settle();
+  await retained[0];
 });
 
 test("a genuine upstream error propagates out of the loop (surfaced as 503 upstream) — not masked as a deadline", async () => {

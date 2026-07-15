@@ -35,14 +35,16 @@ import {
   fsyncSync,
   mkdirSync,
   openSync,
+  readFileSync,
   readSync,
+  renameSync,
   statSync,
   unlinkSync,
   writeFileSync,
   writeSync,
 } from "node:fs";
-import { createHash } from "node:crypto";
-import { dirname, join } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import type { LedgerEntry, LedgerSink } from "./sinks.js";
 
 // The minimal transport contract the sink needs — append one already-serialized line.
@@ -133,17 +135,18 @@ export class JsonlLedgerSink implements LedgerSink {
 // The single real-fs seam: turn a file path into an append-only JSONL transport. Each
 // call writes and fsyncs one line (`<json>\n`), so the ledger is durable and
 // crash-safe (append-only, no read-modify-write). `appendOnce` adds a sidecar directory
-// of exclusive, SHA-256-named markers and a bounded legacy-tail scan. Marker creation
-// happens before append; a normal write failure removes it, while a crash in between
-// leaves an explicitly uncertain marker rather than risking a duplicate retry.
+// of exclusive, SHA-256-named two-phase markers and a bounded legacy-tail scan. A
+// durable `reserved` marker is created before append and atomically promoted to
+// `committed` only after the ledger append is fsynced. Any append/promote failure
+// leaves an explicitly uncertain reservation rather than risking a duplicate retry.
 export function createJsonlTransport(path: string): LedgerTransport {
   let ensuredDir = false;
   const markerDir = `${path}.refs`;
   const scanBytes = boundedEnvInt("LEDGER_DEDUPE_SCAN_BYTES", 8 * 1024 * 1024, 64 * 1024, 64 * 1024 * 1024);
   const ensureDirs = () => {
     if (ensuredDir) return;
-    mkdirSync(dirname(path), { recursive: true });
-    mkdirSync(markerDir, { recursive: true });
+    durableMkdir(dirname(path));
+    durableMkdir(markerDir);
     ensuredDir = true;
   };
   return {
@@ -155,53 +158,111 @@ export function createJsonlTransport(path: string): LedgerTransport {
       ensureDirs();
       const marker = join(markerDir, createHash("sha256").update(ref, "utf8").digest("hex"));
 
+      // A committed marker is authoritative even after its row ages out of the
+      // bounded tail. Reserved/legacy markers need row confirmation and otherwise
+      // remain fail-closed for explicit reconciliation.
+      const existing = readMarkerIfExists(marker, ref);
+      if (existing === "committed") return false;
+      if (existing) {
+        if (tailContainsRef(path, ref, scanBytes)) {
+          writeCommittedMarker(marker, ref);
+          return false;
+        }
+        throw new Error(`ledger idempotency reservation exists without a confirmed row for ref ${ref}`);
+      }
+
       // Migration path for rows written before sidecar markers existed.
       if (tailContainsRef(path, ref, scanBytes)) {
-        createMarkerIfMissing(marker, ref);
+        try {
+          createMarker(marker, ref, "committed");
+        } catch (err) {
+          if (!isAlreadyExists(err)) throw err;
+          return settleExistingMarker(marker, path, ref, scanBytes);
+        }
         return false;
       }
 
-      let fd: number | undefined;
       try {
-        fd = openSync(marker, "wx", 0o600);
-        writeFileSync(fd, ref, "utf8");
-        fsyncSync(fd);
+        createMarker(marker, ref, "reserved");
       } catch (err) {
         if (isAlreadyExists(err)) {
-          // A completed prior append is a safe duplicate. A marker without a row
-          // is an interrupted/active write and must be reconciled, never guessed.
-          if (tailContainsRef(path, ref, scanBytes)) return false;
-          throw new Error(`ledger idempotency marker exists without a confirmed row for ref ${ref}`);
+          return settleExistingMarker(marker, path, ref, scanBytes);
         }
         throw err;
-      } finally {
-        if (fd !== undefined) closeSync(fd);
       }
 
-      try {
-        durableAppend(path, line);
-        return true;
-      } catch (err) {
-        try {
-          unlinkSync(marker);
-        } catch {
-          // If cleanup itself fails, the durable marker correctly forces manual
-          // reconciliation instead of permitting a potentially duplicate retry.
-        }
-        throw err;
-      }
+      // Once append starts, every failure is ambiguous (write may have reached the
+      // file before fsync failed). Preserve `reserved`; never reopen a duplicate path.
+      durableAppend(path, line);
+      writeCommittedMarker(marker, ref);
+      return true;
     },
   };
 }
 
-function createMarkerIfMissing(path: string, ref: string): void {
+type MarkerState = "reserved" | "committed" | "legacy";
+interface LedgerMarker { schemaVersion: 1; state: Exclude<MarkerState, "legacy">; ref: string }
+
+function markerJson(ref: string, state: LedgerMarker["state"]): string {
+  return `${JSON.stringify({ schemaVersion: 1, state, ref } satisfies LedgerMarker)}\n`;
+}
+
+function createMarker(path: string, ref: string, state: LedgerMarker["state"]): void {
   let fd: number | undefined;
   try {
     fd = openSync(path, "wx", 0o600);
-    writeFileSync(fd, ref, "utf8");
+    writeFileSync(fd, markerJson(ref, state), "utf8");
     fsyncSync(fd);
+    fsyncDirectory(dirname(path));
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+function readMarkerIfExists(path: string, ref: string): MarkerState | null {
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8");
   } catch (err) {
-    if (!isAlreadyExists(err)) throw err;
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") return null;
+    throw err;
+  }
+  if (raw.trim() === ref) return "legacy";
+  try {
+    const parsed = JSON.parse(raw) as Partial<LedgerMarker>;
+    if (parsed.schemaVersion === 1 && parsed.ref === ref && (parsed.state === "reserved" || parsed.state === "committed")) {
+      return parsed.state;
+    }
+  } catch {
+    // Fixed error below deliberately excludes marker contents.
+  }
+  throw new Error(`ledger idempotency marker is invalid or bound to another ref`);
+}
+
+function settleExistingMarker(marker: string, ledger: string, ref: string, scanBytes: number): false {
+  const state = readMarkerIfExists(marker, ref);
+  if (state === "committed") return false;
+  if (state && tailContainsRef(ledger, ref, scanBytes)) {
+    writeCommittedMarker(marker, ref);
+    return false;
+  }
+  throw new Error(`ledger idempotency reservation exists without a confirmed row for ref ${ref}`);
+}
+
+function writeCommittedMarker(path: string, ref: string): void {
+  const temp = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  let fd: number | undefined;
+  try {
+    fd = openSync(temp, "wx", 0o600);
+    writeFileSync(fd, markerJson(ref, "committed"), "utf8");
+    fsyncSync(fd);
+    closeSync(fd);
+    fd = undefined;
+    renameSync(temp, path);
+    fsyncDirectory(dirname(path));
+  } catch (err) {
+    try { unlinkSync(temp); } catch { /* best-effort removal of an unpublished temp */ }
+    throw err;
   } finally {
     if (fd !== undefined) closeSync(fd);
   }
@@ -246,6 +307,41 @@ function durableAppend(path: string, line: string): void {
   const fd = openSync(path, "a", 0o600);
   try {
     writeSync(fd, line + "\n", undefined, "utf8");
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+  // Persist creation of a new ledger file, not only its data blocks. This is the
+  // directory half of the usual durable-file protocol on POSIX filesystems.
+  fsyncDirectory(dirname(path));
+}
+
+/**
+ * Recursively create a directory and durably publish every newly-created path
+ * component on POSIX. Windows does not expose portable directory fsync semantics;
+ * the target Alibaba/Linux container executes the full protocol.
+ */
+function durableMkdir(path: string): void {
+  const absolute = resolve(path);
+  const firstCreated = mkdirSync(absolute, { recursive: true });
+  if (!firstCreated || process.platform === "win32") return;
+
+  const first = resolve(firstCreated);
+  fsyncDirectory(dirname(first));
+  const suffix = relative(first, absolute);
+  let current = first;
+  fsyncDirectory(current);
+  if (!suffix) return;
+  for (const part of suffix.split(sep).filter(Boolean)) {
+    current = join(current, part);
+    fsyncDirectory(current);
+  }
+}
+
+function fsyncDirectory(path: string): void {
+  if (process.platform === "win32") return;
+  const fd = openSync(path, "r");
+  try {
     fsyncSync(fd);
   } finally {
     closeSync(fd);

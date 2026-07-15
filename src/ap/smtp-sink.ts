@@ -2,15 +2,15 @@
 //
 // JsonlLedgerSink is the other durable transport; payment-rail and specialist-review
 // adapters remain inspectable in-memory simulations. This sink is real: once a human approves a `draft_vendor_reply`, the agent's
-// approved arguments are handed to a real SMTP transport and an actual email is
-// delivered. Nothing about the human-in-the-loop gate changes — `send()` is still
+// approved arguments are handed to a real SMTP transport. A successful `sendMail`
+// proves transport acceptance/submission, not recipient delivery. Nothing about the human-in-the-loop gate changes — `send()` is still
 // only ever reached from a tool `execute()`, which only runs from `AutopilotAgent`'s
 // `approve()` / `amend()` chokepoint. The model can never reach this code; a person
 // must approve first, and the EXACT approved args are what get sent.
 //
 // Two modes, chosen by environment, so it is safe everywhere:
 //   • REAL     — `SMTP_HOST` is set → a nodemailer transport is built and the message
-//                is actually delivered. A delivery error PROPAGATES (it is awaited),
+//                is submitted to it. A transport error PROPAGATES (it is awaited),
 //                so a failed send leaves the work item `executing` for explicit
 //                reconciliation; it is never automatically retried.
 //   • SIMULATE — no transport (no creds / CI / tests without a mock) → the message is
@@ -51,9 +51,9 @@ export function stripHeaderChars(value: string): string {
 export interface SmtpSinkOptions {
   // The envelope From address (SMTP_FROM). Required — a real MTA rejects a blank From.
   from: string;
-  // The transport to deliver through. Absent → SIMULATE mode (record + log, no send).
+  // The transport to submit through. Absent → SIMULATE mode (record + log, no send).
   transport?: MailTransport;
-  // Injectable logger (defaults to console) so tests can assert the simulate/deliver
+  // Injectable logger (defaults to console) so tests can assert the simulate/submit
   // log lines without stdout noise.
   logger?: Pick<typeof console, "log" | "warn">;
 }
@@ -66,12 +66,16 @@ export class SmtpEmailSink implements EmailSink {
   private readonly logger: Pick<typeof console, "log" | "warn">;
 
   constructor(opts: SmtpSinkOptions) {
-    this.from = opts.from;
+    const from = opts.from.trim();
+    if (!from || /[\r\n\0]/.test(from)) {
+      throw new Error("invalid SMTP configuration: from must be a safe non-empty header value");
+    }
+    this.from = from;
     this.transport = opts.transport;
     this.logger = opts.logger ?? console;
   }
 
-  // True when a real transport is wired — i.e. an approval will actually deliver mail.
+  // True when a real transport is wired — i.e. an approval submits mail to SMTP.
   get live(): boolean {
     return this.transport !== undefined;
   }
@@ -82,19 +86,19 @@ export class SmtpEmailSink implements EmailSink {
     }
     const row: OutboundEmail = { ...email, sentAt: new Date().toISOString() };
     // Record the intent FIRST so the outbox reflects what a human approved even if the
-    // network delivery below throws (the caller sees an uncertain outcome to reconcile).
+    // network submission below throws (the caller sees an uncertain outcome to reconcile).
     this.rows.push(row);
 
     if (!this.transport) {
       // SIMULATE — no creds/transport. Nothing is sent; the outbox holds the record.
       this.logger.log(
-        `[SmtpEmailSink] SIMULATED (no SMTP transport configured) — would send to ${row.to}: "${row.subject}"`
+        `[SmtpEmailSink] SIMULATED (no SMTP transport configured) — approved message${row.ref ? ` ref ${row.ref}` : ""} was not sent`
       );
       if (row.ref) this.completedRefs.add(row.ref);
       return row;
     }
 
-    // REAL delivery. Awaited on purpose: a failure propagates to approve()/amend() and
+    // REAL transport submission. Awaited on purpose: a failure propagates to approve()/amend() and
     // leaves the item executing for reconciliation rather than claiming success.
     // Defense-in-depth: the header fields (`to`, `subject`) are stripped of CR/LF and
     // other control characters before they reach the transport, so an approved value
@@ -119,7 +123,7 @@ export class SmtpEmailSink implements EmailSink {
     const info = await this.transport.sendMail(message);
     if (row.ref) this.completedRefs.add(row.ref);
     this.logger.log(
-      `[SmtpEmailSink] delivered to ${row.to}: "${row.subject}"${info.messageId ? ` (id ${info.messageId})` : ""}`
+      `[SmtpEmailSink] SMTP transport accepted approved message${row.ref ? ` ref ${row.ref}` : ""}${info.messageId ? ` (transport id ${info.messageId})` : ""}`
     );
     return row;
   }
@@ -135,14 +139,49 @@ export class SmtpEmailSink implements EmailSink {
   //   SMTP_USER · SMTP_PASS · SMTP_FROM (default SMTP_USER)
   static fromEnv(env: NodeJS.ProcessEnv = process.env): SmtpEmailSink | null {
     const host = env.SMTP_HOST?.trim();
-    if (!host) return null;
+    const anySmtpSetting = [
+      env.SMTP_HOST,
+      env.SMTP_PORT,
+      env.SMTP_SECURE,
+      env.SMTP_USER,
+      env.SMTP_PASS,
+      env.SMTP_FROM,
+      env.SMTP_CONNECTION_TIMEOUT_MS,
+      env.SMTP_GREETING_TIMEOUT_MS,
+      env.SMTP_SOCKET_TIMEOUT_MS,
+    ].some((value) => value != null && value.trim() !== "");
+    if (!host) {
+      if (anySmtpSetting) throw new Error("invalid SMTP configuration: SMTP_HOST is required when SMTP is configured");
+      return null;
+    }
+    if (/\s|[\r\n\0]/.test(host)) throw new Error("invalid SMTP configuration: SMTP_HOST is malformed");
     const from = (env.SMTP_FROM || env.SMTP_USER || "").trim();
+    if (!from || /[\r\n\0]/.test(from)) {
+      throw new Error("invalid SMTP configuration: a safe non-empty SMTP_FROM (or SMTP_USER fallback) is required");
+    }
+    const user = env.SMTP_USER?.trim() || undefined;
+    const pass = env.SMTP_PASS && env.SMTP_PASS.length > 0 ? env.SMTP_PASS : undefined;
+    if (Boolean(user) !== Boolean(pass)) {
+      throw new Error("invalid SMTP configuration: SMTP_USER and SMTP_PASS must be supplied together");
+    }
+    const rawPort = env.SMTP_PORT?.trim() || "587";
+    const port = Number(rawPort);
+    if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+      throw new Error("invalid SMTP configuration: SMTP_PORT must be an integer from 1 to 65535");
+    }
+    const rawSecure = env.SMTP_SECURE?.trim();
+    if (rawSecure && !/^(0|1|false|true|no|yes)$/i.test(rawSecure)) {
+      throw new Error("invalid SMTP configuration: SMTP_SECURE must be true/false, yes/no, or 1/0");
+    }
     const transport = createSmtpTransport({
       host,
-      port: Number(env.SMTP_PORT || 587),
-      secure: /^(1|true|yes)$/i.test(env.SMTP_SECURE || ""),
-      user: env.SMTP_USER?.trim(),
-      pass: env.SMTP_PASS,
+      port,
+      secure: /^(1|true|yes)$/i.test(rawSecure || ""),
+      user,
+      pass,
+      connectionTimeout: boundedEnvInt(env.SMTP_CONNECTION_TIMEOUT_MS, 10_000, 1_000, 30_000),
+      greetingTimeout: boundedEnvInt(env.SMTP_GREETING_TIMEOUT_MS, 10_000, 1_000, 30_000),
+      socketTimeout: boundedEnvInt(env.SMTP_SOCKET_TIMEOUT_MS, 30_000, 1_000, 60_000),
     });
     return new SmtpEmailSink({ from, transport });
   }
@@ -159,6 +198,9 @@ function createSmtpTransport(cfg: {
   secure: boolean;
   user?: string;
   pass?: string;
+  connectionTimeout: number;
+  greetingTimeout: number;
+  socketTimeout: number;
 }): MailTransport {
   // Deferred require keeps nodemailer off the hot path for the offline Fake sink and
   // means the optional dependency only needs to resolve when SMTP is actually
@@ -170,7 +212,16 @@ function createSmtpTransport(cfg: {
     port: cfg.port,
     secure: cfg.secure,
     auth: cfg.user && cfg.pass ? { user: cfg.user, pass: cfg.pass } : undefined,
+    connectionTimeout: cfg.connectionTimeout,
+    greetingTimeout: cfg.greetingTimeout,
+    socketTimeout: cfg.socketTimeout,
   });
   return { sendMail: (message) => transporter.sendMail(message) };
 }
 /* c8 ignore stop */
+
+function boundedEnvInt(raw: string | undefined, fallback: number, min: number, max: number): number {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, Math.trunc(parsed)));
+}

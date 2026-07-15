@@ -14,20 +14,21 @@ never moves money and never fires a side-effect.
 
 ```bash
 # Smoke (1 VU, ~30s) against a local server on :9000
-npm run load
+K6_REVIEWER_TOKEN="$REVIEWER_TOKEN" npm run load
 
 # Point at any base URL
-BASE_URL=http://host:9000 npm run load        # TARGET_URL is also accepted
+BASE_URL=http://host:9000 K6_REVIEWER_TOKEN="$REVIEWER_TOKEN" npm run load
 
 # Add the ramping-vus scenario (0 → 20 → 50 → 0)
-RUN_RAMP=true npm run load
+K6_REVIEWER_TOKEN="$REVIEWER_TOKEN" RUN_RAMP=true npm run load
 
 # Raise the share of iterations that POST /intake (default 0.3)
-INTAKE_RATIO=0.5 RUN_RAMP=true npm run load
+K6_REVIEWER_TOKEN="$REVIEWER_TOKEN" INTAKE_RATIO=0.5 RUN_RAMP=true npm run load
 ```
 
 Requires the [k6](https://k6.io) binary on `PATH` (a single native binary — **not**
-an npm dependency). The `k6-summary` import is resolved by k6 at runtime.
+an npm dependency) and `K6_REVIEWER_TOKEN`. The token is sent only in the
+Authorization header; it is never written to the summary.
 
 ### Recommended: run against the OFFLINE server
 
@@ -36,8 +37,9 @@ Boot the server with no `DASHSCOPE_API_KEY` (→ the deterministic Fakes) so eve
 actually exercised under load rather than immediately rate-limited:
 
 ```bash
+export REVIEWER_TOKEN="local_load_only_reviewer_token_at_least_32_chars"
 DASHSCOPE_API_KEY= DATABASE_URL= UPLOAD_DAILY_LIMIT=1000000 PORT=9000 npm start &
-BASE_URL=http://localhost:9000 RUN_RAMP=true npm run load
+BASE_URL=http://localhost:9000 K6_REVIEWER_TOKEN="$REVIEWER_TOKEN" RUN_RAMP=true npm run load
 ```
 
 ## The daily rate limiter is expected under load
@@ -67,4 +69,7 @@ This is a **manual, opt-in** target — deliberately **not** part of the push/PR
 gate (it needs the k6 binary and a running server). It runs only via
 `.github/workflows/load-test.yml` (`workflow_dispatch`), which boots the offline
 server with a high cap and runs the smoke + ramp against it, uploading
-`load-summary.json` as an artifact.
+`.artifacts/load-test/load-summary.json` as an artifact. The summary formatter is
+repository-local; the load run executes no remote JavaScript modules. For an
+external `base_url`, configure the repository secret `LOAD_TEST_REVIEWER_TOKEN`;
+the workflow fails closed when that credential is absent or invalid.

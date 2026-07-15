@@ -10,7 +10,26 @@ repository file, or public URL.
 - **Health:** https://autopilot.43.106.13.19.sslip.io/health
 - **Readiness:** https://autopilot.43.106.13.19.sslip.io/ready
 - **API explorer:** https://autopilot.43.106.13.19.sslip.io/docs
-- **Local:** Node 20+, `npm ci`, then start with a reviewer token as shown below.
+- **Local:** exact Node 24.18.0 (`.nvmrc`), `npm ci`, then start with a reviewer token as shown below.
+- **Supply-chain pins:** [`SUPPLY_CHAIN.md`](SUPPLY_CHAIN.md) records the exact runtime,
+  container, k6, Action, and Python locks plus the remaining nondeterministic surfaces.
+
+## 90-second judge path
+
+1. Open the live Approval UI, enter the private reviewer token, and click **Use
+   sample document**. The token also selects a separate bounded judge intake reserve,
+   so public quota exhaustion cannot block this path.
+2. Confirm the extraction identifies a live Qwen vision model, review the fields,
+   then click **Process invoice**. Watch recall → validation → evidence checks → one
+   PENDING proposal. Nothing has executed.
+3. Expand the card: inspect the tool/observation trace, concise model-supplied
+   rationale, bounded self-reported confidence, and exact domain arguments.
+4. Run the three buttons in **Correction-learning challenge**. The second step only
+   says correction evidence is verified when the persisted work item reports a
+   successful correction-memory write. The €5,000 re-bill must route to review; the
+   €3,000 negative control remains a payment proposal.
+5. Open **Workflow evidence** and **Decided**. Metrics are machine instrumentation,
+   not an ROI or labor study. Reject any remaining demo PENDING items before leaving.
 
 Two terminal transports are real and configurable after approval: vendor replies
 can use `SmtpEmailSink`, and balanced journal entries can use the restart-safe,
@@ -57,7 +76,8 @@ extraction confidence is forced to human review.
 ## 2 · Inspect the PENDING proposal
 
 The loop stops at exactly one terminal proposal. Nothing has executed. The card shows
-the proposed tool, safe reasoning, decision confidence, and the full ordered trace.
+the proposed tool, concise model-supplied rationale, bounded self-reported decision
+confidence, and the ordered tool/observation trace.
 Low confidence is explicitly labelled as a review nudge, not a calibrated probability.
 
 The injection scanner is deliberately advisory and pattern-based. The safety property
@@ -78,11 +98,13 @@ vendor reply uses SMTP only when configured. A transport error stays visibly
 `executing` for explicit reconciliation; the service never blindly auto-retries an
 uncertain external outcome.
 
-## 4 · Inspect the audit trail and learning signal
+## 4 · Inspect the audit trail and runtime correction signal
 
 Open **Decided**. The item shows its outcome, reviewer, timestamp, and proposed→approved
-tool/argument diff. The amendment or rejection is written to vendor memory; the next
-decision reads that correction. Reproduce the measured rebill behavior with:
+tool/argument diff. A downward amendment carries a persisted `correctionMemory`
+result (`applicable`, `stored`, and a surfaced error on failure); only a verified
+write is presented as stored. The next decision reads that correction. Reproduce the
+measured rebill behavior with:
 
 ```bash
 npm run eval:corrections
@@ -111,12 +133,13 @@ HTTP API / Approval UI. MCP is not exposed as a public listener.
 npm ci
 npm run typecheck
 npm run build
-npm test                 # 246 total: 240 pass, 0 fail, 6 real-DB skips without DATABASE_URL
-npm run test:e2e         # 25/25 Playwright
-npm run coverage         # 92.42 stmts · 84.28 branches · 91.26 funcs · 92.42 lines
-npm run test:pentest     # 30/30
-npm run eval             # 22/22 tool + args + autonomy; avg 2.5 autonomous steps
-npm run readiness        # 22 pass · 0 fail · 3 explicitly user-gated
+npm test                 # prints current pass/fail + explicit real-DB skips
+npm run test:e2e         # browser flow
+npm run coverage         # enforces ≥80% in all four dimensions
+npm run test:pentest     # adversarial and authority tests
+npm run eval -- --gate   # tuned offline policy regression, not live-Qwen accuracy
+npm run eval:vision      # verifies the frozen 16-document fixture set
+npm run readiness        # readiness/claim fitness checks
 ```
 
 The offline `22/22` is a deterministic policy/regression result over the real

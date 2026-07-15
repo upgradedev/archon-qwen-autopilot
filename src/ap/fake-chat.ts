@@ -33,6 +33,7 @@ interface Evidence {
   missing_fields: boolean;
   reconcile_issue: boolean;
   anomaly: boolean;
+  currency_changed: boolean;
   no_total: boolean;
   prior_correction: boolean;
   rebills_corrected: boolean;
@@ -76,6 +77,14 @@ function chooseNextTool(e: Evidence): ToolCall {
       confidence: 0.9,
     });
   }
+  if (e.currency_changed) {
+    return terminal("flag_for_review", {
+      reason: "The invoice currency differs from this vendor's completed history; verify the source and vendor terms before any money action.",
+      priority: "high",
+      reasoning: "A new currency for a known vendor is a material financial-identity change that requires human verification.",
+      confidence: 0.82,
+    });
+  }
   // 4) The amount looks unusual → CONFIRM the anomaly before acting.
   if (e.anomaly_candidate && !e.variance_computed) {
     return analysis("compute_variance_vs_history", "The amount is well above the vendor's usual — measure the variance (R6).");
@@ -88,11 +97,11 @@ function chooseNextTool(e: Evidence): ToolCall {
       confidence: 0.72,
     });
   }
-  // 4b) LEARNED FROM CORRECTIONS — the approval gate as a training signal. A human
+  // 4b) RUNTIME CORRECTION RECALL — the approval gate records evidence. A human
   //     previously corrected this vendor's amount DOWN, and this invoice re-bills
   //     materially above that corrected amount. Re-billing an amount a human already
   //     corrected down is a genuine error a clerk catches, so escalate rather than
-  //     straight-through pay — the gate's own past feedback outranks payment.
+  //     payment proposal — the gate's past feedback outranks that proposal.
   if (e.rebills_corrected) {
     return terminal("flag_for_review", {
       reason: "This invoice re-bills an amount a human previously corrected DOWN for this vendor — escalate rather than auto-pay.",
@@ -161,6 +170,7 @@ function parseEvidence(prompt: string): Evidence {
     missing_fields: flag("missing_fields"),
     reconcile_issue: flag("reconcile_issue"),
     anomaly: flag("anomaly"),
+    currency_changed: flag("currency_changed"),
     no_total: flag("no_total"),
     prior_correction: flag("prior_correction"),
     rebills_corrected: flag("rebills_corrected"),

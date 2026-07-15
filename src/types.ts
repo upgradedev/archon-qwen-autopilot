@@ -75,6 +75,9 @@ export interface ProposedAction {
   reasoning: string;
   confidence: number; // 0..1 self-reported by the model
   modelId: string; // which decider produced it (real Qwen model id or fake tag)
+  // Trusted data the model is not allowed to invent. Plain approval remains
+  // disabled until an authenticated reviewer supplies these fields by amendment.
+  requiresReviewerInput?: string[];
 }
 
 // ── Agent trace (the multi-step ReAct loop's record of HOW it decided) ─────────
@@ -107,6 +110,28 @@ export type LoopStopReason =
 
 export type WorkItemStatus = "pending" | "executing" | "approved" | "rejected";
 
+// Machine-measured workflow evidence. These fields describe system behavior only;
+// they are not an ROI, labor-saving, or production error-reduction study.
+export interface WorkItemTelemetry {
+  intakeToProposalMs: number;
+  scenarioIncludesSeedSetup?: boolean;
+  modelCalls: number;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  totalTokens: number | null;
+  readAnalyzeSteps: number;
+  rawModelTerminalTool: string | null;
+  finalProposedTool: ToolName;
+  policyOverride: boolean;
+  policyOverrideSource: string | null;
+  policyOverrideReason: string | null;
+  fallback: boolean;
+  duplicateCaught: boolean;
+  anomalyCaught: boolean;
+  structuralBlock: boolean;
+  humanTouches: number;
+}
+
 // A short projection of a recalled memory, attached to the work item so a
 // reviewer sees exactly what history the decision was grounded in.
 export interface RecalledFact {
@@ -133,8 +158,34 @@ export interface Amendment {
   amendedTool: ToolName; // tool the reviewer explicitly authorized
   proposedArgs: Record<string, unknown>; // what Qwen originally proposed
   amendedArgs: Record<string, unknown>; // the merged args the human approved + ran
-  amendedBy?: string; // optional operator identity
+  amendedBy: string; // server-derived authenticated operator identity
   reason?: string; // optional human note on why it was amended
+  // Verified runtime-correction write result, persisted before the work item is
+  // finalized. `applicable=false` means the amendment was not a downward amount
+  // correction; failures are explicit and never silently presented as learned.
+  correctionMemory?: { applicable: boolean; stored: boolean; error?: string };
+}
+
+// Immutable reviewer authorization persisted while the work item is `executing`
+// BEFORE any sink or correction-memory write. It is the only recovery authority:
+// a process crash can never make recovery infer an action from mutable proposal
+// fields or accidentally turn a rejection into an approval.
+export interface DecisionIntent {
+  kind: "approve" | "amend" | "reject";
+  tool: ToolName;
+  args: Record<string, unknown>;
+  amendment?: Amendment;
+  reason?: string;
+  by: string;
+  recordedAt: string;
+}
+
+export interface RecoveryLease {
+  id: string;
+  action: "retry" | "mark_completed";
+  reason: string;
+  by: string;
+  startedAt: string;
 }
 
 export interface WorkItem {
@@ -149,15 +200,25 @@ export interface WorkItem {
   // reasoning path. Persisted inside the ap_workitems JSONB item (no new column).
   trace: TraceStep[];
   stopReason: LoopStopReason; // why the loop stopped (terminal vs. a guard fallback)
+  telemetry?: WorkItemTelemetry;
   execution?: ExecutionResult; // set once approved + executed
   amended?: boolean; // true when a human edited the args before approving
   amendment?: Amendment; // the prev → new audit trail, present iff `amended`
   decisionReason?: string; // human-supplied note on reject / amend
+  decisionIntent?: DecisionIntent;
+  // Atomic, expiring ownership of one explicit recovery attempt. Competing
+  // retry/mark_completed requests cannot both cross the recovery boundary.
+  recoveryLease?: RecoveryLease;
+  // Verified rejection-evidence write result. Rejection remains a terminal human
+  // decision even if the memory backend is unavailable, but the UI/API must never
+  // imply that the runtime correction was stored when it was not.
+  rejectionMemory?: { stored: boolean; error?: string };
   // Atomic claim/recovery metadata. `executing` is deliberately visible: after
   // an uncertain sink failure we never auto-retry and risk a duplicate effect.
   executionStartedAt?: string;
   executionFailure?: string;
   recoveryReason?: string;
+  recoveryBy?: string;
   recoveredAt?: string;
   inputSecurity?: {
     injectionDetected: boolean;

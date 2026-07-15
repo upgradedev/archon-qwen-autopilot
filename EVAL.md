@@ -1,240 +1,169 @@
-# Decision-quality eval — does the autopilot choose the right action?
+# Evaluation protocol
 
-A tool-using agent is only as good as the *actions it chooses*. This eval turns
-"the agent proposes an action per invoice" into a **measured number** you can
-reproduce: on a frozen, labelled set of accounts-payable scenarios, does the
-decider pick the tool a human AP clerk would? It is the decision-making analogue of
-the Track-1 MemoryAgent's retrieval benchmark — an objective grade on our own
-output, gated in CI.
+Archon Autopilot publishes two deliberately separate evaluations:
 
-## TL;DR
+1. AP orchestration policy agreement on a frozen 22-case development/regression set.
+2. Qwen-VL field extraction on 16 original synthetic PDF/PNG/JPG invoices.
 
-On a labelled set of **22 AP scenarios** (`eval/dataset.ts`), the eval drives the
-**real multi-step ReAct loop** — normalize the (possibly messy) invoice → recall the
-vendor's history from persistent memory → validate R1–R4 → confirm a duplicate (R5) /
-compute the amount variance (R6) as the evidence warrants → **Qwen function-calling**
-picks the next tool each step — and grades the **proposed terminal tool** against the
-business-correct label.
+Neither dataset is expert-adjudicated, representative of production traffic, or a
+human study. “Accuracy” below always names its exact denominator and label source.
+No offline Fake result is presented as Qwen quality.
 
-| Mode | Model seam | Tool-choice accuracy | What the number means |
-|---|---|---:|---|
-| **Offline** (CI, gated) | deterministic Fakes | **22 / 22 (100.0%)** | policy / regression guard over the real multi-step pipeline |
-| **Online** (with a key) | real `qwen-plus` | *run with a key to capture* | the actual decision quality of the model choosing freely |
+## AP decision evaluation
 
-```bash
-npm run eval            # drive every scenario, print the table + accuracy N/M
-npm run eval -- --gate  # CI gate: fail if tool-choice accuracy < 90%
-```
+`eval/dataset.ts` contains 22 tuned, developer-labelled scenarios across clean new
+and recurring vendors, missing/unreconciled fields, duplicates, anomalies, messy
+inputs, and safety precedence. The expected tool is the design team's documented
+conservative AP policy. The set is not held out: the deterministic Fake policy was
+updated after scenario `s22` revealed a no-total routing gap. Its 22/22 result is
+therefore a valuable regression invariant, not independent model evidence.
 
-> **What the offline 22/22 is — and is not.** The offline number is produced by the
-> **deterministic Fakes**, so it is a **policy / regression guard** over the real
-> multi-step pipeline, not a decision-quality claim about the model. The
-> **decision-quality** number is the **online** row — real `qwen-plus` choosing freely
-> against the same labels. That online run needs a DashScope key and a few cents of
-> spend, so it is **not bundled into this repo's number**; run `DASHSCOPE_API_KEY=sk-…
-> npm run eval` to capture it (the header self-labels the run `ONLINE`). We keep the
-> two numbers separate on purpose rather than presenting the Fake's result as the
-> model's.
+The AP scenario set is canonicalized and bound to
+`eval/dataset.sha256`. `npm run eval:dataset` fails if inputs or labels drift without
+an explicit hash update.
 
-Because every scenario now runs the loop, the eval also reports **loop autonomy**:
-**all 22 scenarios take ≥2 autonomous read/analyze steps** (avg **2.5**) before any
-terminal, human-gated action — the multi-step reasoning is measured, not asserted.
-Arg-sanity (does the proposed action execute cleanly against the simulated sinks) is
-reported alongside — **22 / 22** — but **not gated**, because the model may
-legitimately omit an argument the tool's `execute()` back-fills from the invoice.
-
-## Why this is a real eval and not a tautology
-
-The honest objection to grading an agent that has a deterministic offline mode is:
-*aren't you just testing that the Fake matches the labels?* Here is the precise
-answer.
-
-The pipeline under test is **real, non-trivial logic**:
-
-```
-raw invoice → normalize (alias keys, "€ 2.500,00", EU decimals, inferred totals)
-            → LOOP, one tool per step (Qwen function-calling):
-                recall_vendor_history        (embed + cosine ANN over memory, filtered by vendor; surfaces facts)
-                validate_invoice             (R1 amount sanity · R2 required fields · R3 tax reconcile · R4 line items)
-                check_duplicate              (R5 duplicate — memory-grounded)
-                compute_variance_vs_history  (R6 amount anomaly — memory-grounded)
-              → one TERMINAL action
-```
-
-Every step up to the terminal action is genuine work, and the eval grades that whole
-multi-step path against a **semantic label**. When scenario `s10` (`{ amount:
-"€ 2.500,00", … }`, no vendor, no reference) must resolve to `draft_vendor_reply`, we
-are verifying that messy-input normalization + the `validate_invoice` step actually
-produce `missing_fields=true` and route correctly — a chain that can regress.
-
-Only the **final `evidence → next tool` choice** is deterministic under the offline
-Fake (`fake-chat.ts` reads the accumulated `EVIDENCE:` snapshot and mirrors the
-decision precedence). So:
-
-- **Offline is a policy / regression guard**, not a decision-quality claim. It
-  proves the real loop still gathers the intended evidence and takes the intended
-  safe action. It is deterministic, so it never flakes.
-- **Online is the decision-quality number.** With a key, `qwen-plus` reads the full
-  invoice + accumulated observations + recalled history and **chooses freely** — no
-  fixed evidence-to-tool lookup. Grading *that* against the same labels measures
-  whether the model makes the call a human would. That is the number the live run
-  captures.
-
-**The labelling discipline that makes this legitimate:** every `expected` is set by
-asking *"what should an AP clerk do here?"* — the business ground truth — and is
-**never** back-derived from `fake-chat.ts`. The precedence scenarios (below) are the
-load-bearing proof, because they grade the *order* of safety checks, a real property
-independent of any one implementation.
-
-## The dataset (22 scenarios, 8 categories)
-
-`eval/dataset.ts`. Each scenario optionally seeds prior invoices (intaken through
-the same pipeline, so the vendor's history lands in persistent memory the way a
-real cross-session agent would recall it), then intakes the invoice under decision.
-
-| Category | n | Business-correct action | Why |
-|---|---:|---|---|
-| `clean_new_vendor` | 2 | `draft_journal_entry` | well-formed invoice, vendor not seen before → accrue the liability |
-| `clean_recurring_vendor` | 3 | `draft_payment` | clean invoice from a known, in-range vendor → straight-through pay |
-| `missing_fields` | 3 | `draft_vendor_reply` | vendor / reference / tax_id absent → cannot pay safely; query first |
-| `unreconciled` | 2 | `draft_vendor_reply` | figures present but subtotal+tax or line items don't reconcile |
-| `suspected_duplicate` | 2 | `flag_for_review` | same vendor+reference, or same vendor+amount+date as a prior → don't double-pay |
-| `amount_anomaly` | 2 | `flag_for_review` | total many times the vendor's usual → confirm before posting |
-| `ambiguous_messy` | 4 | *(varies)* | heavily aliased / string-amount / foreign-currency / garbled inputs |
-| `precedence` | 4 | *(the safer one)* | two signals collide; the safety-preserving action must win |
-
-### The precedence scenarios (the non-circular core)
-
-These grade the **order** of the safety checks — the property most worth protecting
-against regression, and the one a naive re-implementation gets wrong:
-
-- **`s17` duplicate AND missing tax_id →** `flag_for_review`. Duplicate risk
-  outranks the missing field: you never pay twice, and the missing field is moot if
-  it's a double-bill.
-- **`s18` known vendor BUT missing tax_id →** `draft_vendor_reply`. A recurring
-  vendor does *not* earn straight-through payment when a required field is absent —
-  query first.
-- **`s19` known vendor BUT anomalous amount →** `flag_for_review`. Anomaly outranks
-  straight-through payment.
-- **`s20` known vendor, clean, BUT figures don't reconcile →** `draft_vendor_reply`.
-
-## The resolved limitation (`s22`)
-
-Previously, offline accuracy was **21 / 22** because scenario `s22` (an invoice whose amount cannot be parsed: `amount: "see attached"`, no subtotal/tax) fell through to `draft_journal_entry`. Although `validate_invoice` correctly surfaced the R1 FAIL (no payable total) in the trace, the deterministic offline Fake did not have a routing branch for `no_total`.
-
-We have now **resolved this routing limitation**. The offline Fake policy explicitly checks the `no_total` evidence flag and routes it to `draft_vendor_reply` (query the vendor), achieving a clean **22 / 22 (100.0%)** offline policy accuracy. This bridges the gap between the offline policy and the live LLM's expected reasoning.
-
-## The CI gate (what we actually enforce)
-
-CI runs `npm run eval -- --gate` on every push, with **no `DASHSCOPE_API_KEY`**, so
-the deterministic Fakes drive it. The gate is set to the **measured** floor, not an
-aspiration:
-
-> **tool-choice accuracy ≥ 90%** (measured: 100.0%).
-
-The floor sits well below the measured value, so CI
-catches a *real* regression in the multi-step recall→validate→check→act loop without pretending
-the deterministic policy is perfect. We deliberately **do not gate arg-sanity** (the
-Fake omits some args by design) and **do not gate the online number** (it needs a
-key and costs spend; it is captured and reported, not enforced).
-
-## Learning from corrections
-
-The eval above grades a single invoice in isolation. A separate, complementary
-measurement answers a different question: **does a human correction at the approval
-gate actually change the NEXT decision for that vendor?** (This is what makes the
-"the agent gets smarter" claim true rather than write-only.)
+### Offline CI protocol
 
 ```bash
-npm run eval:corrections   # offline, zero spend
+npm run eval -- --gate
 ```
 
-It reports a **behavioural delta, not an accuracy number** — and this is a
-deliberate honesty choice. The eval's whole credibility rests on labels being
-business ground truth, never back-derived from our policy; so rather than invent a
-label for these scenarios and grade against it, we **run the same decision invoice
-twice and report what the agent proposes each time**, differing *only* in whether the
-human correction happened:
+- Always uses `FakeQwenChatClient` and `FakeEmbedder`, even if a key happens to be
+  present in the environment.
+- Drives the real normalization, store, recall, validation, duplicate/anomaly tools,
+  bounded loop, final safety guard, and argument execution seam.
+- Gates final-system policy agreement at 90%, requires every case to complete, and
+  reports argument sanity, read/analyze steps, catches and scenario wall-clock time.
+- Current tuned regression result: 22/22 system-policy agreement and 22/22 executable
+  final argument sets. This is not a `qwen-plus` score.
 
-| Scenario | Before (no correction) | After (with correction) | Δ |
-|---|---|---|---|
-| Vendor amended down 5000→3000, next invoice **re-bills 5000** | `draft_payment` | `flag_for_review` | **changed** |
-| Same correction, next invoice **bills the corrected 3000** (control) | `draft_payment` | `draft_payment` | unchanged |
-
-**The measured result:** the correction signal flips `draft_payment → flag_for_review`
-on the genuine re-bill (**1/1**), and leaves a **compliant** invoice — one that bills
-the corrected amount — as `draft_payment` (the signal is amount-scoped: it fires only
-when a later invoice bills materially above the corrected amount, so it is not a
-blanket "escalate this vendor forever"). If the effect were smaller we would report it
-smaller; here it is a clean, isolated flip on the one case that warrants it.
-
-**Why the escalation is legitimate, not circular.** The `flag_for_review` here is
-independently justifiable: re-billing an amount a human already corrected *down* for
-a vendor is a concrete error an AP clerk catches — the label survives *without*
-reference to the fact that we built a correction-reader. It is a **conservative,
-recency/amount-scoped** policy (only when the new invoice bills materially above the
-corrected amount), not "escalate this vendor forever after one correction".
-
-**What is exercised.** The measurement (and its CI-gated twin,
-`tests/integration/learning-from-corrections.test.ts`) drives the **real**
-`agent.amend()` / `agent.reject()` → memory-writeback → `recall_vendor_history` path
-— nothing is hand-injected — so it proves the whole feedback loop, not just a flag.
-Offline this is deterministic (the `FakeQwenChatClient` branches on the
-`rebills_corrected` evidence flag); online, `qwen-plus` reads the same recalled
-correction in natural language and chooses freely.
-
-**Scope, owned.** Two scenarios (a genuine re-bill + a negative control) — a small,
-honest demonstration that the approval gate's feedback is *read and changes
-behaviour*, not a general online-learning claim.
-
-## Reproduce
+### Online Qwen protocol
 
 ```bash
-npm ci
-npm run eval            # offline: replays the deterministic pipeline, prints 22/22
-npm run eval -- --gate  # offline CI gate: accuracy ≥ 90%
-# live decision-quality number (needs a DashScope key, a few cents):
-cp .env.example .env    # set DASHSCOPE_API_KEY
-DASHSCOPE_API_KEY=sk-... npm run eval   # header self-labels ONLINE; grades real qwen-plus
+# Attempt files are immutable: retries use a new suffix and never replace evidence.
+npm run eval:live -- --write eval/results/qwen-plus-attempt-01.json
 ```
 
-> **Live-run cost note.** Each scenario now runs the multi-step loop (several
-> qwen-plus calls — one per step — plus any seed intakes), so a live eval makes
-> ~3× the API calls the old single-shot path did. Still cents overall, but budget
-> for it. The offline gate is free (zero credentials, zero spend).
+Run only after the protocol files are committed. The artifact records `gitCommit`
+and `gitClean`; a dirty run is visible and should not be used as final evidence.
 
-## MCP integration & custom skills — the same graded core, a narrower surface
+For every case and repetition the runner retains:
 
-The number above grades the **agent**, not a transport. The agent is now reachable
-two ways — the HTTP routes and an **MCP server** (`src/mcp/server.ts`,
-`@modelcontextprotocol/sdk`) — both wired from the same `resolveDeps()` helper to the
-**same injectable `AutopilotAgent`**. `intake_invoice` over MCP runs the *identical*
-multi-step loop this eval measures, but MCP intentionally stops at proposal/read.
-Authenticated HTTP/UI is the only decision surface.
+- raw Qwen terminal tool;
+- final guarded proposal;
+- whether a deterministic policy override occurred;
+- fallback/error status, with fallback/error counted incorrect for raw-model agreement;
+- tool/observation trace names and stop reason;
+- argument execution sanity;
+- successful decision-model and embedding calls;
+- provider token usage when returned;
+- scenario wall-clock latency, explicitly including seed/history setup;
+- every miss and categorical provider-error summary (never raw message/stack text).
 
-What the eval's discipline is complemented by, on the MCP side, is a **behavioural**
-guarantee proven by tests rather than a scored number:
+The primary output is **one agreement value per 22-case repetition**, plus mean,
+range, and per-case stability. Three replays do not turn 22 cases into 66 independent
+samples. “Raw-model agreement” and “final-system agreement” are never conflated: a
+model payment proposal that a deterministic safety guard replaces can be a correct
+system outcome while remaining a model miss.
 
-- **Round-trip through the real MCP surface** — `tests/integration/mcp-transport.test.ts`
-  stands up a real MCP `Client ↔ Server` over an in-memory transport and drives
-  `intake_invoice → list_pending`, fully offline.
-- **The human gate is unreachable from MCP.** The server advertises exactly four
-  proposal/read tools (`intake_invoice`, `list_pending`, `recall_vendor`,
-  `list_skills`). Decision and execution verbs are absent and dispatcher-rejected;
-  `intake` executes nothing and returns a PENDING item. Approval/amendment/rejection
-  tests run through the authenticated HTTP/UI boundary instead.
-- **Custom-skills catalog is faithful** — `tests/unit/skills.test.ts` proves the
-  `GET /skills` / `list_skills` catalog is derived from the live function schemas
-  (every skill once, correct tier/gate/rule, parameters equal to what Qwen sees), so
-  it cannot drift from the tools the graded loop actually uses.
+The protocol hash covers the dataset, runner/library, prompts, tool schemas,
+normalizer, validation policy, Qwen client and lockfile. The artifact also records
+model IDs, temperature, token/step/time budgets, SDK retry configuration, Node/SDK
+versions, command, commit and clean state.
 
-These run in the offline suite (`npm test`) with no key and no DB — same zero-spend
-discipline as the gated eval. Connection + config details: the
-[MCP integration & custom skills](README.md#mcp-integration--custom-skills) section
-of the README.
+### Cost
 
-**Scope, owned:** 22 scenarios on a frozen labelled set — a small, honest eval,
-exactly like the Track-1 retrieval benchmark's 15 queries. It measures *this*
-decider on *these* situations; it is not a general decision-quality claim. The
-offline grade is reproducible with zero credentials and zero spend; the online grade
-is a single keyed run over the same labels.
+Provider tokens and successful calls are retained per run. A USD estimate remains
+`null` unless the caller supplies all of:
+
+```bash
+QWEN_INPUT_USD_PER_MILLION_TOKENS=...
+QWEN_OUTPUT_USD_PER_MILLION_TOKENS=...
+QWEN_EMBED_USD_PER_MILLION_TOKENS=...
+QWEN_PRICING_SOURCE='dated official pricing URL or snapshot'
+```
+
+This avoids freezing an undated price or fabricating missing billing evidence.
+Transparent SDK retry attempts may not appear in successful-response counts; the
+artifact states that limitation.
+
+## Correction-learning behavioral delta
+
+```bash
+npm run eval:corrections
+```
+
+This deterministic integration measurement drives the genuine
+`amend()` → correction memory → next recall path:
+
+| Next invoice after a €5,000→€3,000 amendment | Before correction | After correction |
+|---|---|---|
+| Re-bills €5,000 | `draft_payment` | `flag_for_review` |
+| Bills compliant €3,000 control | `draft_payment` | `draft_payment` |
+
+It demonstrates a scoped runtime behavior, not model training or generalized online
+learning; no weights are updated. The approval UI
+contains a three-step guided challenge that exercises the same normal authenticated
+routes with a unique synthetic vendor and leaves both challenge outputs PENDING.
+
+## Qwen-VL extraction benchmark
+
+`eval/vision/manifest.json` defines 16 fictional invoices spanning PDF/PNG/JPG,
+multiple currencies and layouts, EU decimals, rotation, noise, low contrast,
+multi-page content, missing fields, inconsistent arithmetic, redaction, and an
+obscured total. Every asset is generated by `generate_fixtures.py`; provenance is in
+`eval/vision/LICENSE.md`. `fixtures.sha256` locks all assets and the manifest.
+
+```bash
+npm run eval:vision       # offline: verify count, hashes, types and magic bytes
+npm run eval:vision:live -- --write eval/results/qwen-vl-max-attempt-01.json
+                          # online: 3 repetitions + immutable in-repo JSON
+```
+
+The online artifact reports:
+
+- strict exact and normalized exact accuracy for vendor, invoice number, date,
+  tax ID and currency;
+- numeric-within-one-cent accuracy for subtotal, tax and total;
+- safe-review confusion matrix/recall/specificity where review is triggered by low
+  source confidence or failed structural AP validation;
+- per-case latency including local PDF rasterization;
+- completion/error rate, all misses, per-run metrics and case stability;
+- model, commit/clean state and a protocol hash that covers the extraction prompt,
+  preprocessing implementation, fixture manifest/lock and runner.
+
+Errors remain in the fixed denominators and make the run incomplete. The benchmark
+is a frozen developer-authored synthetic set, not an expert-labelled real-world
+invoice corpus. Monetary cost remains null unless supported by captured usage and a
+dated pricing source.
+
+## Model-promotion A/B
+
+Promotion is not inferred by comparing four independently timed artifacts. The
+canonical keyed protocol runs rollback and candidate arms in `AB / BA / AB` order,
+with both AP decision and vision cases inside one immutable attempt:
+
+```bash
+npm run eval:compare:live -- --baseline-decision qwen-plus --baseline-vision qwen-vl-max --candidate qwen3.7-plus-2026-05-26 --write eval/results/model-promotion-ab-attempt-01.json
+```
+
+The runner enforces the clean committed protocol tree, official Model Studio
+endpoint, exact three-repetition order, fixed denominators, exclusive first write,
+crash-safe atomic progress and per-run non-inferiority. Candidate promotion also
+requires 100% proposal-contract/reviewer-enrichment checks, ≥20/22 raw decision
+agreement in every run, ≥95% normalized-string and numeric vision accuracy, 100%
+safe-review recall, zero unstable decision cases and at most one unstable vision
+case. These absolute floors prevent two equally weak arms from passing relative
+non-inferiority. No new policy-override class is allowed. See
+`docs/MODEL_PROMOTION.md` for the preregistered manual review and rollback steps.
+
+## Claims that these evaluations do not support
+
+- no production labor-time or ROI claim;
+- no human error-reduction percentage;
+- no expert-level or real-world generalization claim;
+- no claim that self-reported model confidence is calibrated;
+- no claim that repeated runs are independent samples;
+- no claim that prompt-injection text is universally “neutralized.” Structural tool
+  separation and the human gate block autonomous execution; recognized patterns are
+  surfaced for review.

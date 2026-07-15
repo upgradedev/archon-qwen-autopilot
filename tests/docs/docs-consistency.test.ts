@@ -1,4 +1,4 @@
-// Documentation-drift fitness functions — three offline checks that keep the README
+// Documentation-drift fitness functions — seven offline checks that keep the README
 // honest against the code, run as their own `docs-consistency` CI job.
 //
 //   CHECK 1  README claims ↔ code  — model ids, HTTP endpoints, and the MCP-tool /
@@ -8,6 +8,14 @@
 //   CHECK 3  A committed golden (claims.golden.json) pins the headline numbers (eval
 //            22/22, MCP tools, skill split, the security invariant) and asserts the
 //            README's stated versions match, so future drift is caught.
+//   CHECK 4  Every local README link resolves, and every Markdown fragment points to
+//            a real GitHub-style heading anchor (no silently broken judge navigation).
+//   CHECK 5  Judge-facing SMTP claims stop at awaited transport acceptance and never
+//            imply recipient delivery or recipient-level exactly-once semantics.
+//   CHECK 6  Obsolete pre-auth UI captures stay deleted so media tooling cannot
+//            accidentally promote stale evidence.
+//   CHECK 7  Workflow actions, Node, container services, k6, and the video renderer
+//            use exact versions plus content digests/hashes where the platform allows.
 //
 // Direction of every check is chosen so it passes CLEAN on current main: a
 // README-claims-something-code-lacks direction is a HARD FAIL (no phantom); a
@@ -16,7 +24,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 
@@ -153,6 +161,34 @@ function mermaidNodeIds(): Set<string> {
   return ids;
 }
 
+// Approximate GitHub's documented heading-id normalization for the headings used in
+// this repository, including deterministic suffixes for duplicate headings.
+function markdownAnchors(markdown: string): Set<string> {
+  const anchors = new Set<string>();
+  const occurrences = new Map<string, number>();
+  for (const line of markdown.split(/\r?\n/)) {
+    const heading = line.match(/^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/);
+    if (!heading) continue;
+    const plain = heading[1]!
+      .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+      .replace(/<[^>]+>/g, "")
+      .replace(/[`*_~]/g, "")
+      .trim()
+      .toLowerCase();
+    const base = plain
+      .replace(/[^\p{L}\p{N}\p{M}\s_-]/gu, "")
+      .replace(/\s/g, "-");
+    const count = occurrences.get(base) ?? 0;
+    occurrences.set(base, count + 1);
+    anchors.add(count === 0 ? base : `${base}-${count}`);
+  }
+  for (const match of markdown.matchAll(/<a\s+(?:name|id)=["']([^"']+)["']/gi)) {
+    anchors.add(match[1]!);
+  }
+  return anchors;
+}
+
 // ════════════════════════════════════════════════════════════════════════════════
 // CHECK 1 — README claims ↔ code (documentation drift)
 // ════════════════════════════════════════════════════════════════════════════════
@@ -269,6 +305,8 @@ test("CHECK 2 · architecture: every code-component node in the Mermaid diagram 
   // Explicit, readable diagram-node → source-file mapping (the conformance contract).
   const MAPPING: Record<string, string> = {
     HTTP: "src/server.ts", //             HTTP + Approval UI surface
+    AUTHZ: "src/server.ts", //            Reviewer credential split
+    PREVIEW: "src/server.ts", //          Isolated non-durable public projection
     MCP: "src/mcp/server.ts", //          MCP server (stdio)
     NORM: "src/ap/normalize.ts", //       Normalize / fence as UNTRUSTED DATA
     DEC: "src/ap/loop.ts", //             Qwen picks the next tool (ReAct loop)
@@ -339,5 +377,203 @@ test("CHECK 3 · golden: the security invariant pinned in the golden holds in co
   const modelCatalog = [...analysisToolDefs(), ...toolDefs()].map((d) => d.function.name);
   for (const name of GOLDEN.security.terminalActionNames as string[]) {
     assert.ok(!modelCatalog.includes(name), `golden invariant broken: '${name}' leaked into the model tool catalog`);
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════════
+// CHECK 4 — README local links + heading anchors
+// ════════════════════════════════════════════════════════════════════════════════
+
+test("CHECK 4 · links: every local README target and Markdown heading fragment resolves", () => {
+  const cache = new Map<string, Set<string>>();
+  const anchorsFor = (path: string) => {
+    let anchors = cache.get(path);
+    if (!anchors) {
+      anchors = markdownAnchors(readFileSync(path, "utf8"));
+      cache.set(path, anchors);
+    }
+    return anchors;
+  };
+
+  for (const match of README.matchAll(/(?<!!)\[[^\]]*\]\(([^)]+)\)/g)) {
+    const rawTarget = match[1]!.trim().replace(/^<|>$/g, "").split(/\s+["']/)[0]!;
+    if (/^(?:https?:|mailto:|tel:)/i.test(rawTarget)) continue;
+    const [rawPath = "", rawFragment] = rawTarget.split("#", 2);
+    const relativePath = decodeURIComponent(rawPath);
+    const targetPath = relativePath ? resolve(ROOT, relativePath) : join(ROOT, "README.md");
+    assert.ok(
+      targetPath === ROOT || targetPath.startsWith(ROOT + "\\") || targetPath.startsWith(ROOT + "/"),
+      `README link escapes the repository: '${rawTarget}'`,
+    );
+    assert.ok(existsSync(targetPath), `README link target does not exist: '${rawTarget}'`);
+    if (!rawFragment || !targetPath.toLowerCase().endsWith(".md")) continue;
+    const fragment = decodeURIComponent(rawFragment).toLowerCase();
+    assert.ok(
+      anchorsFor(targetPath).has(fragment),
+      `README link fragment '#${fragment}' does not match a heading in '${relativePath || "README.md"}'`,
+    );
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════════
+// CHECK 5 — SMTP claim boundary (transport acceptance ≠ recipient delivery)
+// ════════════════════════════════════════════════════════════════════════════════
+
+function markdownFilesUnder(dir: string): string[] {
+  const files: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) files.push(...markdownFilesUnder(path));
+    else if (entry.isFile() && entry.name.toLowerCase().endsWith(".md")) files.push(path);
+  }
+  return files;
+}
+
+test("CHECK 5 · claims: SMTP success means awaited transport acceptance, never recipient delivery", () => {
+  const contract =
+    "submits the approved message to the configured smtp transport and awaits transport acceptance; recipient delivery is not claimed";
+  const contractFiles = [
+    join(ROOT, "README.md"),
+    join(ROOT, ".env.example"),
+    join(ROOT, "demo", "PROJECT_STORY.md"),
+    join(ROOT, "demo", "SUBMISSION.md"),
+    join(ROOT, "demo", "JUDGE_REVIEW.md"),
+    join(ROOT, "docs", "CLAIM_EVIDENCE_MATRIX.md"),
+    join(ROOT, "scripts", "readiness.ts"),
+  ];
+  for (const path of contractFiles) {
+    const normalized = readFileSync(path, "utf8")
+      .replace(/[#`*_]/g, "")
+      .replace(/\s+/g, " ")
+      .toLowerCase();
+    assert.ok(normalized.includes(contract), `${path} must state the bounded SMTP transport-acceptance contract`);
+  }
+
+  const judgeFacing = [
+    join(ROOT, "README.md"),
+    join(ROOT, "EVAL.md"),
+    join(ROOT, ".env.example"),
+    ...markdownFilesUnder(join(ROOT, "demo")),
+    ...markdownFilesUnder(join(ROOT, "docs")),
+  ];
+  const forbidden = [
+    /delivers? an actual (?:message|email) over smtp/i,
+    /delivers? exactly the approved message/i,
+    /delivers? the approved\/amended message/i,
+    /\breal smtp send\b/i,
+    /vendor-reply action to real delivery/i,
+    /nodemailer sends after approval/i,
+    /delivers via the transport seam/i,
+  ];
+  for (const path of judgeFacing) {
+    const text = readFileSync(path, "utf8");
+    for (const pattern of forbidden) {
+      assert.doesNotMatch(text, pattern, `${path} contains an SMTP recipient-delivery overclaim (${pattern})`);
+    }
+  }
+});
+
+test("CHECK 6 · media: obsolete pre-auth UI captures remain deleted", () => {
+  for (const name of ["ui_card.png", "ui_overview.png"]) {
+    assert.equal(
+      existsSync(join(ROOT, "demo", "video", "assets", name)),
+      false,
+      `obsolete demo/video/assets/${name} must not return as submission evidence`,
+    );
+  }
+});
+
+test("CHECK 7 · supply chain: immutable Actions + hash-locked demo-video Python graph", () => {
+  const NODE_VERSION = "24.18.0";
+  const NPM_VERSION = "11.16.0";
+  const NODE_IMAGE =
+    "node:24.18.0-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d";
+  const PGVECTOR_IMAGE =
+    "pgvector/pgvector:0.8.5-pg16-bookworm@sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb";
+  const K6_SHA256 = "295d961ebfca306f295f1133068dcd403a8171c87f387928f5f30b0fbcff858a";
+  const workflows = readdirSync(join(ROOT, ".github", "workflows"))
+    .filter((name) => /\.ya?ml$/i.test(name))
+    .map((name) => join(ROOT, ".github", "workflows", name));
+  let actionRefs = 0;
+  for (const path of workflows) {
+    const yaml = readFileSync(path, "utf8");
+    for (const match of yaml.matchAll(/uses:\s+([\w.-]+\/[\w.-]+)@([^\s#]+)(?:\s+#\s+(v[^\s]+))?/g)) {
+      actionRefs += 1;
+      assert.match(match[2]!, /^[0-9a-f]{40}$/, `${path}: ${match[1]} must use an immutable full commit SHA`);
+      assert.match(match[3] ?? "", /^v\d+\.\d+\.\d+$/, `${path}: pinned ${match[1]} needs a readable release comment`);
+    }
+  }
+  assert.ok(actionRefs >= 20, `expected the full workflow action surface, found only ${actionRefs} references`);
+
+  const workflowTexts = workflows.map((path) => readFileSync(path, "utf8"));
+  const configuredNodeVersions = workflowTexts.flatMap((yaml) =>
+    [...yaml.matchAll(/node-version:\s*["']?([^\s"'#]+)/g)].map((match) => match[1]!),
+  );
+  assert.equal(configuredNodeVersions.length, 9, "every setup-node use must declare the exact Node patch");
+  assert.deepEqual([...new Set(configuredNodeVersions)], [NODE_VERSION]);
+  assert.equal(readFileSync(join(ROOT, ".nvmrc"), "utf8").trim(), `v${NODE_VERSION}`);
+
+  const manifest = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
+  const packageLock = JSON.parse(readFileSync(join(ROOT, "package-lock.json"), "utf8"));
+  assert.equal(manifest.engines.node, NODE_VERSION);
+  assert.equal(manifest.engines.npm, NPM_VERSION);
+  assert.equal(manifest.packageManager, `npm@${NPM_VERSION}`);
+  assert.equal(manifest.devDependencies["@types/node"], "24.13.3");
+  assert.equal(packageLock.packages[""].engines.node, NODE_VERSION);
+  assert.equal(packageLock.packages[""].engines.npm, NPM_VERSION);
+  assert.equal(packageLock.packages[""].devDependencies["@types/node"], "24.13.3");
+
+  const dockerfile = readFileSync(join(ROOT, "Dockerfile"), "utf8");
+  const nodeImages = [...dockerfile.matchAll(/^FROM\s+(node:\S+)\s+AS\s+/gm)].map((match) => match[1]!);
+  assert.equal(nodeImages.length, 2, "both Docker stages must use the pinned Node image");
+  for (const image of nodeImages) assert.equal(image, NODE_IMAGE);
+
+  const ciWorkflow = readFileSync(join(ROOT, ".github", "workflows", "ci.yml"), "utf8");
+  const pgvectorImages = [...ciWorkflow.matchAll(/^\s*image:\s+(pgvector\/pgvector:\S+)/gm)].map(
+    (match) => match[1]!,
+  );
+  assert.equal(pgvectorImages.length, 3, "all three real-Postgres jobs must declare pgvector");
+  for (const image of pgvectorImages) assert.equal(image, PGVECTOR_IMAGE);
+
+  const loadWorkflow = readFileSync(join(ROOT, ".github", "workflows", "load-test.yml"), "utf8");
+  assert.match(loadWorkflow, /K6_VERSION="2\.1\.0"/);
+  assert.match(loadWorkflow, new RegExp(`K6_SHA256="${K6_SHA256}"`));
+  assert.match(loadWorkflow, /grafana\/k6\/releases\/download\/v\$\{K6_VERSION\}/);
+  assert.match(loadWorkflow, /K6_DIR="\$PWD\/\.artifacts\/k6"/);
+  assert.match(loadWorkflow, /sha256sum --check --strict/);
+  assert.doesNotMatch(loadWorkflow, /dl\.k6\.io|keyserver|sudo\s+gpg|apt-get\s+install[^\n]*\bk6\b/);
+  assert.match(loadWorkflow, /K6_SUMMARY_PATH:\s*\.artifacts\/load-test\/load-summary\.json/);
+  const loadScript = readFileSync(join(ROOT, "load", "workflow-load.js"), "utf8");
+  assert.doesNotMatch(
+    loadScript,
+    /from\s+["']https?:\/\//,
+    "the load script must not execute mutable remote JavaScript imports",
+  );
+  assert.match(loadScript, /K6_REVIEWER_TOKEN is required/);
+  assert.match(loadScript, /Authorization:\s*`Bearer \$\{REVIEWER_TOKEN\}`/);
+
+  const videoWorkflow = readFileSync(join(ROOT, ".github", "workflows", "demo-video.yml"), "utf8");
+  assert.match(videoWorkflow, /python-version:\s*["']3\.11\.15["']/);
+  assert.match(videoWorkflow, /cache:\s*pip/);
+  assert.match(videoWorkflow, /cache-dependency-path:\s*demo\/video\/requirements\.lock/);
+  assert.match(videoWorkflow, /pip install[^\n]*--require-hashes[^\n]*--only-binary=:all:[^\n]*-r demo\/video\/requirements\.lock/);
+  assert.match(videoWorkflow, /python -m pip check/);
+  assert.doesNotMatch(videoWorkflow, /pip install --upgrade pip|(?:pillow|edge-tts)\s*>?=/i);
+
+  const direct = readFileSync(join(ROOT, "demo", "video", "requirements.in"), "utf8");
+  assert.match(direct, /^Pillow==12\.2\.0$/m);
+  assert.match(direct, /^edge-tts==7\.2\.8$/m);
+  const lock = readFileSync(join(ROOT, "demo", "video", "requirements.lock"), "utf8");
+  assert.match(lock, /^pillow==12\.2\.0\s*\\$/m);
+  assert.match(lock, /^edge-tts==7\.2\.8\s*\\$/m);
+  const starts = [...lock.matchAll(/^([a-z0-9_.-]+)==([^\s\\]+)\s*\\$/gm)];
+  assert.ok(starts.length >= 10, `expected a transitive Python lock, found ${starts.length} packages`);
+  const allHashMarkers = [...lock.matchAll(/--hash=sha256:([^\s\\]+)/g)];
+  assert.ok(allHashMarkers.length >= starts.length, "every locked package needs at least one SHA-256 distribution hash");
+  for (const marker of allHashMarkers) assert.match(marker[1]!, /^[0-9a-f]{64}$/, "lock contains a malformed SHA-256 hash");
+  for (let i = 0; i < starts.length; i += 1) {
+    const begin = starts[i]!.index!;
+    const end = i + 1 < starts.length ? starts[i + 1]!.index! : lock.length;
+    assert.match(lock.slice(begin, end), /--hash=sha256:[0-9a-f]{64}/, `${starts[i]![1]} lacks a SHA-256 hash`);
   }
 });

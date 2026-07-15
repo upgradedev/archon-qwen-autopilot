@@ -12,15 +12,17 @@
 // browser, so only a browser driving the real page can catch a dead change handler.
 
 import { test, expect } from "@playwright/test";
+import { E2E_REVIEWER_TOKEN, pngFile } from "./helpers.js";
 
-// A tiny fake image payload. It carries the real 8-byte PNG signature so the upload
-// path's magic-byte sniff accepts it; the offline FakeExtractionClient then ignores
-// the bytes and returns the canonical demo invoice (Meridian Logistics).
-const FAKE_PNG = {
-  name: "acme-invoice.png",
-  mimeType: "image/png",
-  buffer: Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from(" fake image bytes for e2e")]),
-};
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript((token) => {
+    (globalThis as any).sessionStorage.setItem("archonReviewerToken", token);
+  }, E2E_REVIEWER_TOKEN);
+});
+
+// Reuse the shared genuinely valid 1 x 1 PNG fixture so this browser test tracks
+// the production image-dimension preflight as it evolves.
+const FAKE_PNG = pngFile("acme-invoice.png");
 
 // Close the first-visit guided tour if it is showing (it auto-opens and its backdrop
 // would intercept clicks). Asserting it appeared is part of the static-UI test.

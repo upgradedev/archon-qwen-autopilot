@@ -14,6 +14,8 @@
 
 import type { ToolDef } from "../qwen/client.js";
 import type { ExecutionResult, NormalizedInvoice, ToolName } from "../types.js";
+import { isSupportedCurrency } from "./currency.js";
+import { isBoundedPositiveAmount, MAX_FINANCIAL_AMOUNT } from "./finance-policy.js";
 import type { Sinks } from "./sinks.js";
 
 export interface ToolSpec {
@@ -79,15 +81,17 @@ const draftJournalEntry: ToolSpec = {
     {
       expense_account: { type: "string", description: "The expense account to debit, e.g. 'Office Supplies' or 'Professional Fees'." },
       amount: { type: "number", description: "The gross amount to accrue (the invoice total)." },
+      currency: { type: "string", description: "ISO currency code for every debit and credit in this entry." },
       memo: { type: "string", description: "Short narrative for the journal entry." },
     },
-    ["expense_account", "amount"]
+    ["expense_account", "amount", "currency"]
   ),
   async execute(args, inv, sinks, executionKey = inv.invoice_id) {
     const amount = num(args["amount"], inv.total ?? 0);
     const account = str(args["expense_account"], "Uncategorised Expense");
     const entry = sinks.ledger.post({
       ref: executionKey,
+      currency: str(args["currency"], inv.currency),
       narrative: str(args["memo"], `Accrual for ${inv.vendor ?? "vendor"} invoice ${inv.vendor_ref ?? inv.invoice_id}`),
       lines: [
         { account, debit: amount },
@@ -97,7 +101,7 @@ const draftJournalEntry: ToolSpec = {
     return {
       tool: "draft_journal_entry",
       ok: true,
-      summary: `Posted journal entry ${entry.ref}: debit ${account} ${amount}, credit Accounts Payable ${amount}.`,
+      summary: `Posted ${entry.currency} journal entry ${entry.ref}: debit ${account} ${amount}, credit Accounts Payable ${amount}.`,
       output: { entry },
     };
   },
@@ -107,14 +111,14 @@ const draftPayment: ToolSpec = {
   name: "draft_payment",
   def: fn(
     "draft_payment",
-    "Schedule a payment to the vendor. Use for a clean, validated invoice from a KNOWN, previously-approved vendor whose amount matches its history — the straight-through case where paying is the right next step.",
+    "Propose a simulated scheduled-payment adapter record. Use for a clean, validated invoice from a KNOWN, previously-approved vendor whose amount matches its history. No bank rail is connected.",
     {
       vendor: { type: "string", description: "The payee vendor name." },
       amount: { type: "number", description: "The amount to pay (the invoice total)." },
       currency: { type: "string", description: "ISO currency code, e.g. EUR." },
       pay_on: { type: "string", description: "Optional ISO date to schedule the payment for." },
     },
-    ["vendor", "amount"]
+    ["vendor", "amount", "currency"]
   ),
   async execute(args, inv, sinks, executionKey = inv.invoice_id) {
     const payment = sinks.payments.record({
@@ -139,7 +143,6 @@ const draftVendorReply: ToolSpec = {
     "draft_vendor_reply",
     "Draft a reply to the vendor asking for a correction or clarification. Use when required fields are missing or the invoice does not reconcile — you cannot safely pay until the vendor responds.",
     {
-      to: { type: "string", description: "Recipient — the vendor's billing contact (a name/address is fine)." },
       subject: { type: "string", description: "Email subject line." },
       body: { type: "string", description: "The clarification request, citing exactly what is missing or inconsistent." },
     },
@@ -155,7 +158,7 @@ const draftVendorReply: ToolSpec = {
     return {
       tool: "draft_vendor_reply",
       ok: true,
-      summary: `Sent a clarification request to ${email.to} re: "${email.subject}".`,
+      summary: `Submitted a clarification request to the configured email sink for ${email.to} re: "${email.subject}".`,
       output: { email },
     };
   },
@@ -209,7 +212,7 @@ export function assertValidToolArgs(
   _invoice: NormalizedInvoice
 ): void {
   const allowed: Record<ToolName, readonly string[]> = {
-    draft_journal_entry: ["expense_account", "amount", "memo"],
+    draft_journal_entry: ["expense_account", "amount", "currency", "memo"],
     draft_payment: ["vendor", "amount", "currency", "pay_on"],
     draft_vendor_reply: ["to", "subject", "body"],
     flag_for_review: ["reason", "priority"],
@@ -226,28 +229,34 @@ export function assertValidToolArgs(
     case "draft_journal_entry":
       requireText(args, "expense_account", 120);
       requireAmount(args, "amount");
+      requireIsoCurrency(args, "draft_journal_entry");
       optionalText(args, "memo", 2000);
       return;
     case "draft_payment":
       requireText(args, "vendor", 200);
       requireAmount(args, "amount");
-      optionalText(args, "currency", 3);
-      if (args["currency"] !== undefined && !/^[A-Za-z]{3}$/.test(String(args["currency"]))) {
-        throw new InvalidToolArgsError("draft_payment: currency must be a 3-letter ISO code");
-      }
+      requireIsoCurrency(args, "draft_payment");
       optionalText(args, "pay_on", 10);
       if (args["pay_on"] !== undefined && !isIsoDate(String(args["pay_on"]))) {
         throw new InvalidToolArgsError("draft_payment: pay_on must be an ISO date (YYYY-MM-DD)");
       }
       return;
     case "draft_vendor_reply":
-      optionalText(args, "to", 320);
+      // No verified vendor email exists in the normalized source. The proposal
+      // argument guard strips any model-supplied destination, so sending requires
+      // an authenticated reviewer amendment that explicitly supplies `to`.
+      requireText(args, "to", 320);
       requireText(args, "subject", 300);
       requireText(args, "body", 10_000);
       for (const field of ["to", "subject"] as const) {
         if (typeof args[field] === "string" && /[\r\n\0]/.test(args[field])) {
           throw new InvalidToolArgsError(`draft_vendor_reply: ${field} contains forbidden header controls`);
         }
+      }
+      if (!isSingleMailbox(String(args["to"]))) {
+        throw new InvalidToolArgsError(
+          "draft_vendor_reply: to must be exactly one canonical mailbox (no display name or recipient list)"
+        );
       }
       return;
     case "flag_for_review":
@@ -259,10 +268,40 @@ export function assertValidToolArgs(
   }
 }
 
+function isSingleMailbox(value: string): boolean {
+  if (value.length > 254 || /[\s,;<>"\x00-\x1f\x7f]/.test(value)) return false;
+  const parts = value.split("@");
+  if (parts.length !== 2) return false;
+  const [local = "", domain = ""] = parts;
+  if (
+    local.length < 1 ||
+    local.length > 64 ||
+    local.startsWith(".") ||
+    local.endsWith(".") ||
+    local.includes("..") ||
+    !/^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+$/.test(local)
+  ) return false;
+  if (domain.length < 3 || domain.length > 253 || !domain.includes(".")) return false;
+  return domain.split(".").every(
+    (label) =>
+      label.length >= 1 &&
+      label.length <= 63 &&
+      /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(label)
+  );
+}
+
+function requireIsoCurrency(args: Record<string, unknown>, tool: ToolName): void {
+  requireText(args, "currency", 3);
+  const code = String(args["currency"]).toUpperCase();
+  if (!isSupportedCurrency(code)) {
+    throw new InvalidToolArgsError(`${tool}: currency must be a supported ISO 4217 code`);
+  }
+}
+
 function requireAmount(args: Record<string, unknown>, key: string): void {
   const value = args[key];
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0 || value > 1_000_000_000) {
-    throw new InvalidToolArgsError(`${key} must be a finite positive number no greater than 1,000,000,000`);
+  if (!isBoundedPositiveAmount(value)) {
+    throw new InvalidToolArgsError(`${key} must be a finite positive number no greater than ${MAX_FINANCIAL_AMOUNT}`);
   }
 }
 

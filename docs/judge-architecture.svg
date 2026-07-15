@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">Archon Autopilot Track-4 architecture</title>
+  <desc id="desc">An untrusted invoice is extracted by the configured Qwen vision model and analyzed by a bounded Qwen tool loop. Unauthenticated callers receive an isolated, redacted, non-durable preview; only a valid reviewer path persists a full-evidence pending proposal. An authenticated human must then approve, amend, or reject before any sink. Human corrections become vendor evidence for later decisions. Model and MCP surfaces have no execution verbs.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#0d1117"/><stop offset="1" stop-color="#111827"/></linearGradient>
+    <linearGradient id="hero" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#2563eb"/><stop offset="1" stop-color="#7c3aed"/></linearGradient>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M0 0L12 6L0 12z" fill="#58a6ff"/></marker>
+    <style>
+      .h1{font:700 42px system-ui,sans-serif;fill:#f0f6fc}.sub{font:400 20px system-ui,sans-serif;fill:#9ca3af}.cap{font:700 15px system-ui,sans-serif;fill:#a5b4fc;letter-spacing:1.2px}.title{font:700 23px system-ui,sans-serif;fill:#f0f6fc}.body{font:400 16px system-ui,sans-serif;fill:#c9d1d9}.mono{font:600 15px ui-monospace,monospace;fill:#7dd3fc}.small{font:400 14px system-ui,sans-serif;fill:#9ca3af}.box{fill:#161b22;stroke:#374151;stroke-width:2}.flow{fill:none;stroke:#58a6ff;stroke-width:4;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect width="1600" height="900" rx="28" fill="url(#bg)"/>
+  <text x="70" y="75" class="h1">Archon Autopilot</text>
+  <text x="70" y="111" class="sub">Track 4 · bounded accounts-payable orchestration with a hard human consequence boundary</text>
+  <rect x="1260" y="53" width="270" height="54" rx="27" fill="url(#hero)"/><text x="1395" y="87" text-anchor="middle" class="title" font-size="19">Qwen · Alibaba Cloud</text>
+
+  <rect class="box" x="70" y="180" width="220" height="190" rx="18"/>
+  <text x="95" y="215" class="cap">UNTRUSTED INPUT</text><text x="95" y="258" class="title">Invoice</text>
+  <text x="95" y="291" class="body">PDF · PNG · JPG · JSON</text><text x="95" y="323" class="small">type/size/magic checks</text><text x="95" y="346" class="small">pattern warnings are advisory</text>
+
+  <rect class="box" x="350" y="180" width="230" height="190" rx="18"/>
+  <text x="375" y="215" class="cap">EXTRACT</text><text x="375" y="258" class="title">Qwen vision</text>
+  <text x="375" y="291" class="mono">configured model</text><text x="375" y="323" class="small">structured fields + source</text><text x="375" y="346" class="small">confidence, human-review guard</text>
+
+  <rect x="640" y="150" width="400" height="250" rx="22" fill="#111f35" stroke="#3b82f6" stroke-width="3"/>
+  <text x="670" y="190" class="cap">BOUNDED AGENT LOOP</text><text x="670" y="232" class="title">Qwen function calling</text>
+  <text x="670" y="270" class="mono">1 recall_vendor_history</text><text x="670" y="301" class="mono">2 validate_invoice</text><text x="670" y="332" class="mono">3 check_duplicate · variance</text>
+  <text x="670" y="368" class="small">read/analyze only · capped steps/deadline</text>
+
+  <rect class="box" x="1100" y="180" width="210" height="190" rx="18"/>
+  <text x="1125" y="215" class="cap">RESULT ROUTING</text><text x="1125" y="258" class="title" style="font-size:18px">PREVIEW / PENDING</text>
+  <text x="1125" y="291" class="small">public → isolated + redacted</text><text x="1125" y="323" class="small">reviewer → durable + full trace</text><text x="1125" y="346" class="small">only PENDING reaches the gate</text>
+
+  <rect x="1360" y="165" width="170" height="220" rx="20" fill="#18251d" stroke="#3fb950" stroke-width="3"/>
+  <text x="1385" y="205" class="cap" fill="#86efac">AUTH HITL</text><text x="1385" y="247" class="title">Human gate</text>
+  <text x="1385" y="284" class="body">Approve</text><text x="1385" y="315" class="body">Amend exact args</text><text x="1385" y="346" class="body">Reject</text>
+
+  <path class="flow" d="M290 275H340"/><path class="flow" d="M580 275H630"/><path class="flow" d="M1040 275H1090"/><path class="flow" d="M1310 275H1350"/>
+
+  <rect class="box" x="160" y="485" width="340" height="180" rx="18"/>
+  <text x="190" y="522" class="cap">READ-ONLY EVIDENCE</text><text x="190" y="560" class="title">Vendor history · pgvector</text>
+  <text x="190" y="594" class="body">completed invoices · outcomes</text><text x="190" y="624" class="body">human corrections · rejections</text>
+  <path d="M500 555C590 555 570 365 650 340" class="flow"/>
+
+  <rect class="box" x="610" y="485" width="360" height="180" rx="18"/>
+  <text x="640" y="522" class="cap">AFTER EXPLICIT APPROVAL</text><text x="640" y="560" class="title">Fenced execution</text>
+  <text x="640" y="594" class="body">JSONL: durable ref dedupe</text><text x="640" y="624" class="small">SMTP is not recipient-exactly-once · explicit recovery</text>
+  <path d="M1445 385V450C1445 465 980 465 970 545" class="flow"/>
+
+  <rect class="box" x="1060" y="485" width="400" height="180" rx="18"/>
+  <text x="1090" y="522" class="cap">AUDIT + FEEDBACK</text><text x="1090" y="560" class="title">Ledger and correction loop</text>
+  <text x="1090" y="594" class="body">approved args = executed args</text><text x="1090" y="624" class="body">€5k→€3k changes next decision</text>
+  <path class="flow" d="M970 575H1050"/><path d="M1080 665C990 745 470 745 335 675" class="flow"/>
+
+  <rect x="70" y="765" width="1460" height="82" rx="18" fill="#2a1820" stroke="#f85149" stroke-width="2"/>
+  <text x="100" y="799" class="cap" fill="#fca5a5">STRUCTURAL CONSEQUENCE BOUNDARY</text>
+  <text x="100" y="829" class="body">Qwen model catalog + MCP (4 proposal/read tools): no approve · no amend · no reject · no pay · no sink execution</text>
+  <text x="1495" y="817" text-anchor="end" style="font:700 35px system-ui,sans-serif;fill:#f85149">BLOCKED ⛔</text>
+</svg>

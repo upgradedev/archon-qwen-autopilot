@@ -69,6 +69,34 @@ test("R4 fails closed when even one line-item amount is missing", () => {
   assert.match(finding.message, /Only 1 of 2/);
 });
 
+test("R1/R3/R4 align with the sink amount bound and reject negative financial components", () => {
+  const huge = normalizeInvoice({ vendor: "Bound Co", invoice_number: "B-1", date: "2026-01-01", currency: "EUR", tax_id: "T", subtotal: 2_000_000_000, tax: 0, total: 2_000_000_000 });
+  assert.equal(find(validateInvoice(huge), "R1").passed, false);
+
+  const negativeTaxBase = normalizeInvoice({ vendor: "Bound Co", invoice_number: "B-2", date: "2026-01-01", currency: "EUR", tax_id: "T", subtotal: -100, tax: 200, total: 100 });
+  assert.equal(find(validateInvoice(negativeTaxBase), "R3").passed, false);
+
+  const negativeLine = normalizeInvoice({
+    vendor: "Bound Co", invoice_number: "B-3", date: "2026-01-01", currency: "EUR", tax_id: "T",
+    subtotal: 100, tax: 0, total: 100,
+    line_items: [{ description: "invalid credit-like invoice line", quantity: -1, unit_price: -100, amount: 100 }],
+  });
+  assert.equal(find(validateInvoice(negativeLine), "R4").passed, false);
+});
+
+test("R4 reconciles quantity × unit_price against each line amount", () => {
+  const finding = find(
+    validateInvoice(normalizeInvoice({
+      vendor: "A",
+      total: 30,
+      line_items: [{ description: "units", quantity: 2, unit_price: 10, amount: 30 }],
+    })),
+    "R4"
+  );
+  assert.equal(finding.passed, false);
+  assert.match(finding.message, /quantity 2 × unit price 10 = 20, not 30/);
+});
+
 test("R2 blocks missing or conflicting currency and missing invoice date", () => {
   const missing = find(
     validateInvoice(normalizeInvoice({ vendor: "A", invoice_number: "1", tax_id: "T", total: 100 })),
@@ -94,7 +122,7 @@ test("hasBlockingError is true only when a hard error is present", () => {
 });
 
 const priors: PriorInvoice[] = [
-  { invoiceId: "inv-1", vendor: "Northwind", vendorRef: "NW-1001", total: 1200, date: "2026-02-03" },
+  { invoiceId: "inv-1", vendor: "Northwind", vendorRef: "NW-1001", total: 1200, date: "2026-02-03", currency: "EUR" },
 ];
 
 test("R5 flags a duplicate by same vendor + vendor_ref", () => {
@@ -105,7 +133,7 @@ test("R5 flags a duplicate by same vendor + vendor_ref", () => {
 });
 
 test("R5 flags a duplicate by same vendor + total + date even with a different ref", () => {
-  const inv = normalizeInvoice({ vendor: "Northwind", invoice_number: "NW-9999", tax_id: "T", total: 1200, date: "2026-02-03" });
+  const inv = normalizeInvoice({ vendor: "Northwind", invoice_number: "NW-9999", tax_id: "T", total: 1200, date: "2026-02-03", currency: "EUR" });
   const finding = detectDuplicate(inv, priors);
   assert.equal(finding.passed, false);
   assert.match(finding.message, /Suspected duplicate fingerprint/);
@@ -125,10 +153,37 @@ test("R5 cannot be bypassed by reusing a caller-supplied invoice_id", () => {
 });
 
 test("R6 flags an amount well above the vendor's usual, but not an in-range one", () => {
-  const anomalous = normalizeInvoice({ vendor: "Northwind", invoice_number: "NW-2", tax_id: "T", total: 9000, date: "2026-06-01" });
+  const anomalous = normalizeInvoice({ vendor: "Northwind", invoice_number: "NW-2", tax_id: "T", total: 9000, date: "2026-06-01", currency: "EUR" });
   assert.equal(detectAmountAnomaly(anomalous, priors).passed, false);
-  const normal = normalizeInvoice({ vendor: "Northwind", invoice_number: "NW-3", tax_id: "T", total: 1300, date: "2026-06-01" });
+  const normal = normalizeInvoice({ vendor: "Northwind", invoice_number: "NW-3", tax_id: "T", total: 1300, date: "2026-06-01", currency: "EUR" });
   assert.equal(detectAmountAnomaly(normal, priors).passed, true);
+});
+
+test("R6 uses a robust median so one historical outlier cannot hide an anomaly", () => {
+  const inv = normalizeInvoice({ vendor: "Robust Co", invoice_number: "R-4", date: "2026-04-01", currency: "EUR", tax_id: "T", total: 500 });
+  const priors = [100, 110, 100_000].map((total, index) => ({
+    invoiceId: `r-${index}`,
+    vendor: "Robust Co",
+    vendorRef: `R-${index}`,
+    total,
+    date: `2026-0${index + 1}-01`,
+    currency: "EUR",
+  }));
+  const finding = detectAmountAnomaly(inv, priors);
+  assert.equal(finding.passed, false);
+  assert.match(finding.message, /median/i);
+});
+
+test("currency-less legacy history is never used for amount/date duplicates or R6", () => {
+  const legacy: PriorInvoice[] = [
+    { invoiceId: "legacy", vendor: "Northwind", vendorRef: "OLD", total: 10, date: "2026-02-03" },
+  ];
+  const current = normalizeInvoice({
+    vendor: "Northwind", invoice_number: "NEW", tax_id: "T", total: 1000,
+    date: "2026-02-03", currency: "EUR",
+  });
+  assert.equal(detectDuplicate(current, legacy).passed, true);
+  assert.equal(detectAmountAnomaly(current, legacy).passed, true);
 });
 
 test("R6 does not flag a brand-new vendor (no history)", () => {

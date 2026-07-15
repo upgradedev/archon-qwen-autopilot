@@ -52,6 +52,54 @@ test("count reflects what was remembered, and clear empties the store", async ()
   assert.equal(await store.count(), 0);
 });
 
+test("stable outcome idempotency keys return one row only for the exact same logical payload", async () => {
+  const e = new FakeEmbedder();
+  const store = new InMemoryStore();
+  const input = {
+    idempotencyKey: "work-item:test:outcome:action:v1",
+    kind: "action" as const,
+    vendor: "Acme",
+    content: "approved action",
+  };
+  const first = await remember(e, store, input);
+  const unavailableEmbedder = {
+    modelId: "unavailable-test-embedder",
+    dim: e.dim,
+    embed: async () => {
+      throw new Error("embedding provider unavailable");
+    },
+  };
+  const retry = await remember(unavailableEmbedder, store, {
+    ...input,
+  });
+  assert.equal(retry, first);
+  assert.equal(await store.count("Acme"), 1);
+  const hits = await recall(e, store, "approved action", { vendor: "Acme" });
+  assert.equal(hits[0]!.content, "approved action", "the first committed evidence remains authoritative");
+  await assert.rejects(
+    remember(e, store, { ...input, content: "different summary under the same key" }),
+    /idempotency key was reused for a different logical payload/i
+  );
+  await assert.rejects(
+    remember(e, store, { ...input, metadata: { changed: true } }),
+    /idempotency key was reused for a different logical payload/i
+  );
+  assert.equal(await store.count("Acme"), 1);
+});
+
+test("semantic recall filters exact embed_model and reports incompatible migration rows", async () => {
+  const base = new FakeEmbedder(32);
+  const modelA = { modelId: "embed-a", dim: base.dim, embed: (text: string, signal?: AbortSignal) => base.embed(text, signal) };
+  const modelB = { modelId: "embed-b", dim: base.dim, embed: (text: string, signal?: AbortSignal) => base.embed(text, signal) };
+  const store = new InMemoryStore();
+  await remember(modelA, store, { kind: "insight", vendor: "Acme", content: "model A private fact" });
+  await remember(modelB, store, { kind: "insight", vendor: "Acme", content: "model B private fact" });
+  const a = await recall(modelA, store, "private fact", { vendor: "Acme", limit: 10 });
+  assert.deepEqual(a.map((hit) => hit.content), ["model A private fact"]);
+  const stats = await store.embeddingModelStats("embed-a");
+  assert.deepEqual(stats, { current: 1, other: 1, models: { "embed-a": 1, "embed-b": 1 } });
+});
+
 test("deterministic invoice history excludes pending/rejected facts and keeps approved facts", async () => {
   const e = new FakeEmbedder();
   const store = new InMemoryStore();
@@ -69,6 +117,7 @@ test("PgVectorStore remember writes only to its configured database", async () =
   const fakeQuery = (async (sql: string) => {
     calls += 1;
     assert.match(sql, /INSERT INTO agent_memory/);
+    assert.match(sql, /ON CONFLICT \(idempotency_key\)/);
     return [{ id: "11111111-1111-4111-8111-111111111111" }];
   }) as typeof databaseQuery;
   const store = new PgVectorStore(fakeQuery);

@@ -193,7 +193,11 @@ test("gate/guard — approving an unknown id is a clean 404, and re-approving a 
 
   // Unknown id → 404 with a clear error envelope.
   const unknown = await page.evaluate(async () => {
-    const r = await fetch("/approve/does-not-exist", { method: "POST" });
+    const token = (globalThis as any).sessionStorage.getItem("archonReviewerToken") || "";
+    const r = await fetch("/approve/does-not-exist", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+    });
     const body = (await r.json().catch(() => ({}))) as { error?: string };
     return { status: r.status, error: body.error ?? "" };
   });
@@ -204,11 +208,13 @@ test("gate/guard — approving an unknown id is a clean 404, and re-approving a 
   const invoice = uniqueInvoice("Guard-Conflict");
   await processJson(page, invoice);
   const conflict = await page.evaluate(async (vendor) => {
-    const j = (await (await fetch("/pending")).json()) as { pending: Array<{ id: string; invoice?: { vendor?: string } }> };
+    const token = (globalThis as any).sessionStorage.getItem("archonReviewerToken") || "";
+    const headers = { authorization: `Bearer ${token}` };
+    const j = (await (await fetch("/pending", { headers })).json()) as { pending: Array<{ id: string; invoice?: { vendor?: string } }> };
     const item = j.pending.find((p) => p.invoice?.vendor === vendor);
     if (!item) return { firstStatus: 0, secondStatus: 0, error: "setup-missing" };
-    const first = await fetch(`/approve/${item.id}`, { method: "POST" });
-    const second = await fetch(`/approve/${item.id}`, { method: "POST" });
+    const first = await fetch(`/approve/${item.id}`, { method: "POST", headers });
+    const second = await fetch(`/approve/${item.id}`, { method: "POST", headers });
     const body = (await second.json().catch(() => ({}))) as { error?: string };
     return { firstStatus: first.status, secondStatus: second.status, error: body.error ?? "" };
   }, invoice.vendor);

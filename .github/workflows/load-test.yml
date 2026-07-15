@@ -36,27 +36,37 @@ jobs:
   load:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20
+          node-version: "24.18.0"
           cache: npm
 
       - name: Install deps
         run: npm ci
 
-      # Install the k6 binary from the official Grafana apt repository.
-      - name: Install k6
+      # Exact official Grafana release artifact; the committed digest was verified
+      # against k6-v2.1.0-checksums.txt from the same signed GitHub release.
+      # Everything stays in the repository's ignored .artifacts directory.
+      - name: Install k6 v2.1.0 (SHA-256 verified)
         run: |
           set -euo pipefail
-          sudo gpg -k
-          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
-            --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
-          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
-            | sudo tee /etc/apt/sources.list.d/k6.list
-          sudo apt-get update
-          sudo apt-get install -y k6
+          K6_VERSION="2.1.0"
+          K6_SHA256="295d961ebfca306f295f1133068dcd403a8171c87f387928f5f30b0fbcff858a"
+          K6_DIR="$PWD/.artifacts/k6"
+          K6_ARCHIVE="$K6_DIR/k6-v${K6_VERSION}-linux-amd64.tar.gz"
+          mkdir -p "$K6_DIR"
+          curl --fail --silent --show-error --location \
+            --output "$K6_ARCHIVE" \
+            "https://github.com/grafana/k6/releases/download/v${K6_VERSION}/k6-v${K6_VERSION}-linux-amd64.tar.gz"
+          echo "$K6_SHA256  $K6_ARCHIVE" | sha256sum --check --strict
+          tar -xzf "$K6_ARCHIVE" --strip-components=1 -C "$K6_DIR" \
+            "k6-v${K6_VERSION}-linux-amd64/k6"
+          chmod 0755 "$K6_DIR/k6"
+          echo "$K6_DIR" >> "$GITHUB_PATH"
+          export PATH="$K6_DIR:$PATH"
+          "$K6_DIR/k6" version
           k6 version
 
       # Boot the OFFLINE server only when no external base_url was supplied. Fakes +
@@ -68,9 +78,11 @@ jobs:
           DATABASE_URL: ""
           UPLOAD_DAILY_LIMIT: "1000000"
           PORT: "9000"
+          REVIEWER_TOKEN: "ci_load_only_reviewer_token_2026_not_a_secret"
         run: |
           set -euo pipefail
-          nohup npm start > server.log 2>&1 &
+          mkdir -p .artifacts/load-test
+          nohup npm start > .artifacts/load-test/server.log 2>&1 &
           echo "SERVER_PID=$!" >> "$GITHUB_ENV"
           # Wait for liveness (up to ~60s).
           for i in $(seq 1 60); do
@@ -86,8 +98,11 @@ jobs:
           BASE_URL: ${{ github.event.inputs.base_url }}
           RUN_RAMP: ${{ github.event.inputs.run_ramp }}
           INTAKE_RATIO: ${{ github.event.inputs.intake_ratio }}
+          K6_SUMMARY_PATH: .artifacts/load-test/load-summary.json
+          K6_REVIEWER_TOKEN: ${{ github.event.inputs.base_url == '' && 'ci_load_only_reviewer_token_2026_not_a_secret' || secrets.LOAD_TEST_REVIEWER_TOKEN }}
         run: |
           set -euo pipefail
+          mkdir -p .artifacts/load-test
           TARGET="${BASE_URL:-http://localhost:9000}"
           echo "Target: ${TARGET}  |  RUN_RAMP=${RUN_RAMP}  |  INTAKE_RATIO=${INTAKE_RATIO}"
           BASE_URL="${TARGET}" k6 run load/workflow-load.js
@@ -98,9 +113,9 @@ jobs:
 
       - name: Upload k6 summary
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: k6-load-summary
-          path: load-summary.json
+          path: .artifacts/load-test/load-summary.json
           if-no-files-found: warn
           retention-days: 14

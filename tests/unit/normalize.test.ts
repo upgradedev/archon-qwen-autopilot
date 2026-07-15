@@ -22,7 +22,8 @@ test("parses amounts from messy strings (currency symbols, grouping, EU decimals
   assert.equal(parseAmount("€1,234.50"), 1234.5); // US grouping
   assert.equal(parseAmount("1.234,50"), 1234.5); // EU grouping
   assert.equal(parseAmount("USD 900"), 900);
-  assert.equal(parseAmount("1,234"), 1234); // unambiguous three-digit grouping tail
+  assert.equal(parseAmount("1,234"), null); // locale-ambiguous: 1234 vs 1.234
+  assert.equal(parseAmount("1.234"), null);
   assert.equal(parseAmount("1 234,50"), 1234.5);
   assert.equal(parseAmount("1,234,567.89"), 1234567.89);
   assert.equal(parseAmount("1.234.567,89"), 1234567.89);
@@ -64,6 +65,63 @@ test("explicit ISO currency outranks the ambiguous dollar symbol", () => {
   assert.equal(aud.total, 2500);
 });
 
+test("conflicting aliases fail closed instead of selecting the first financial identity/value", () => {
+  const inv = normalizeInvoice({
+    vendor: "Source Vendor",
+    payee: "Attacker Payee",
+    invoice_number: "SAFE-1",
+    ref: "ATTACK-9",
+    date: "2026-04-01",
+    issued: "2026-05-01",
+    currency: "EUR",
+    tax_id: "SAFE-TAX",
+    tax_number: "ATTACK-TAX",
+    total: 100,
+    amount_due: 10_000,
+    subtotal: 100,
+    tax: 0,
+  });
+  assert.equal(inv.vendor, null);
+  assert.equal(inv.vendor_ref, null);
+  assert.equal(inv.invoice_date, null);
+  assert.equal(inv.tax_id, null);
+  assert.equal(inv.total, null, "conflicting total aliases cannot be overwritten by inferred subtotal + tax");
+  assert.ok(inv.notes.some((note) => /conflicting aliases for vendor/.test(note)));
+  assert.ok(inv.notes.some((note) => /conflicting aliases for total/.test(note)));
+});
+
+test("equivalent aliases reconcile and conflicting line aliases become incomplete", () => {
+  const inv = normalizeInvoice({
+    vendor: "Acme",
+    supplier: " acme ",
+    total: 20,
+    amount_due: "20.00",
+    line_items: [{
+      description: "Service",
+      quantity: 2,
+      qty: 3,
+      unit_price: 10,
+      price: 10,
+      amount: 20,
+      line_total: 20,
+    }],
+  });
+  assert.equal(inv.vendor, "Acme");
+  assert.equal(inv.total, 20);
+  assert.equal(inv.line_items[0]?.quantity, null);
+  assert.equal(inv.line_items[0]?.unit_price, 10);
+  assert.equal(inv.line_items[0]?.amount, 20);
+  assert.ok(inv.notes.some((note) => /line_items\[0\]\.quantity/.test(note)));
+});
+
+test("ambiguous symbols require a compatible ISO code and incompatible symbols block currency", () => {
+  assert.equal(normalizeInvoice({ vendor: "Acme", total: "$100.00" }).currency, "UNKNOWN");
+  assert.equal(normalizeInvoice({ vendor: "Acme", total: "¥1000" }).currency, "UNKNOWN");
+  assert.equal(normalizeInvoice({ vendor: "Acme", currency: "EUR", total: "$100.00" }).currency, "UNKNOWN");
+  assert.equal(normalizeInvoice({ vendor: "Acme", currency: "JPY", total: "¥1000" }).currency, "JPY");
+  assert.equal(normalizeInvoice({ vendor: "Acme", currency: "USD", total: "€100.00" }).currency, "UNKNOWN");
+});
+
 test("fractional extraction confidence strings preserve their magnitude", () => {
   assert.equal(normalizeInvoice({ vendor: "Acme", total: 10, confidence: "0.123" }).extraction_confidence, 0.123);
 });
@@ -102,6 +160,23 @@ test("normalizes an unparseable date to null with a note", () => {
   const inv = normalizeInvoice({ vendor: "Acme", total: 10, date: "not-a-date" });
   assert.equal(inv.invoice_date, null);
   assert.ok(inv.notes.some((n) => /unparseable/.test(n)));
+});
+
+test("a fabricated three-letter currency is not accepted as ISO 4217", () => {
+  const inv = normalizeInvoice({ vendor: "Fake Currency Co", currency: "ABC", total: 100 });
+  assert.equal(inv.currency, "UNKNOWN");
+  assert.ok(inv.notes.some((note) => /supported ISO 4217/i.test(note)));
+});
+
+test("rejects locale-ambiguous numeric dates and accepts strict, valid dates", () => {
+  const slash = normalizeInvoice({ vendor: "Acme", total: 10, date: "03/04/2026" });
+  const dotted = normalizeInvoice({ vendor: "Acme", total: 10, date: "03.04.2026" });
+  assert.equal(slash.invoice_date, null);
+  assert.equal(dotted.invoice_date, null);
+  assert.ok(slash.notes.some((note) => /locale-ambiguous/.test(note)));
+  assert.equal(normalizeInvoice({ vendor: "Acme", total: 10, date: "2026-04-03" }).invoice_date, "2026-04-03");
+  assert.equal(normalizeInvoice({ vendor: "Acme", total: 10, date: "3 April 2026" }).invoice_date, "2026-04-03");
+  assert.equal(normalizeInvoice({ vendor: "Acme", total: 10, date: "2026-02-30" }).invoice_date, null);
 });
 
 test("never throws on a totally empty payload", () => {

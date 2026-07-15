@@ -18,6 +18,76 @@ export const DEFAULT_BASE_URL =
   process.env.DASHSCOPE_BASE_URL ||
   "https://dashscope-intl.aliyuncs.com/compatible-mode/v1";
 
+export interface OfficialEvidenceEndpoint {
+  baseUrl: string;
+  region: "international" | "china-beijing";
+}
+
+export interface OfficialRuntimeEndpoint {
+  baseUrl: string;
+  region: "cn-beijing" | "ap-southeast-1" | "eu-central-1" | "ap-northeast-1" | "cn-hongkong" | "us-east-1";
+  access: "dashscope" | "workspace-dedicated";
+}
+
+function normalizedEndpoint(value: string, context: string): URL {
+  // URL() is intentionally forgiving: it trims surrounding ASCII whitespace and
+  // represents a bare trailing `?`/`#` as an empty search/hash. Production config
+  // must be byte-for-byte explicit so those ambiguous spellings fail closed.
+  if (value !== value.trim() || value.includes("?") || value.includes("#")) {
+    throw new Error(`${context} requires a credential-free HTTPS Model Studio base URL on the default port`);
+  }
+  let url: URL;
+  try { url = new URL(value); }
+  catch { throw new Error(`${context} requires a valid official Model Studio base URL`); }
+  if (url.protocol !== "https:" || url.username || url.password || url.port || url.search || url.hash) {
+    throw new Error(`${context} requires a credential-free HTTPS Model Studio base URL on the default port`);
+  }
+  url.pathname = url.pathname.replace(/\/+$/, "");
+  return url;
+}
+
+// Production accepts only documented pay-as-you-go Model Studio domains: the
+// shared DashScope endpoints or a workspace-dedicated `llm-*` host in a known
+// Model Studio region. Trial, Token Plan, Coding Plan and arbitrary compatible
+// proxies are deliberately excluded from this backend runtime.
+export function officialRuntimeEndpoint(value: string = DEFAULT_BASE_URL): OfficialRuntimeEndpoint {
+  const url = normalizedEndpoint(value, "production runtime");
+  const shared = new Map<string, OfficialRuntimeEndpoint["region"]>([
+    ["dashscope.aliyuncs.com", "cn-beijing"],
+    ["dashscope-intl.aliyuncs.com", "ap-southeast-1"],
+    ["cn-hongkong.dashscope.aliyuncs.com", "cn-hongkong"],
+    ["dashscope-us.aliyuncs.com", "us-east-1"],
+  ]);
+  const sharedRegion = shared.get(url.hostname);
+  if (sharedRegion && url.pathname === "/compatible-mode/v1") {
+    return { baseUrl: `${url.origin}${url.pathname}`, region: sharedRegion, access: "dashscope" };
+  }
+  const workspace = /^(llm-[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])?)\.(cn-beijing|ap-southeast-1|eu-central-1|ap-northeast-1|cn-hongkong)\.maas\.aliyuncs\.com$/.exec(url.hostname);
+  if (workspace && url.pathname === "/compatible-mode/v1") {
+    return {
+      baseUrl: `${url.origin}${url.pathname}`,
+      region: workspace[2] as OfficialRuntimeEndpoint["region"],
+      access: "workspace-dedicated",
+    };
+  }
+  throw new Error("production runtime permits only official pay-as-you-go Alibaba Model Studio endpoints");
+}
+
+// Keyed benchmark evidence and production runtime both attest that they target
+// Alibaba Model Studio, not an arbitrary OpenAI-compatible proxy. Non-production
+// tests may still inject a fake-compatible endpoint through the client seam.
+export function officialEvidenceEndpoint(value: string = DEFAULT_BASE_URL): OfficialEvidenceEndpoint {
+  const url = normalizedEndpoint(value, "online evidence");
+  const normalized = `${url.origin}${url.pathname}`;
+  if (normalized === "https://dashscope-intl.aliyuncs.com/compatible-mode/v1") {
+    return { baseUrl: normalized, region: "international" };
+  }
+  if (normalized === "https://dashscope.aliyuncs.com/compatible-mode/v1") {
+    return { baseUrl: normalized, region: "china-beijing" };
+  }
+  throw new Error("online evidence permits only official Alibaba Model Studio endpoints");
+}
+
 // True when a real Model Studio key is configured. Drives the auto-selection of
 // real Qwen vs. the deterministic offline Fakes (embedder + chat client), so dev
 // and CI run with zero credentials and zero spend.
@@ -35,9 +105,12 @@ export function createQwenClient(
   apiKey: string = process.env.DASHSCOPE_API_KEY ?? "",
   baseURL: string = DEFAULT_BASE_URL
 ): OpenAI {
+  const effectiveBaseUrl = process.env.NODE_ENV === "production"
+    ? officialRuntimeEndpoint(baseURL).baseUrl
+    : baseURL;
   return new OpenAI({
     apiKey,
-    baseURL,
+    baseURL: effectiveBaseUrl,
     timeout: QWEN_REQUEST_TIMEOUT_MS,
     maxRetries: QWEN_MAX_RETRIES,
   });
@@ -52,9 +125,12 @@ export interface EmbeddingsCreateArgs {
 }
 export interface EmbeddingsResponse {
   data: Array<{ embedding: number[] }>;
+  usage?: { prompt_tokens?: number; total_tokens?: number };
 }
 export interface QwenEmbeddingsClient {
-  embeddings: { create(args: EmbeddingsCreateArgs): Promise<EmbeddingsResponse> };
+  embeddings: {
+    create(args: EmbeddingsCreateArgs, opts?: { signal?: AbortSignal }): Promise<EmbeddingsResponse>;
+  };
 }
 
 // ── Chat + function-calling seam ──────────────────────────────────────────────
@@ -99,12 +175,26 @@ export interface ChatCreateArgs {
   max_tokens?: number;
   tools?: ToolDef[];
   tool_choice?: ToolChoice;
+  response_format?: { type: "json_object" };
+  // Alibaba's Node/OpenAI-compatible contract requires this at the request-body
+  // top level. (`extra_body` is the Python SDK spelling and is not used here.)
+  enable_thinking?: boolean;
+}
+
+export const SOTA_CANDIDATE_MODEL = "qwen3.7-plus-2026-05-26";
+export function requiresNonThinkingJsonOrTools(model: string): boolean {
+  return model === SOTA_CANDIDATE_MODEL;
 }
 
 export interface ChatResponse {
   choices: Array<{
     message: { content: string | null; tool_calls?: ToolCall[] };
   }>;
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+  };
 }
 
 // The optional per-request options the loop passes alongside the body. Only `signal`

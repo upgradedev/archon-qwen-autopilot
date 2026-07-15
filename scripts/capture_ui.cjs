@@ -1,10 +1,20 @@
-// Capture real screenshots of the LIVE Alibaba Cloud approval UI for the demo video.
-// Non-mutating: hides out-of-scope test/noise cards client-side only (positioning
-// guard + a tidy queue); dismisses the first-visit guided tour if present.
+// Capture private review candidates from the final live Autopilot UI.
+// Output stays in a repository-contained ignored directory. A human must sanitize,
+// inspect, and explicitly promote selected images to demo/final-media; this script
+// never writes submission evidence directly.
 const { chromium } = require('playwright');
+const path = require('node:path');
+const { resolveRepoContainedPath } = require('./repo-path.cjs');
 (async () => {
-  const base = process.env.AUTOPILOT_URL || 'https://autopilot.43.106.13.19.sslip.io/';
-  const outDir = process.argv[2] || 'demo/video/assets';
+  const base = process.env.AUTOPILOT_URL;
+  if (!base || !base.startsWith('https://')) {
+    throw new Error('AUTOPILOT_URL must be the final HTTPS deployment URL');
+  }
+  const outDir = resolveRepoContainedPath(
+    process.argv[2] || '.artifacts/video-captures',
+    'capture output'
+  );
+  require('fs').mkdirSync(outDir, { recursive: true });
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   const ctx = await browser.newContext({ viewport: { width: 1500, height: 1320 }, deviceScaleFactor: 2 });
   const page = await ctx.newPage();
@@ -30,8 +40,8 @@ const { chromium } = require('playwright');
   console.log('title:', await page.title(), '| hidden cards:', hidden);
   await page.evaluate(()=>window.scrollTo(0,0));
   await page.waitForTimeout(300);
-  await page.screenshot({ path: outDir + '/ui_overview.png', fullPage: false });
+  await page.screenshot({ path: path.join(outDir, 'ui_overview.png'), fullPage: false });
   const firstCard = page.locator('.card:visible').first();
-  if (await firstCard.count()) { await firstCard.scrollIntoViewIfNeeded(); await firstCard.screenshot({ path: outDir + '/ui_card.png' }); }
+  if (await firstCard.count()) { await firstCard.scrollIntoViewIfNeeded(); await firstCard.screenshot({ path: path.join(outDir, 'ui_card.png') }); }
   await browser.close();
 })().catch(e => { console.error(e.message); process.exit(1); });

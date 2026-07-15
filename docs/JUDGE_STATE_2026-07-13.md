@@ -18,17 +18,16 @@
 
 | Evidence | Verified result |
 |---|---:|
-| Node test suite | **246 total · 240 pass · 0 fail · 6 real-Postgres skips** when `DATABASE_URL` is absent |
-| Browser end to end | **25/25 Playwright** |
-| Coverage | **92.42% statements · 84.28% branches · 91.26% functions · 92.42% lines** |
+| Node + real-pgvector suites | Exact pass/fail/skip totals come from the final immutable CI run |
+| Browser end to end | Exact Playwright total comes from the final immutable CI run |
+| Coverage | CI enforces ≥80% statements, branches, functions, and lines; quote final measured values from CI |
 | Decision eval | **22/22 tool choice · 22/22 argument sanity · 22/22 autonomy**, average **2.5** autonomous steps |
-| Readiness | **22 pass · 0 fail · 3 user-gated**, 100% automatable completion |
-| Adversarial suite | **30/30** |
-| Dependency audits | **0 vulnerabilities** in production and all-dependency audits |
+| Readiness | Machine-gated at ≥95% automatable completion; publication items remain user-gated |
+| Adversarial suite | Exact total comes from the final immutable CI run |
+| Dependency audits | Final result comes from the submitted commit's audit job |
 
-The six skipped Node cases are explicit real-Postgres integration cases, not silent
-passes. CI supplies PostgreSQL/pgvector for that tier; a bare clone without
-`DATABASE_URL` reports the skips visibly.
+Real-Postgres integration cases skip explicitly, never silently, when a local
+`DATABASE_URL` is absent. CI supplies PostgreSQL/pgvector and executes that tier.
 
 ## Rubric view
 
@@ -56,7 +55,7 @@ passes. CI supplies PostgreSQL/pgvector for that tier; a bare clone without
   honestly not claiming recipient-level exactly-once semantics.
 - Unknown/conflicting currency, missing or invalid dates, incomplete line items, and
   low/unknown Qwen-VL extraction confidence fail toward human review instead of a
-  straight-through payment.
+  payment proposal.
 - Uploaded PDF/PNG/JPG files are bounded and magic-byte checked; PDF pages and model
   calls have caps/timeouts. Recognized injection patterns and non-invoice relevance
   are surfaced to the reviewer.
@@ -68,8 +67,8 @@ passes. CI supplies PostgreSQL/pgvector for that tier; a bare clone without
 - The advisory injection scanner recognizes a documented generic pattern set; it is
   not a universal detector. The safety invariant rests on tool separation + human
   authorization, not scanner recall.
-- Vision extraction is limited to PDF/PNG/JPG, 10 MiB by default, and the first three
-  PDF pages by default. Magic-byte sniffing is not antivirus/content disarm, relevance
+- Vision extraction is limited to PDF/PNG/JPG, 10 MiB by default; PDFs above three
+  pages are rejected as a whole by default. Magic-byte sniffing is not antivirus/content disarm, relevance
   is advisory, and there is no claim of benchmarked accuracy on arbitrary complex
   multi-page tables.
 - The MCP server is local stdio and exposes only intake/list-pending/recall/catalog
@@ -82,8 +81,8 @@ passes. CI supplies PostgreSQL/pgvector for that tier; a bare clone without
 ## Only human media/publication work remains
 
 1. Capture fresh screenshots without exposing the reviewer token.
-2. Refresh the 21-beat video so it says **two real configurable sinks** and **avg 2.5
-   steps**, verify runtime remains below three minutes, and host it publicly.
+2. Capture the five sanitized live proof images and build the fail-closed **nine-beat**
+   judge-first video; verify runtime remains below three minutes and host it publicly.
 3. Publish one supplied blog/social draft and save the public URL.
 4. Paste the supplied Devpost description, architecture, repository, Alibaba proof,
    public video URL, track, and private reviewer credential into the correct fields;

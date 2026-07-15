@@ -18,13 +18,15 @@ ECS reverse proxy
    ▼
 archon-autopilot (container :9000, read-only root)
    ├── MemoryAgent edge network ──► DashScope / Qwen
-   ├── MemoryAgent data network ──► shared pgvector service
-   │                                  └── separate database: autopilot
+   ├── private data network ──────► shared pgvector service
+   │                                  └── database `autopilot`, role `autopilot_app`
    └── host bind mount ───────────► /var/lib/archon-autopilot/ledger
 ```
 
-- The shared PostgreSQL container avoids a duplicate database service; the separate
-  `autopilot` database isolates memory, work items, and durable quota tables.
+- The shared PostgreSQL service avoids duplicate infrastructure. Database
+  `autopilot` revokes `PUBLIC` connect/create, and the dedicated `autopilot_app`
+  runtime role receives only schema usage plus table DML/sequence usage. It cannot
+  connect to the Memory database; the deployment verifies SQLSTATE `42501`.
 - Runtime needs both networks: `data` for `db:5432`, `edge` for Qwen egress.
 - Host port 9100 is bound to `127.0.0.1` only. Do **not** add a public 9100
   security-group rule; the HTTPS reverse proxy is the sole public path.
@@ -32,28 +34,38 @@ archon-autopilot (container :9000, read-only root)
   into an otherwise read-only container.
 - Production fails closed without real Qwen, PostgreSQL, and a 32+ character reviewer
   token. Reviewer decisions are Bearer-authenticated HTTP/UI operations only.
+- This ECS shape runs one bounded app container. Public/reviewer provider pools are
+  isolated, and one shared document-render cap bounds their aggregate PDF memory. A
+  future Function Compute deployment must additionally set a maximum instance count
+  to preserve a fleet-wide workflow-admission bound; per-workflow tokens/provider
+  retries are bounded and measured separately.
 - MCP is a local stdio proposal/read surface with four tools and no decision or
   execution capability.
 
 ## Production runbook
 
-Prerequisites already present on the ECS host:
+Prerequisites on the ECS host:
 
-- `/root/memoryagent` running its `db`, data network, and edge network;
-- `/root/memoryagent/.env` containing the rotated PostgreSQL credentials;
-- `/root/autopilot/.env` containing the real DashScope key and reviewer token;
+- the shared pgvector service plus private data and egress networks;
+- `<autopilot-checkout>/.env` (gitignored, mode `0600`) containing only runtime
+  settings: dedicated `DATABASE_URL`, DashScope key and reviewer token;
+- `<autopilot-checkout>/.env.migration` (gitignored, mode `0600`) containing the
+  bootstrap-only admin DSN and `AUTOPILOT_APP_DB_PASSWORD`; this file is passed only
+  to the one-shot bootstrap container, never the application runtime;
 - TLS reverse proxy routing the Autopilot hostname to `127.0.0.1:9100`.
 
 Release:
 
 ```bash
-cd /root/autopilot
+cd <autopilot-checkout>
 git pull --ff-only
 bash deploy/redeploy.sh
 ```
 
-The script creates/migrates the isolated database, builds and replaces the container,
-attaches both networks, mounts the durable ledger, runs `/health` + `/ready`, and
+The script creates/rotates the dedicated role, migrates as bootstrap admin, applies
+least-privilege grants, proves cross-database denial, then builds/replaces the runtime.
+It attaches both networks, mounts the durable ledger, runs `/health`, network-free
+`/ready` and authenticated/metered `/ready/deep`, and
 performs an authenticated intake→pending smoke with cleanup.
 
 Post-release external checks:

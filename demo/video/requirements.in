@@ -1,0 +1,4 @@
+# Direct Python dependencies for the fail-closed demo-video renderer.
+# Compile for Python 3.11 with pip-tools and hashes; CI installs requirements.lock.
+Pillow==12.2.0
+edge-tts==7.2.8
