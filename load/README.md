@@ -83,3 +83,6 @@ instead of masquerading as workflow-capacity evidence. The workflow uploads
 repository-local; the load run executes no remote JavaScript modules. For an
 external `base_url`, configure the repository secret `LOAD_TEST_REVIEWER_TOKEN`;
 the workflow fails closed when that credential is absent or invalid.
+
+The latest immutable hosted result and its precise claim boundary are recorded in
+[`RESULTS_2026-07-15.md`](RESULTS_2026-07-15.md).
