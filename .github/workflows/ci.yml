@@ -18,7 +18,7 @@ permissions:
 jobs:
   # Stage 1 — fail fast on any committed secret.
   secret-scan:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -36,7 +36,7 @@ jobs:
   # High/critical advisories fail the job; low/moderate are reported, not blocking.
   dep-audit:
     needs: secret-scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -51,7 +51,7 @@ jobs:
   # Stage 2b — typecheck → build → the full testing pyramid.
   build-test:
     needs: secret-scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
     services:
@@ -117,7 +117,7 @@ jobs:
   # idempotency rather than validating only a fresh cluster.
   database-isolation:
     needs: secret-scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       MIGRATION_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
       DATABASE_URL: postgresql://autopilot_app:ci_only_autopilot_app_password_2026_48chars@localhost:5432/autopilot
@@ -171,7 +171,7 @@ jobs:
   # and pins the headline eval numbers. Fully offline (no key, no DB, no browser).
   docs-consistency:
     needs: secret-scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -194,7 +194,7 @@ jobs:
   # dep-audit job above (the dependency gate). Fully OFFLINE — no key, no DB, no network.
   pen-test:
     needs: secret-scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -215,7 +215,7 @@ jobs:
   # readiness.json (uploaded as an artifact). Fully OFFLINE (no key, no DB, no browser).
   readiness:
     needs: secret-scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -245,7 +245,7 @@ jobs:
   # server process, which c8 cannot instrument across that boundary; it is its own job.)
   coverage:
     needs: secret-scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
     services:
@@ -289,7 +289,7 @@ jobs:
   # that the node:test pyramid cannot see. No live Qwen, no database.
   e2e:
     needs: secret-scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0

@@ -506,6 +506,11 @@ test("CHECK 7 · supply chain: immutable Actions + hash-locked demo-video Python
   assert.ok(actionRefs >= 20, `expected the full workflow action surface, found only ${actionRefs} references`);
 
   const workflowTexts = workflows.map((path) => readFileSync(path, "utf8"));
+  const configuredRunners = workflowTexts.flatMap((yaml) =>
+    [...yaml.matchAll(/^\s*runs-on:\s*([^\s#]+)/gm)].map((match) => match[1]!),
+  );
+  assert.equal(configuredRunners.length, 11, "every workflow job must declare an exact runner image");
+  assert.deepEqual([...new Set(configuredRunners)], ["ubuntu-24.04"]);
   const configuredNodeVersions = workflowTexts.flatMap((yaml) =>
     [...yaml.matchAll(/node-version:\s*["']?([^\s"'#]+)/g)].map((match) => match[1]!),
   );
