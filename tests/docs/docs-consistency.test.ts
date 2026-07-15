@@ -596,6 +596,23 @@ test("CHECK 7 · supply chain: immutable Actions + hash-locked demo-video Python
   assert.match(loadWorkflow, /sha256sum --check --strict/);
   assert.doesNotMatch(loadWorkflow, /dl\.k6\.io|keyserver|sudo\s+gpg|apt-get\s+install[^\n]*\bk6\b/);
   assert.match(loadWorkflow, /K6_SUMMARY_PATH:\s*\.artifacts\/load-test\/load-summary\.json/);
+  for (const finiteLoadCap of [
+    'UPLOAD_DAILY_LIMIT: "1000000"',
+    'UPLOAD_GLOBAL_DAILY_LIMIT: "1000000"',
+    'REVIEWER_UPLOAD_DAILY_LIMIT: "1000000"',
+    'REVIEWER_UPLOAD_GLOBAL_DAILY_LIMIT: "1000000"',
+    'HTTP_REQUESTS_PER_MINUTE: "10000"',
+    'REVIEWER_HTTP_REQUESTS_PER_MINUTE: "20000"',
+    'HTTP_GLOBAL_REQUESTS_PER_MINUTE: "100000"',
+  ]) {
+    assert.ok(loadWorkflow.includes(finiteLoadCap), `offline load workflow must pin ${finiteLoadCap}`);
+  }
+  assert.match(loadWorkflow, /REQUIRE_INTAKE_ACCEPTED:.*'true'.*'false'/);
+
+  const loadProfile = readFileSync(join(ROOT, "load", "workflow-load.js"), "utf8");
+  assert.match(loadProfile, /REQUIRE_INTAKE_ACCEPTED/);
+  assert.match(loadProfile, /thresholds\.intake_accepted\s*=\s*\["rate>0\.99"\]/);
+  assert.match(loadProfile, /thresholds\.http_req_failed\s*=\s*\["rate<0\.01"\]/);
   const loadScript = readFileSync(join(ROOT, "load", "workflow-load.js"), "utf8");
   assert.doesNotMatch(
     loadScript,

@@ -33,13 +33,19 @@ Authorization header; it is never written to the summary.
 ### Recommended: run against the OFFLINE server
 
 Boot the server with no `DASHSCOPE_API_KEY` (→ the deterministic Fakes) so every
-`/intake` is CPU-cheap with **zero spend**, and a high daily cap so the loop is
-actually exercised under load rather than immediately rate-limited:
+`/intake` is CPU-cheap with **zero spend**. Raise all four workflow-admission caps
+and the three coarse HTTP caps within their finite code bounds so the loop is
+actually exercised under load rather than measuring the abuse controls:
 
 ```bash
 export REVIEWER_TOKEN="local_load_only_reviewer_token_at_least_32_chars"
-DASHSCOPE_API_KEY= DATABASE_URL= UPLOAD_DAILY_LIMIT=1000000 PORT=9000 npm start &
-BASE_URL=http://localhost:9000 K6_REVIEWER_TOKEN="$REVIEWER_TOKEN" RUN_RAMP=true npm run load
+DASHSCOPE_API_KEY= DATABASE_URL= \
+UPLOAD_DAILY_LIMIT=1000000 UPLOAD_GLOBAL_DAILY_LIMIT=1000000 \
+REVIEWER_UPLOAD_DAILY_LIMIT=1000000 REVIEWER_UPLOAD_GLOBAL_DAILY_LIMIT=1000000 \
+HTTP_REQUESTS_PER_MINUTE=10000 REVIEWER_HTTP_REQUESTS_PER_MINUTE=20000 \
+HTTP_GLOBAL_REQUESTS_PER_MINUTE=100000 PORT=9000 npm start &
+BASE_URL=http://localhost:9000 K6_REVIEWER_TOKEN="$REVIEWER_TOKEN" \
+REQUIRE_INTAKE_ACCEPTED=true RUN_RAMP=true npm run load
 ```
 
 ## The daily rate limiter is expected under load
@@ -62,13 +68,17 @@ raise `UPLOAD_DAILY_LIMIT` on the target to load the loop itself.
 | `http_req_duration{endpoint:intake}` | p95 < 2500 ms, p99 < 4000 ms |
 | `checks` | > 99% pass |
 | `intake_valid_response` | > 99% are `200` or `429` (never `5xx`) |
+| `intake_accepted` in isolated hosted mode | > 99% are `200/PENDING` |
+| `http_req_failed` in isolated hosted mode | < 1% |
 
 ## CI
 
 This is a **manual, opt-in** target — deliberately **not** part of the push/PR
 gate (it needs the k6 binary and a running server). It runs only via
 `.github/workflows/load-test.yml` (`workflow_dispatch`), which boots the offline
-server with a high cap and runs the smoke + ramp against it, uploading
+server with bounded test-only caps and runs the smoke + ramp against it. It sets
+`REQUIRE_INTAKE_ACCEPTED=true`, so a run that merely reaches a `429` guard fails
+instead of masquerading as workflow-capacity evidence. The workflow uploads
 `.artifacts/load-test/load-summary.json` as an artifact. The summary formatter is
 repository-local; the load run executes no remote JavaScript modules. For an
 external `base_url`, configure the repository secret `LOAD_TEST_REVIEWER_TOKEN`;
