@@ -15,9 +15,20 @@ import {
   type QwenEmbeddingsClient,
 } from "../qwen/client.js";
 
-export const EMBED_DIM = Number(process.env.EMBED_DIM ?? 1024);
+export const EMBED_DIM = boundedEmbeddingDimension(process.env.EMBED_DIM, 1024);
 export const DEFAULT_EMBED_MODEL =
-  process.env.QWEN_EMBED_MODEL || "text-embedding-v4";
+  boundedEmbeddingModel(process.env.QWEN_EMBED_MODEL, "text-embedding-v4");
+
+function boundedEmbeddingDimension(value: string | undefined, fallback: number): number {
+  if (value == null || !value.trim()) return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(1, Math.min(4096, Math.trunc(parsed)));
+}
+
+function boundedEmbeddingModel(value: string | undefined, fallback: string): string {
+  return value && /^[A-Za-z0-9._-]{1,128}$/.test(value) ? value : fallback;
+}
 
 export interface Embedder {
   readonly modelId: string;

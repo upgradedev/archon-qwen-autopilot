@@ -1,4 +1,4 @@
-// Documentation-drift fitness functions — seven offline checks that keep the README
+// Documentation-drift fitness functions — eight offline checks that keep the README
 // honest against the code, run as their own `docs-consistency` CI job.
 //
 //   CHECK 1  README claims ↔ code  — model ids, HTTP endpoints, and the MCP-tool /
@@ -17,6 +17,7 @@
 //            accidentally promote stale evidence.
 //   CHECK 7  Workflow actions, Node, container services, k6, and the video renderer
 //            use exact versions plus content digests/hashes where the platform allows.
+//   CHECK 8  Promotion attempt 01 remains explicitly immutable and environment-invalid.
 //
 // Direction of every check is chosen so it passes CLEAN on current main: a
 // README-claims-something-code-lacks direction is a HARD FAIL (no phantom); a
@@ -569,6 +570,31 @@ test("CHECK 7 · supply chain: immutable Actions + hash-locked demo-video Python
   assert.equal(packageLock.packages[""].engines.npm, NPM_VERSION);
   assert.equal(packageLock.packages[""].devDependencies["@types/node"], "24.13.3");
 
+  const popplerLock = JSON.parse(readFileSync(join(ROOT, "eval", "promotion-poppler.lock.json"), "utf8"));
+  assert.deepEqual(popplerLock, {
+    schemaVersion: 1,
+    platform: "win32",
+    architecture: "x64",
+    basename: "pdftoppm.exe",
+    version: "26.05.0",
+    packageSpec: "poppler=26.05.0=h4b9d284_3",
+    sha256: "742cbbd9a00931ad16c6618410bc40471375d639a45c61c1d86f3dcfc54b6388",
+    bundleFiles: 178,
+    bundleSha256: "26876d12591351aa880d98a4a84b7a3f9d242f043ee95716ac8198ed0f5b0e30",
+  });
+  const supplyChain = readFileSync(join(ROOT, "docs", "SUPPLY_CHAIN.md"), "utf8");
+  for (const value of [
+    popplerLock.version,
+    popplerLock.packageSpec,
+    popplerLock.sha256,
+    String(popplerLock.bundleFiles),
+    popplerLock.bundleSha256,
+  ]) assert.ok(supplyChain.includes(value), `Poppler lock value ${value} must be documented`);
+  const promotionEnvironment = readFileSync(join(ROOT, "eval", "promotion-environment.ts"), "utf8");
+  assert.match(promotionEnvironment, /promotion-poppler\.lock\.json/);
+  assert.match(promotionEnvironment, /archon-poppler-bundle-v1/);
+  assert.match(promotionEnvironment, /popplerBundleIdentity/);
+
   const dockerfile = readFileSync(join(ROOT, "Dockerfile"), "utf8");
   const stageImages = [...dockerfile.matchAll(/^FROM\s+(\S+)\s+AS\s+/gm)].map((match) => match[1]!);
   assert.deepEqual(
@@ -697,4 +723,66 @@ test("CHECK 7 · supply chain: immutable Actions + hash-locked demo-video Python
     const end = i + 1 < starts.length ? starts[i + 1]!.index! : lock.length;
     assert.match(lock.slice(begin, end), /--hash=sha256:[0-9a-f]{64}/, `${starts[i]![1]} lacks a SHA-256 hash`);
   }
+});
+
+test("CHECK 8 · promotion evidence: attempt 01 remains immutable and environment-invalid", () => {
+  const protocol = readFileSync(join(ROOT, "docs", "MODEL_PROMOTION.md"), "utf8");
+  const results = readFileSync(join(ROOT, "eval", "results", "README.md"), "utf8");
+  const evaluation = readFileSync(join(ROOT, "EVAL.md"), "utf8");
+  const comparison = readFileSync(join(ROOT, "eval", "compare.ts"), "utf8");
+  const promotionPreflight = readFileSync(join(ROOT, "eval", "promotion-preflight.ts"), "utf8");
+  const packageJson = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
+  const ledger = JSON.parse(readFileSync(join(ROOT, "eval", "results", "evidence-ledger.json"), "utf8"));
+  for (const text of [protocol, results]) {
+    assert.match(text, /attempt(?: |-)?01/i);
+    assert.match(text, /environment-invalid diagnostic/i);
+    assert.match(text, /cdc2be2760e85feecb173083355c5b7f10f6f928852ddca4f052ac518b809588/);
+    assert.match(text, /never (?:be )?overwritten|never overwrite/i);
+    assert.match(text, /not (?:promotion|model-quality) evidence|not promotion evidence/i);
+  }
+  assert.match(protocol, /model-promotion-ab-attempt-02\.json/);
+  assert.match(protocol, /AB \/ BA \/ BA \/ AB/);
+  assert.match(protocol, /all four paired runs/);
+  assert.match(protocol, /30,000 ms/);
+  assert.match(protocol, /1\.5×/);
+  assert.match(comparison, /const expectedOrder = \["AB", "BA", "BA", "AB"\]/);
+  assert.match(comparison, /maxMeanLatencyMsIncludingSeedSetup: 30_000/);
+  assert.match(comparison, /maxMeanLatencyMs: 30_000/);
+  assert.match(comparison, /maxMeanLatencyRatioVsBaseline: 1\.5/);
+  assert.equal(
+    packageJson.scripts["eval:compare:live"],
+    "node --import tsx eval/compare.ts --online --runs 4"
+  );
+  assert.equal(
+    packageJson.scripts["eval:compare:preflight"],
+    "node --import tsx eval/promotion-preflight.ts"
+  );
+  assert.match(protocol, /eval:compare:preflight/);
+  assert.match(protocol, /zero-provider-call/i);
+  assert.match(promotionPreflight, /providerCalls: 0/);
+  assert.match(promotionPreflight, /artifactCreated: false/);
+  assert.match(promotionPreflight, /committedProtocolState\(PROMOTION_PROTOCOL_FILES/);
+  assert.match(promotionPreflight, /preflightPromotionEnvironment/);
+  assert.doesNotMatch(promotionPreflight, /createExclusiveEvidenceArtifact|persistEvidenceArtifact|hasQwenCreds/);
+  assert.deepEqual(ledger, {
+    schemaVersion: 1,
+    attempts: [{
+      path: "eval/results/model-promotion-ab-attempt-01.json",
+      sha256: "cdc2be2760e85feecb173083355c5b7f10f6f928852ddca4f052ac518b809588",
+      sourceCommit: "69e926748bb5e97ff5bc7d7cb69b6c9f8cd88e42",
+      status: "incomplete",
+      classification: "environment-invalid-diagnostic",
+    }],
+  });
+  assert.match(evaluation, /model-promotion-ab-attempt-02\.json/);
+  assert.doesNotMatch(evaluation, /model-promotion-ab-attempt-01\.json/);
+  const commandSection = protocol.match(
+    /## Counterbalanced same-attempt command[\s\S]*?```(?:powershell|bash)\r?\n[\s\S]*?\r?\n```/
+  )?.[0] ?? "";
+  assert.match(commandSection, /--write eval\/results\/model-promotion-ab-attempt-02\.json/);
+  assert.doesNotMatch(
+    commandSection,
+    /model-promotion-ab-attempt-01\.json/,
+    "the current command must never target the immutable diagnostic"
+  );
 });

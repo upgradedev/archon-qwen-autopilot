@@ -543,8 +543,10 @@ source is new:
    `poppler-utils=26.07.0-r0` and its complete Wolfi closure, verifies every fetched
    APK archive against `runtime-apk-archives.sha256` before a network-disabled local
    install, and checks the final installed inventory. That content-binds the reviewed
-   runtime inputs; it is not a byte-identical Docker image claim. A PNG/JPG upload
-   passes through directly.
+   runtime inputs; it is not a byte-identical Docker image claim. Keyed promotion
+   evidence separately verifies a project-contained, fully hashed Windows Poppler
+   bundle before any provider call. A PNG/JPG
+   upload passes through directly.
 2. **Qwen-VL extraction.** The page image(s) go to the configured Qwen vision model
    (`qwen-vl-max` rollback default; `VISION_MODEL`) over the same OpenAI-compatible DashScope surface the rest of the
    app uses, with explicit **untrusted-data delimiters** (the prompt labels document

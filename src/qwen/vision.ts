@@ -503,7 +503,10 @@ async function renderPdfToImages(pdf: Buffer, signal?: AbortSignal): Promise<Arr
     return pages;
     /* c8 ignore stop */
   } finally {
-    await rm(dir, { recursive: true, force: true }).catch(() => {});
+    // Promotion evidence points tmpdir() at a unique repository-contained run root.
+    // Cleanup is fail-closed so a supposedly complete run cannot silently leave
+    // rendered invoice pages behind or claim a cleanup attestation it did not earn.
+    await rm(dir, { recursive: true, force: true });
   }
 }
 

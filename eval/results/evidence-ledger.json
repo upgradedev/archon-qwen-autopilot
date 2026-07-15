@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "attempts": [
+    {
+      "path": "eval/results/model-promotion-ab-attempt-01.json",
+      "sha256": "cdc2be2760e85feecb173083355c5b7f10f6f928852ddca4f052ac518b809588",
+      "sourceCommit": "69e926748bb5e97ff5bc7d7cb69b6c9f8cd88e42",
+      "status": "incomplete",
+      "classification": "environment-invalid-diagnostic"
+    }
+  ]
+}
