@@ -9,13 +9,17 @@ printed or committed.
 > The public reverse proxy is the only **application** network entry point. The
 > Autopilot container is bound to **`127.0.0.1:9100`**, not a public security-group
 > port.
+>
+> Runtime code commit: [`be34bf8`](https://github.com/upgradedev/archon-qwen-autopilot/commit/be34bf8d8c8a90b4080403171422e82e1a888d92), merged through [PR #34](https://github.com/upgradedev/archon-qwen-autopilot/pull/34).
+>
+> Verified 2026-07-15: real `text-embedding-v4` / `qwen-plus`, PostgreSQL mode, `/ready` 200, real-Qwen intake→pending, unauthenticated `/pending` 401 and authenticated `/pending` 200. The runtime is loopback-only, read-only, `cap-drop ALL`, `512 MiB / 1 CPU / 128 PIDs`, zero restarts, and attached to internal `data` plus `edge` with gateway priority `1`. Its durable ledger mount is owned/writable by uid 1000. Direct public 9100/5432 are blocked.
 
 ## Current production topology
 
 | Layer | Current state |
 |---|---|
 | Alibaba resource | ECS `i-t4ngalzjr5nwtuowbv7y`, region `ap-southeast-1`, public IP `43.106.13.19` |
-| Public edge | HTTPS reverse proxy on the ECS host → `http://127.0.0.1:9100` |
+| Public edge | Ports `80` (redirect/ACME) and `443` (HTTPS) on the ECS host → `http://127.0.0.1:9100`; SSH restricted to the operator `/32` |
 | Autopilot runtime | Container `archon-autopilot`, internal port `9000`, restart `unless-stopped`, read-only root filesystem |
 | Internet egress | Existing MemoryAgent Compose **edge** network, used for DashScope/Qwen |
 | Database traffic | Existing MemoryAgent Compose internal **data** network, where DNS name `db` resolves |
