@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-07-15T21:54:13Z",
+  "workflowRun": {
+    "url": "https://github.com/upgradedev/archon-qwen-autopilot/actions/runs/29453313714",
+    "headSha": "7722f9156f784b9ff54b983d0be07620b6c1926a",
+    "conclusion": "success"
+  },
+  "artifact": {
+    "name": "k6-load-summary",
+    "sha256": "c56b07bf7c8e90299d8c98e7649c14ec4711c20d902620e9a198a56c500598ff"
+  },
+  "environment": {
+    "mode": "isolated-offline",
+    "model": "Fake-Qwen",
+    "store": "in-memory",
+    "externalSideEffects": false,
+    "profile": "smoke then 0-to-20-to-50-to-0 ramping VUs"
+  },
+  "metrics": {
+    "durationMs": 242898.428369,
+    "maxVUs": 50,
+    "iterations": 6602,
+    "httpRequests": 13204,
+    "checks": {
+      "passes": 36920,
+      "failures": 0,
+      "rate": 1
+    },
+    "httpFailures": {
+      "count": 0,
+      "rate": 0
+    },
+    "intakeAccepted": {
+      "passes": 1955,
+      "failures": 0,
+      "rate": 1
+    },
+    "intakeRateLimited": {
+      "count": 0,
+      "rate": 0
+    },
+    "latencyMs": {
+      "overallP95": 19.37113065,
+      "intakeP95": 25.5399372,
+      "healthP95": 9.5527493,
+      "pendingP95": 10.3462924
+    }
+  },
+  "thresholdsPassed": true,
+  "claimBoundary": "Offline application-path stress evidence; not production Qwen, provider-quota, database-capacity, or live end-to-end throughput evidence."
+}

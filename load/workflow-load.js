@@ -17,12 +17,13 @@
 // stressed without a wall of concurrent decider calls dominating the sample.
 //
 // ── The daily rate limiter ──────────────────────────────────────────────────
-// /intake is capped per UTC day (DailyRateLimiter, default 20/day). Under load
-// that cap is hit almost immediately, so a 429 is an EXPECTED, correct response —
+// /intake is capped per UTC day. Against a production target that cap can be hit,
+// so a 429 is an EXPECTED, correct response —
 // NOT a failure. The checks below treat 200 and 429 as both-valid and track the
-// two separately (see intake_accepted / intake_rate_limited). To actually exercise
-// the loop under load, boot the target server with a high UPLOAD_DAILY_LIMIT (the
-// bundled load-test workflow does exactly this against an offline server).
+// two separately (see intake_accepted / intake_rate_limited). The repository's
+// offline workflow raises every relevant daily + per-minute test cap within the
+// application's finite bounds and sets REQUIRE_INTAKE_ACCEPTED=true. That mode
+// fails unless >99% of intake calls really execute the loop and return 200/PENDING.
 //
 // ── Run ─────────────────────────────────────────────────────────────────────
 //   k6 run load/workflow-load.js                          # smoke, localhost:9000
@@ -35,6 +36,8 @@
 //   RUN_RAMP      'true' → run the 0→20→50→0 ramping-vus scenario after the smoke
 //   INTAKE_RATIO  0..1, share of iterations that POST /intake (default 0.3); the rest
 //                 hit /pending (a cheap read). /health runs every iteration.
+//   REQUIRE_INTAKE_ACCEPTED  'true' → require >99% 200/PENDING intake responses and
+//                            <1% HTTP failures (used by the isolated hosted ramp)
 //   K6_REVIEWER_TOKEN  reviewer credential for durable intake + approval-queue reads
 
 import http from "k6/http";
@@ -43,6 +46,7 @@ import { Rate } from "k6/metrics";
 
 const BASE = (__ENV.BASE_URL || __ENV.TARGET_URL || "http://localhost:9000").replace(/\/+$/, "");
 const RUN_RAMP = (__ENV.RUN_RAMP || "").toLowerCase() === "true";
+const REQUIRE_INTAKE_ACCEPTED = (__ENV.REQUIRE_INTAKE_ACCEPTED || "").toLowerCase() === "true";
 const INTAKE_RATIO = clamp01(parseFloat(__ENV.INTAKE_RATIO || "0.3"), 0.3);
 const SUMMARY_PATH = __ENV.K6_SUMMARY_PATH || "load-summary.json";
 const REVIEWER_TOKEN = (__ENV.K6_REVIEWER_TOKEN || "").trim();
@@ -109,6 +113,10 @@ const thresholds = {
   // 5xx or unexpected status drives this below 1 and fails the run.
   intake_valid_response: ["rate>0.99"],
 };
+if (REQUIRE_INTAKE_ACCEPTED) {
+  thresholds.intake_accepted = ["rate>0.99"];
+  thresholds.http_req_failed = ["rate<0.01"];
+}
 
 export const options = {
   scenarios,
@@ -228,6 +236,10 @@ export function handleSummary(data) {
     `http p95 ms: ${metric("http_req_duration", "p(95)") ?? "n/a"}`,
     `iterations: ${metric("iterations", "count") ?? "n/a"}`,
     `intake valid rate: ${metric("intake_valid_response", "rate") ?? "n/a"}`,
+    `intake accepted rate: ${metric("intake_accepted", "rate") ?? "n/a"}`,
+    `intake rate-limited rate: ${metric("intake_rate_limited", "rate") ?? "n/a"}`,
+    `http failure rate: ${metric("http_req_failed", "rate") ?? "n/a"}`,
+    `max VUs: ${metric("vus_max", "max") ?? metric("vus_max", "value") ?? "n/a"}`,
   ];
   return {
     stdout: `${lines.join("\n")}\n`,
