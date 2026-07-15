@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import {
   applyPromotionEnvironment,
   assertPromotionParameterLock,
+  cleanupPromotionEnvironment,
   finalizePromotionEnvironment,
   preflightPromotionEnvironment,
   PromotionEnvironmentError,
@@ -163,6 +164,25 @@ test("promotion preflight attests a contained binary, rasters every frozen PDF, 
       false,
       "failed attestation must still remove repository-contained rendered pages"
     );
+
+    const abortedEnvironment = await preflightPromotionEnvironment({
+      repoRoot: testRoot,
+      popplerLocator: relative(testRoot, binary),
+      pdfFixtures,
+      runner,
+    });
+    const restore = applyPromotionEnvironment(abortedEnvironment);
+    try {
+      await writeFile(join(abortedEnvironment.temporaryRoot, "partial-artifact-state"), "sensitive-test-page");
+      throw new Error("simulated artifact publication failure");
+    } catch (error) {
+      assert.match(String(error), /simulated artifact publication failure/);
+    } finally {
+      restore();
+      await cleanupPromotionEnvironment(abortedEnvironment);
+    }
+    assert.equal(existsSync(abortedEnvironment.temporaryRoot), false);
+    await assert.doesNotReject(cleanupPromotionEnvironment(abortedEnvironment), "outer cleanup is idempotent");
 
     await writeFile(binary, "tampered-offline-test-poppler-binary");
     await assert.rejects(

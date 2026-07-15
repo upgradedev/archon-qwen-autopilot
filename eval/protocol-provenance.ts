@@ -48,9 +48,14 @@ export interface ProtocolDirtyPath {
 export interface CommittedProtocolState {
   files: string[];
   gitCommit: string | null;
+  originMainGitCommit: string | null;
+  expectedReleaseGitCommit: string | null;
+  headMatchesExpectedRelease: boolean | null;
+  headMatchesOriginMain: boolean | null;
   gitClean: boolean | null;
   protocolTreeClean: boolean | null;
   protocolSha256: string | null;
+  protocolBlobs: Record<string, string>;
   allowedDirtyResultArtifacts: ProtocolDirtyPath[];
   disallowedDirtyPaths: ProtocolDirtyPath[];
   evidenceLedger: EvidenceLedgerAttempt[];
@@ -68,6 +73,9 @@ export interface CommittedProtocolOptions {
   cwd?: string;
   strict?: boolean;
   allowResultArtifacts?: boolean;
+  activeResultPath?: string;
+  expectedReleaseGitCommit?: string;
+  requireHeadMatchesOriginMain?: boolean;
 }
 
 function canonicalFiles(files: readonly string[]): string[] {
@@ -92,21 +100,62 @@ function unavailable(files: string[], disallowedDirtyPaths: ProtocolDirtyPath[] 
   return {
     files,
     gitCommit: null,
+    originMainGitCommit: null,
+    expectedReleaseGitCommit: null,
+    headMatchesExpectedRelease: null,
+    headMatchesOriginMain: null,
     gitClean: null,
     protocolTreeClean: disallowedDirtyPaths.length > 0 ? false : null,
     protocolSha256: null,
+    protocolBlobs: {},
     allowedDirtyResultArtifacts: [],
     disallowedDirtyPaths,
     evidenceLedger: [],
   };
 }
 
-async function evidenceLedger(cwd: string): Promise<EvidenceLedgerAttempt[]> {
-  const parsed = JSON.parse(await readFile(resolve(cwd, "eval", "results", "evidence-ledger.json"), "utf8")) as {
+function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const actual = Object.keys(value).sort();
+  return actual.length === expected.length && actual.every((key, index) => key === [...expected].sort()[index]);
+}
+
+async function committedRegularFile(cwd: string, path: string): Promise<{ working: Buffer; committed: Buffer }> {
+  const absolute = resolve(cwd, path);
+  const info = await lstat(absolute);
+  const real = await realpath(absolute);
+  if (!info.isFile() || info.isSymbolicLink() || relative(cwd, real).replace(/\\/g, "/") !== path) {
+    throw new Error("invalid committed evidence file");
+  }
+  const tree = (await exec("git", ["ls-tree", "HEAD", "--", path], { cwd })).stdout.trim();
+  if (!/^100644 blob [0-9a-f]{40,64}\t/.test(tree)) throw new Error("evidence file is not a HEAD regular blob");
+  const shown = await exec("git", ["show", `HEAD:${path}`], {
+    cwd,
+    encoding: "buffer",
+    maxBuffer: 4 * 1024 * 1024,
+  } as Parameters<typeof exec>[2]) as unknown as { stdout: Buffer };
+  const working = await readFile(real);
+  const committed = Buffer.from(shown.stdout);
+  if (!working.equals(committed)) throw new Error("working evidence differs from HEAD");
+  return { working, committed };
+}
+
+export async function verifiedEvidenceLedger(cwd: string): Promise<EvidenceLedgerAttempt[]> {
+  const ledgerRel = "eval/results/evidence-ledger.json";
+  const ledgerPath = resolve(cwd, "eval", "results", "evidence-ledger.json");
+  const ledgerInfo = await lstat(ledgerPath);
+  const ledgerReal = await realpath(ledgerPath);
+  if (!ledgerInfo.isFile() || ledgerInfo.isSymbolicLink()
+    || relative(cwd, ledgerReal).replace(/\\/g, "/") !== "eval/results/evidence-ledger.json") {
+    throw new Error("invalid evidence ledger");
+  }
+  const { committed: ledgerBytes } = await committedRegularFile(cwd, ledgerRel);
+  const parsed = JSON.parse(ledgerBytes.toString("utf8")) as {
     schemaVersion?: unknown;
     attempts?: unknown;
   };
-  if (parsed.schemaVersion !== 1 || !Array.isArray(parsed.attempts)) throw new Error("invalid evidence ledger");
+  if (!parsed || typeof parsed !== "object"
+    || !hasExactKeys(parsed as Record<string, unknown>, ["schemaVersion", "attempts"])
+    || parsed.schemaVersion !== 1 || !Array.isArray(parsed.attempts)) throw new Error("invalid evidence ledger");
   const attempts = parsed.attempts as Array<Record<string, unknown>>;
   const seen = new Set<string>();
   const nextByPrefix = new Map<string, number>();
@@ -115,7 +164,8 @@ async function evidenceLedger(cwd: string): Promise<EvidenceLedgerAttempt[]> {
     const match = /^eval\/results\/([A-Za-z0-9._-]+)-attempt-([0-9]{2})\.json$/.exec(path);
     const attemptNumber = Number(match?.[2]);
     if (
-      !match
+      !hasExactKeys(item, ["path", "sha256", "sourceCommit", "status", "classification"])
+      || !match
       || attemptNumber < 1
       || attemptNumber > 99
       || seen.has(path)
@@ -131,6 +181,17 @@ async function evidenceLedger(cwd: string): Promise<EvidenceLedgerAttempt[]> {
     if (attemptNumber !== expectedAttempt) throw new Error("non-contiguous evidence ledger");
     nextByPrefix.set(prefix, expectedAttempt + 1);
     seen.add(path);
+
+    const { committed: bytes } = await committedRegularFile(cwd, path);
+    if (createHash("sha256").update(bytes).digest("hex") !== item.sha256) {
+      throw new Error("evidence ledger artifact hash mismatch");
+    }
+    const artifact = JSON.parse(bytes.toString("utf8")) as Record<string, unknown>;
+    const provenance = artifact.provenance as Record<string, unknown> | undefined;
+    if (artifact.status !== item.status || provenance?.gitCommit !== item.sourceCommit) {
+      throw new Error("evidence ledger artifact provenance mismatch");
+    }
+    await exec("git", ["merge-base", "--is-ancestor", String(item.sourceCommit), "HEAD"], { cwd });
   }
   return attempts as unknown as EvidenceLedgerAttempt[];
 }
@@ -156,27 +217,52 @@ export async function committedProtocolState(
     }
     const gitCommit = (await exec("git", ["rev-parse", "HEAD"], { cwd: root })).stdout.trim();
     if (!/^[0-9a-f]{40,64}$/.test(gitCommit)) throw new Error("invalid commit identity");
+    const expectedReleaseGitCommit = options.expectedReleaseGitCommit ?? null;
+    if (expectedReleaseGitCommit !== null && !/^[0-9a-f]{40,64}$/.test(expectedReleaseGitCommit)) {
+      throw new Error("invalid expected release identity");
+    }
+    const headMatchesExpectedRelease = expectedReleaseGitCommit === null
+      ? null
+      : gitCommit === expectedReleaseGitCommit;
+    if (options.strict && headMatchesExpectedRelease === false) {
+      throw new Error("HEAD does not match the expected release");
+    }
+    let originMainGitCommit: string | null = null;
+    try {
+      const value = (await exec("git", ["rev-parse", "refs/remotes/origin/main"], { cwd: root })).stdout.trim();
+      if (!/^[0-9a-f]{40,64}$/.test(value)) throw new Error("invalid origin/main identity");
+      originMainGitCommit = value;
+    } catch {
+      if (options.requireHeadMatchesOriginMain) throw new Error("origin/main identity unavailable");
+    }
+    const headMatchesOriginMain = originMainGitCommit === null ? null : gitCommit === originMainGitCommit;
+    if (options.requireHeadMatchesOriginMain && headMatchesOriginMain !== true) {
+      throw new Error("HEAD does not match origin/main");
+    }
     const dirty = statusEntries((await exec(
       "git",
       ["status", "--porcelain=v1", "--untracked-files=all"],
       { cwd: root, maxBuffer: 4 * 1024 * 1024 }
     )).stdout);
-    const ledger = options.allowResultArtifacts ? await evidenceLedger(root) : [];
-    const registeredHashes = new Map(ledger.map((item) => [item.path, item.sha256]));
+    const ledger = options.allowResultArtifacts ? await verifiedEvidenceLedger(root) : [];
     const allowedDirtyResultArtifacts: ProtocolDirtyPath[] = [];
-    if (options.allowResultArtifacts) {
-      for (const entry of dirty) {
-        const expected = entry.status === "??" ? registeredHashes.get(entry.path) : undefined;
-        if (!expected) continue;
-        const artifactPath = resolve(root, entry.path);
-        const info = await lstat(artifactPath);
-        if (!info.isFile()) continue;
-        const artifactReal = await realpath(artifactPath);
-        const artifactRel = relative(root, artifactReal);
-        if (isAbsolute(artifactRel) || artifactRel.startsWith("..")) continue;
-        const actual = createHash("sha256").update(await readFile(artifactReal)).digest("hex");
-        if (actual === expected) allowedDirtyResultArtifacts.push(entry);
+    if (options.activeResultPath !== undefined) {
+      const normalizedActive = options.activeResultPath.replace(/\\/g, "/");
+      const activeAbsolute = resolve(root, normalizedActive);
+      const activeRelative = relative(root, activeAbsolute).replace(/\\/g, "/");
+      if (activeRelative !== normalizedActive || isAbsolute(activeRelative) || activeRelative.startsWith("..")
+        || !/^eval\/results\/[A-Za-z0-9._-]+-attempt-[0-9]{2}\.json$/.test(activeRelative)) {
+        throw new Error("invalid active result path");
       }
+      const activeEntry = dirty.find((entry) => entry.status === "??" && entry.path === activeRelative);
+      if (!activeEntry) throw new Error("active result is not the sole untracked result");
+      const info = await lstat(activeAbsolute);
+      const activeReal = await realpath(activeAbsolute);
+      if (!info.isFile() || info.isSymbolicLink()
+        || relative(root, activeReal).replace(/\\/g, "/") !== activeRelative) {
+        throw new Error("invalid active result artifact");
+      }
+      allowedDirtyResultArtifacts.push(activeEntry);
     }
     const allowed = new Set(allowedDirtyResultArtifacts.map((entry) => `${entry.status}\0${entry.path}`));
     const disallowedDirtyPaths = dirty.filter((entry) => !allowed.has(`${entry.status}\0${entry.path}`));
@@ -184,19 +270,26 @@ export async function committedProtocolState(
       throw new Error("dirty protocol tree");
     }
 
-    const digest = createHash("sha256").update("archon-committed-protocol-v1\n");
+    const digest = createHash("sha256").update("archon-committed-protocol-v2\n");
+    const protocolBlobs: Record<string, string> = {};
     for (const file of files) {
       await exec("git", ["ls-files", "--error-unmatch", "--", file], { cwd: root });
       const blob = (await exec("git", ["rev-parse", `HEAD:${file}`], { cwd: root })).stdout.trim();
       if (!/^[0-9a-f]{40,64}$/.test(blob)) throw new Error("invalid protocol blob identity");
+      protocolBlobs[file] = blob;
       digest.update(file).update("\0").update(blob).update("\n");
     }
     return {
       files,
       gitCommit,
+      originMainGitCommit,
+      expectedReleaseGitCommit,
+      headMatchesExpectedRelease,
+      headMatchesOriginMain,
       gitClean: dirty.length === 0,
       protocolTreeClean: disallowedDirtyPaths.length === 0,
       protocolSha256: digest.digest("hex"),
+      protocolBlobs,
       allowedDirtyResultArtifacts,
       disallowedDirtyPaths,
       evidenceLedger: ledger,

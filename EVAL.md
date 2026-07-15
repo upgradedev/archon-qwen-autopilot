@@ -147,8 +147,8 @@ rollback/candidate case pair back-to-back while alternating which model goes fir
 Both AP decision and vision cases stay inside one immutable attempt:
 
 ```bash
-npm run eval:compare:preflight -- --runs 4 --baseline-decision qwen-plus --baseline-vision qwen-vl-max --candidate qwen3.7-plus-2026-05-26 --write eval/results/model-promotion-ab-attempt-02.json
-npm run eval:compare:live -- --baseline-decision qwen-plus --baseline-vision qwen-vl-max --candidate qwen3.7-plus-2026-05-26 --write eval/results/model-promotion-ab-attempt-02.json
+npm run eval:compare:preflight -- --runs 4 --baseline-decision qwen-plus --baseline-vision qwen-vl-max --candidate qwen3.7-plus-2026-05-26 --expected-release <exact-fetched-release-commit> --write eval/results/model-promotion-ab-attempt-02.json
+npm run eval:compare:live -- --baseline-decision qwen-plus --baseline-vision qwen-vl-max --candidate qwen3.7-plus-2026-05-26 --expected-release <exact-fetched-release-commit> --write eval/results/model-promotion-ab-attempt-02.json
 ```
 
 The first command makes zero provider calls and creates no evidence artifact; it
@@ -156,8 +156,9 @@ must pass before the expensive keyed command is allowed operationally.
 
 The runner enforces the clean committed protocol tree, official Model Studio
 endpoint, exact four-repetition order, fixed denominators, exclusive first write,
-crash-safe atomic progress and per-run non-inferiority. Candidate promotion also
-requires 100% proposal-contract/reviewer-enrichment checks, ≥20/22 raw decision
+crash-safe no-overwrite publication/progress, same-release end attestation and per-run
+technical non-inferiority. Candidate promotion also requires 100% final guarded
+agreement and proposal-contract/reviewer-enrichment checks, ≥20/22 raw decision
 agreement in every run, ≥95% normalized-string and numeric vision accuracy, 100%
 safe-review recall, zero unstable decision cases and at most one unstable vision
 case. Safe-review specificity must be at least 11/12 and balanced accuracy at least
@@ -165,7 +166,13 @@ case. Safe-review specificity must be at least 11/12 and balanced accuracy at le
 error-inclusive mean must be at most 30 seconds and at most 1.5× the paired baseline
 mean in every run. These absolute floors and latency ceilings prevent two equally
 weak or impractically slow arms from passing relative non-inferiority. No new
-policy-override class is allowed. See
+policy-override class or higher override count/rate is allowed. Every aggregate is
+recomputed from its cases. Technical non-inferiority is not itself promotion:
+`promotion.pass` additionally requires either +4 aggregate correct decision/vision
+fields across four runs, or a ≥10% aggregate latency win on one surface with no
+quality loss and no latency regression on the other. A tie cannot pass. A fully
+scheduled experiment containing terminal provider errors closes `promotion-fail`;
+only a missing schedule or attestation/environment failure is `incomplete`. See
 `docs/MODEL_PROMOTION.md` for the preregistered manual review and rollback steps.
 
 ## Claims that these evaluations do not support

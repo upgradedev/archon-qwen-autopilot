@@ -8,8 +8,10 @@ high-upside candidate, never a silent replacement.
 
 1. Finish and review the protocol, fixtures, policy and runner changes.
 2. Run the offline checks and full repository verification.
-3. Commit the complete tree. Confirm `git status --porcelain` is empty.
-4. Record the commit and protocol hash printed by the counterbalanced runner.
+3. Fetch `origin/main`, run from the exact intended release commit, commit the complete
+   tree and confirm `git status --porcelain` is empty.
+4. Pass that exact 40-character commit as `--expected-release`; the runner binds and
+   records it rather than inferring that whichever `HEAD` happens to exist is valid.
 5. Only then run keyed evidence. The online runner refuses a dirty/uncommitted
    protocol tree, anything other than the four preregistered repetitions, an artifact
    path outside this repo, a non-sequential suffix outside `01..99`, or replacement
@@ -50,6 +52,19 @@ wall-clock latency; missing values are never converted into fictitious zero-late
 success. Fixture-set identity is computed by the same canonical LF/order/whitespace
 normalizer in the comparison and standalone vision runners.
 
+The zero-call preflight also exercises the real result filesystem: it durably writes
+a same-directory stage, closes it, publishes by no-overwrite hard link, flushes the
+directory, removes the stage and flushes again. Unsupported hard links or directory
+flushes fail before an attempt exists. Initial publication therefore exposes either
+no target or the complete fsynced JSON; `EEXIST` can never replace prior evidence.
+
+Before the first provider call the runner snapshots every verified fixture byte and
+uses those immutable buffers for all vision calls. After the final scheduled call it
+re-attests `HEAD`, `origin/main`, the explicit expected release, every committed
+protocol blob, dataset, fixture lock and bytes, Poppler bundle, and live-temp cleanup.
+Only the active untracked result path is permitted at this boundary. Any drift closes
+the attempt as `incomplete`, never as a model-quality result.
+
 ## Immutable environment-invalid attempt 01
 
 `model-promotion-ab-attempt-01.json` is an immutable environment-invalid diagnostic,
@@ -67,8 +82,11 @@ attempt-qualified filename; both artifacts remain available to reviewers.
 
 The committed `eval/results/evidence-ledger.json` binds attempt 01's path, hash,
 source commit, terminal status and diagnostic classification without modifying its
-original bytes. Before a later keyed run, any untracked prior result must match a
-ledger entry byte-for-byte; an unregistered or edited result blocks execution.
+original bytes. The artifact itself is committed byte-for-byte with forced LF. Every
+ledger entry must resolve to a committed `100644` regular non-symlink file whose
+committed and working bytes, SHA-256, JSON status and `provenance.gitCommit` match the
+entry; its source commit must be an ancestor of the release. Missing, edited,
+untracked, symlinked or reclassified evidence blocks execution.
 
 ## Counterbalanced same-attempt command
 
@@ -90,6 +108,7 @@ npm run eval:compare:preflight -- `
   --baseline-decision qwen-plus `
   --baseline-vision qwen-vl-max `
   --candidate qwen3.7-plus-2026-05-26 `
+  --expected-release <exact-fetched-release-commit> `
   --write eval/results/model-promotion-ab-attempt-02.json
 ```
 
@@ -100,16 +119,17 @@ npm run eval:compare:live -- `
   --baseline-decision qwen-plus `
   --baseline-vision qwen-vl-max `
   --candidate qwen3.7-plus-2026-05-26 `
+  --expected-release <exact-fetched-release-commit> `
   --write eval/results/model-promotion-ab-attempt-02.json
 ```
 
 If an attempt is interrupted or incomplete, keep its JSON unchanged, append its hash
 to the evidence ledger, commit, and use the exact next two-digit suffix (`01..99`).
-Gaps, repeated suffixes and three-or-more-digit suffixes fail closed. Every progress
-checkpoint is a fsynced same-directory atomic replacement:
-a crash may leave a `.next-*` temp sibling but cannot truncate the authoritative
-attempt JSON. Verify the authoritative JSON first, then remove only that orphan temp
-sibling before retrying; unregistered dirty files correctly block keyed evidence.
+Gaps, repeated suffixes and three-or-more-digit suffixes fail closed. Initial creation
+uses a fsynced same-directory stage plus atomic no-overwrite hard link; progress uses
+a fsynced same-directory atomic replacement. Both paths remove their stage and flush
+the directory, so an interrupted operation cannot expose a partial target or leave a
+successful-run temp sibling. Unregistered dirty files correctly block keyed evidence.
 
 The individual `eval:live` and `eval:vision:live` runners remain useful for diagnosis,
 but separate sequential artifacts are not sufficient promotion evidence because their
@@ -119,17 +139,24 @@ For candidate tool/JSON paths the implementation explicitly sets
 `enable_thinking=false`; the candidate vision JSON request also omits
 `max_tokens`, as required by that API path. Tests pin both request shapes.
 
-## Promotion gates
+## Technical non-inferiority and actual promotion
 
 Promote only when the artifact's machine-readable `promotion.pass` is true and a
 reviewer confirms all of the following:
 
 - the project-contained Poppler preflight passed for every frozen PDF before the
   first provider call and its safe binary attestation is present;
-- all four paired runs and both arms are `complete`; provider errors and fallbacks
-  remain in the fixed denominators and are not hidden; completeness never suppresses
-  the remaining independently computable gate failures;
-- AP argument-execution sanity is 100%, no new policy-override class appears, raw
+- all four paired runs form a complete schedule containing every fixed-denominator case with a terminal
+  `ok`, `inconclusive` or `error`. A fully scheduled experiment with model/provider
+  errors closes `promotion-fail`; `incomplete` is reserved for missing/interrupted
+  schedule or environment/protocol/final-attestation failure. Promotion quality still
+  requires every model output to be `ok`;
+- every stored aggregate, confusion matrix, count/rate and error-inclusive latency is
+  recomputed from cases and must exactly match the artifact;
+- final guarded agreement is 22/22 in every candidate run. Proposal-contract and
+  reviewer-enriched execution are 100%; raw-proposal executability is non-inferior,
+  argument-guard and policy-override count/rate do not increase, and no new override
+  class appears. Raw
   terminal-tool agreement is non-inferior to the rollback model in every run **and
   at least 20/22 (90.9%) in every candidate run**; candidate decision instability
   is exactly zero across the four repetitions;
@@ -149,6 +176,18 @@ reviewer confirms all of the following:
   authenticated rejection;
 - any separately measured cost is acceptable for the judging workflow; no cost is
   inferred from SDK retries or provider usage the seams do not expose.
+
+Those checks produce `promotion.technicalNonInferiority`. They are necessary but not
+sufficient. `promotion.pass` additionally requires exactly one preregistered material
+benefit route recorded under `promotion.materialBenefit`:
+
+- a stable aggregate gain of at least **4 correct fields** across final guarded
+  decisions plus normalized string/numeric vision fields over all four runs; or
+- at least a **10% aggregate error-inclusive latency win** on decision or vision, with
+  no aggregate quality loss and no latency regression on the other surface.
+
+An equal-quality/equal-latency tie—or a candidate merely tolerated up to the technical
+1.5× latency ceiling—is explicitly `promotion-fail`, not a promotion win.
 
 The AP runner reports USD only when captured tokens and all caller-supplied dated
 rates are present. For the International deployment, Alibaba Cloud's official

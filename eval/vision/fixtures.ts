@@ -38,8 +38,10 @@ export interface FrozenVisionSet {
   root: string;
   manifest: VisionFixtureManifest;
   fixtureSetSha256: string;
+  fixtureBytesSha256: string;
   canonicalLockText: string;
   pdfFixtures: Array<{ id: string; path: string }>;
+  fixtureBytesById: ReadonlyMap<string, Buffer>;
 }
 
 const DEFAULT_ROOT = dirname(fileURLToPath(import.meta.url));
@@ -136,6 +138,8 @@ export async function loadFrozenVisionSet(root = DEFAULT_ROOT): Promise<FrozenVi
   const seenIds = new Set<string>();
   const seenFiles = new Set<string>();
   const pdfFixtures: Array<{ id: string; path: string }> = [];
+  const fixtureBytesById = new Map<string, Buffer>();
+  const fixtureBytesDigest = createHash("sha256").update("archon-frozen-vision-bytes-v1\n");
   for (const item of manifest.cases) {
     if (!item || typeof item !== "object" || typeof item.filename !== "string"
       || typeof item.variant !== "string" || !/^[A-Za-z0-9._-]{1,64}$/.test(item.variant)
@@ -173,13 +177,16 @@ export async function loadFrozenVisionSet(root = DEFAULT_ROOT): Promise<FrozenVi
     const realRel = relative(rootReal, pathReal);
     if (isAbsolute(realRel) || realRel.startsWith("..")) throw new Error(`${item.id}: fixture resolves outside eval/vision`);
     const bytes = await readFile(pathReal);
-    if (sha(bytes) !== expected.get(lockedPath)) throw new Error(`${item.id}: fixture hash mismatch`);
+    const byteSha256 = sha(bytes);
+    if (byteSha256 !== expected.get(lockedPath)) throw new Error(`${item.id}: fixture hash mismatch`);
     const validated = validateDocument({ filename: pathReal, mimetype: fixtureMime(pathReal), size: bytes.length });
     if (!validated.ok) throw new Error(`${item.id}: frozen fixture validation failed`);
     const magic = validateMagicBytes(bytes, validated.ext);
     if (!magic.ok) throw new Error(`${item.id}: frozen fixture content mismatch`);
     const dimensions = validateImageDimensions(bytes, validated.ext);
     if (!dimensions.ok) throw new Error(`${item.id}: frozen fixture dimensions invalid`);
+    fixtureBytesById.set(item.id, Buffer.from(bytes));
+    fixtureBytesDigest.update(item.id).update("\0").update(lockedPath).update("\0").update(byteSha256).update("\n");
     if (validated.isPdf) pdfFixtures.push({ id: item.id, path: pathReal });
   }
   if (manifest.cases.filter((item) => item.safeReviewExpected).length !== 4) {
@@ -201,7 +208,9 @@ export async function loadFrozenVisionSet(root = DEFAULT_ROOT): Promise<FrozenVi
     root: rootReal,
     manifest,
     fixtureSetSha256: sha(canonicalLockText),
+    fixtureBytesSha256: fixtureBytesDigest.digest("hex"),
     canonicalLockText,
     pdfFixtures,
+    fixtureBytesById,
   };
 }

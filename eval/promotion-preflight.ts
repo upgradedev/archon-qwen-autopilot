@@ -10,6 +10,7 @@ import { EVAL_SET } from "./dataset.js";
 import {
   canonicalEvidenceCommand,
   categoricalEvalError,
+  probeEvidencePublicationDirectory,
   promotionEvidenceArtifactPath,
 } from "./artifact-safety.js";
 import {
@@ -17,10 +18,14 @@ import {
   PROMOTION_ABSOLUTE_GATES,
   PROMOTION_ARTIFACT_POLICY,
   PROMOTION_MODELS,
+  PROMOTION_MATERIAL_BENEFIT_GATES,
   PROMOTION_PROTOCOL_FILES,
   PROMOTION_RELATIVE_GATES,
+  comparePromotionReleaseSnapshots,
+  promotionReleaseSnapshot,
 } from "./compare.js";
 import {
+  cleanupPromotionEnvironment,
   finalizePromotionEnvironment,
   preflightPromotionEnvironment,
   PromotionEnvironmentError,
@@ -53,14 +58,49 @@ async function main(): Promise<void> {
   const protocol = await committedProtocolState(PROMOTION_PROTOCOL_FILES, {
     strict: true,
     allowResultArtifacts: true,
+    expectedReleaseGitCommit: cli.expectedRelease,
   });
+  const publicationCapability = await probeEvidencePublicationDirectory(resolve(process.cwd(), "eval", "results"));
+  const afterPublicationProbe = await committedProtocolState(PROMOTION_PROTOCOL_FILES, {
+    strict: true,
+    allowResultArtifacts: true,
+    expectedReleaseGitCommit: cli.expectedRelease,
+  });
+  if (afterPublicationProbe.protocolSha256 !== protocol.protocolSha256) {
+    throw new PromotionEnvironmentError("promotion_protocol_tree_invalid");
+  }
   const environment = await preflightPromotionEnvironment({ pdfFixtures: vision.pdfFixtures });
-  const attestation = await finalizePromotionEnvironment(environment);
+  let environmentFinalized = false;
+  let attestation;
+  try {
+    attestation = await finalizePromotionEnvironment(environment);
+    environmentFinalized = true;
+  } finally {
+    if (!environmentFinalized) {
+      await cleanupPromotionEnvironment(environment).catch(() => {
+        throw new PromotionEnvironmentError("promotion_temp_cleanup_failed");
+      });
+    }
+  }
+  const endDatasetSha256 = await assertFrozenDataset();
+  const endVision = await loadFrozenVisionSet();
+  const endProtocol = await committedProtocolState(PROMOTION_PROTOCOL_FILES, {
+    strict: true,
+    allowResultArtifacts: true,
+    expectedReleaseGitCommit: cli.expectedRelease,
+  });
+  const releaseStart = promotionReleaseSnapshot(protocol, datasetSha256, vision, environment.attestation);
+  const releaseEnd = promotionReleaseSnapshot(endProtocol, endDatasetSha256, endVision, attestation);
+  const releaseComparison = comparePromotionReleaseSnapshots(releaseStart, releaseEnd);
+  if (releaseComparison.status !== "passed") {
+    throw new PromotionEnvironmentError("promotion_protocol_tree_invalid");
+  }
   const commandArgs = [
     "--runs", "4",
     "--baseline-decision", cli.baselineDecision,
     "--baseline-vision", cli.baselineVision,
     "--candidate", cli.candidate,
+    "--expected-release", cli.expectedRelease,
     "--write", relative(process.cwd(), target).replace(/\\/g, "/"),
   ];
   console.log(JSON.stringify({
@@ -74,20 +114,33 @@ async function main(): Promise<void> {
     endpoint,
     runtime: PINNED_PROMOTION_RUNTIME,
     dataset: { cases: EVAL_SET.length, sha256: datasetSha256 },
-    visionFixtureSet: { cases: vision.manifest.cases.length, sha256: vision.fixtureSetSha256 },
+    visionFixtureSet: { cases: vision.manifest.cases.length, sha256: vision.fixtureSetSha256, fixtureBytesSha256: vision.fixtureBytesSha256 },
     protocol: {
       gitCommit: protocol.gitCommit,
+      originMainGitCommit: protocol.originMainGitCommit,
+      expectedReleaseGitCommit: protocol.expectedReleaseGitCommit,
+      headMatchesExpectedRelease: protocol.headMatchesExpectedRelease,
+      headMatchesOriginMain: protocol.headMatchesOriginMain,
       gitClean: protocol.gitClean,
       protocolTreeClean: protocol.protocolTreeClean,
       protocolSha256: protocol.protocolSha256,
+      protocolBlobs: protocol.protocolBlobs,
       files: protocol.files,
       allowedDirtyResultArtifacts: protocol.allowedDirtyResultArtifacts,
       priorEvidence: protocol.evidenceLedger,
     },
     promotionEnvironment: attestation,
+    publicationCapability,
+    sameReleaseAttestation: {
+      status: releaseComparison.status,
+      start: releaseStart,
+      end: releaseEnd,
+      mismatches: releaseComparison.mismatches,
+    },
     gates: {
       absoluteCandidate: PROMOTION_ABSOLUTE_GATES,
       relativeNonInferiority: PROMOTION_RELATIVE_GATES,
+      materialBenefit: PROMOTION_MATERIAL_BENEFIT_GATES,
     },
     command: canonicalEvidenceCommand("eval/promotion-preflight.ts", commandArgs),
   }, null, 2));

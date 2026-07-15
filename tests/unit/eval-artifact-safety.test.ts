@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
@@ -10,16 +10,24 @@ import {
   categoricalEvalError,
   createExclusiveEvidenceArtifact,
   persistEvidenceArtifact,
+  probeEvidencePublicationDirectory,
   promotionEvidenceArtifactPath,
 } from "../../eval/artifact-safety.js";
 import { createQwenClient, officialEvidenceEndpoint, officialRuntimeEndpoint, resolveQwenTransportConfig } from "../../src/qwen/client.js";
 import {
+  assertPromotionCredential,
+  comparePromotionReleaseSnapshots,
   meanLatencyOrNull,
   pairedCaseOrder,
   parsePromotionCli,
   promotionGate,
   PROMOTION_MODELS,
+  promotionReleaseSnapshot,
+  scheduledExperimentComplete,
   stabilityFingerprint,
+  summarizeDecision,
+  summarizeVision,
+  terminalPromotionArtifactStatus,
 } from "../../eval/compare.js";
 import { EVAL_SET } from "../../eval/dataset.js";
 import { bootstrapConfig } from "../../scripts/bootstrap-db.js";
@@ -66,6 +74,76 @@ test("atomic evidence progress preserves parseable authoritative JSON across int
     assert.deepEqual(JSON.parse(await readFile(path, "utf8")), { status: "running", cases: [] });
     await persistEvidenceArtifact(path, '{"status":"complete","cases":[1]}\n');
     assert.deepEqual(JSON.parse(await readFile(path, "utf8")), { status: "complete", cases: [1] });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("initial evidence publication exposes only complete bytes and cleans interrupted stages", async () => {
+  const dir = resolve(".artifacts", `eval-artifact-initial-${process.pid}`);
+  const path = resolve(dir, "attempt.json");
+  await mkdir(dir, { recursive: true });
+  try {
+    await assert.rejects(
+      createExclusiveEvidenceArtifact(path, '{"status":"running"}\n', {
+        beforePublish: async (staged) => {
+          await assert.rejects(access(path), { code: "ENOENT" });
+          assert.equal(await readFile(staged, "utf8"), '{"status":"running"}\n');
+          throw new Error("simulated pre-publication interruption");
+        },
+      }),
+      /simulated pre-publication interruption/
+    );
+    await assert.rejects(access(path), { code: "ENOENT" });
+    assert.deepEqual((await readdir(dir)).filter((name) => name.includes(".initial-")), []);
+
+    await createExclusiveEvidenceArtifact(path, '{"status":"complete"}\n', {
+      beforePublish: async (staged) => {
+        await assert.rejects(access(path), { code: "ENOENT" });
+        assert.equal(await readFile(staged, "utf8"), '{"status":"complete"}\n');
+      },
+    });
+    assert.equal(await readFile(path, "utf8"), '{"status":"complete"}\n');
+    assert.deepEqual((await readdir(dir)).filter((name) => name.includes(".initial-")), []);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("hard-link publication is race-safe, probes the real filesystem, and never replaces an existing target", async () => {
+  const dir = resolve(".artifacts", `eval-artifact-race-${process.pid}`);
+  const path = resolve(dir, "attempt.json");
+  await mkdir(dir, { recursive: true });
+  try {
+    const settled = await Promise.allSettled([
+      createExclusiveEvidenceArtifact(path, "writer-a\n"),
+      createExclusiveEvidenceArtifact(path, "writer-b\n"),
+    ]);
+    assert.equal(settled.filter((item) => item.status === "fulfilled").length, 1);
+    const rejected = settled.find((item): item is PromiseRejectedResult => item.status === "rejected");
+    assert.equal((rejected?.reason as NodeJS.ErrnoException).code, "EEXIST");
+    assert.ok(["writer-a\n", "writer-b\n"].includes(await readFile(path, "utf8")));
+    assert.deepEqual((await readdir(dir)).filter((name) => name.includes(".initial-")), []);
+    await assert.rejects(createExclusiveEvidenceArtifact(path, "replacement\n"), { code: "EEXIST" });
+    assert.ok(["writer-a\n", "writer-b\n"].includes(await readFile(path, "utf8")));
+
+    const probe = await probeEvidencePublicationDirectory(dir);
+    assert.deepEqual(probe, { hardLinkPublication: "passed", directorySync: "passed", cleanup: "passed" });
+    assert.deepEqual((await readdir(dir)).filter((name) => name.includes("publication-probe")), []);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("failed progress replacement preserves the authoritative target and removes next siblings", async () => {
+  const dir = resolve(".artifacts", `eval-artifact-persist-failure-${process.pid}`);
+  const targetDirectory = resolve(dir, "authoritative.json");
+  await mkdir(targetDirectory, { recursive: true });
+  try {
+    await writeFile(resolve(targetDirectory, "sentinel"), "unchanged\n", "utf8");
+    await assert.rejects(persistEvidenceArtifact(targetDirectory, '{"replacement":true}\n'));
+    assert.equal(await readFile(resolve(targetDirectory, "sentinel"), "utf8"), "unchanged\n");
+    assert.deepEqual((await readdir(dir)).filter((name) => name.includes(".next-")), []);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -262,111 +340,112 @@ test("keyed evidence accepts only attested official Model Studio endpoints", () 
   }
 });
 
-test("counterbalanced promotion gate passes non-inferiority and rejects a per-run regression", () => {
-  const decision = {
-    status: "complete",
-    metrics: {
-      rawTerminalAgreement: 1,
-      proposalContractSanity: 1,
-      reviewerEnrichedExecution: 1,
-      meanLatencyMsIncludingSeedSetup: 1_000,
-    },
-    policyOverrideSources: [],
-    cases: EVAL_SET.map((item) => ({ id: item.id, status: "ok", rawModelTerminalTool: item.expected })),
-  };
-  const vision = {
-    status: "complete",
-    metrics: {
-      normalizedStringAccuracy: 1,
-      numericAccuracy: 1,
-      safeReviewRecall: 1,
-      safeReviewSpecificity: 1,
-      safeReviewBalancedAccuracy: 1,
-      containmentRecall: 1,
-      unsafeAutoClear: 0,
-      meanLatencyMs: 1_000,
-    },
-    cases: Array.from({ length: 16 }, (_, index) => ({
-      id: `v${String(index + 1).padStart(2, "0")}`,
-      status: "ok",
-      normalizedMisses: [],
-      safeReviewPredicted: false,
-    })),
-  };
-  const runs = ["AB", "BA", "BA", "AB"].map((order, index) => ({
+test("promotion separates technical non-inferiority from a preregistered material win and recomputes every aggregate", () => {
+  const reviewIds = new Set(["v09", "v10", "v11", "v16"]);
+  const decisionCases = (options: { finalMiss?: boolean; overrides?: number; latency?: number; errors?: boolean } = {}) =>
+    EVAL_SET.map((item, index) => options.errors ? {
+      id: item.id, status: "error", expected: item.expected,
+      latencyMsIncludingSeedSetup: options.latency ?? 1_000,
+      error: { category: "provider_unavailable" },
+    } : {
+      id: item.id, status: "ok", expected: item.expected,
+      rawModelTerminalTool: item.expected, rawModelAgreesWithLabel: true,
+      finalGuardedProposal: options.finalMiss && index === 0 ? "flag_for_review" : item.expected,
+      finalGuardedAgreesWithLabel: !(options.finalMiss && index === 0),
+      finalGuardedArgs: {}, proposalContractSane: true, rawProposalArgsExecutable: true,
+      reviewerEnrichedExecutionVerified: true,
+      policyOverride: index < (options.overrides ?? 0),
+      policyOverrideSource: index < (options.overrides ?? 0) ? "proposal_policy_guard" : null,
+      argumentGuardApplied: false, fallback: false,
+      latencyMsIncludingSeedSetup: options.latency ?? 1_000,
+    });
+  const visionCases = (latency = 1_000) => Array.from({ length: 16 }, (_, index) => {
+    const id = `v${String(index + 1).padStart(2, "0")}`;
+    const expected = reviewIds.has(id);
+    return {
+      id, status: "ok", safeReviewExpected: expected, safeReviewPredicted: expected,
+      normalizedStringCorrect: 5, numericCorrect: 3, unsafeExtraction: false,
+      unsafeAutoClear: false, normalizedMisses: [], latencyMs: latency,
+    };
+  });
+  const arm = (decision: Array<Record<string, unknown>>, vision: Array<Record<string, unknown>>) => ({
+    decision: summarizeDecision(decision),
+    vision: summarizeVision(vision),
+  });
+  const passingRuns = ["AB", "BA", "BA", "AB"].map((order, index) => ({
     run: index + 1,
     order,
     arms: {
-      baseline: { decision: structuredClone(decision), vision: structuredClone(vision) },
-      candidate: { decision: structuredClone(decision), vision: structuredClone(vision) },
+      baseline: arm(decisionCases({ finalMiss: true }), visionCases()),
+      candidate: arm(decisionCases(), visionCases()),
     },
   }));
-  assert.equal(promotionGate(runs).pass, true);
-  const slowCandidate = structuredClone(runs);
-  slowCandidate[0]!.arms.candidate.decision.metrics.meanLatencyMsIncludingSeedSetup = 1_501;
-  slowCandidate[0]!.arms.candidate.vision.metrics.meanLatencyMs = 30_001;
-  const latencyGate = promotionGate(slowCandidate);
-  assert.equal(latencyGate.pass, false);
-  assert.ok(latencyGate.failures.some((reason) => /decision latency regressed beyond/.test(reason)));
-  assert.ok(latencyGate.failures.some((reason) => /vision latency ceiling failed/.test(reason)));
+  const passing = promotionGate(passingRuns);
+  assert.equal(passing.pass, true);
+  assert.equal(passing.technicalNonInferiority.pass, true);
+  assert.equal(passing.materialBenefit.route, "aggregate-quality-gain");
+  assert.equal(passing.materialBenefit.observed.aggregateCorrectFieldGain, 4);
 
-  const missingMetric = structuredClone(runs);
-  (missingMetric[0]!.arms.candidate.vision.metrics as Record<string, unknown>).containmentRecall = undefined;
-  assert.equal(promotionGate(missingMetric).pass, false);
-  assert.ok(promotionGate(missingMetric).failures.some((reason) => /missing or invalid required metric/.test(reason)));
-  runs[1]!.arms.candidate.decision.metrics.rawTerminalAgreement = 0.9;
-  const failed = promotionGate(runs);
-  assert.equal(failed.pass, false);
-  assert.ok(failed.failures.some((reason) => /decision agreement regressed/.test(reason)));
-  runs[1]!.arms.candidate.decision.metrics.rawTerminalAgreement = 1;
-  runs[1]!.arms.candidate.vision.metrics.safeReviewSpecificity = 0;
-  runs[1]!.arms.candidate.vision.metrics.safeReviewBalancedAccuracy = 0.5;
-  const unsafeReviewGate = promotionGate(runs);
-  assert.equal(unsafeReviewGate.pass, false);
-  assert.ok(unsafeReviewGate.failures.some((reason) => /specificity regressed/.test(reason)));
-  assert.ok(unsafeReviewGate.failures.some((reason) => /specificity floor failed/.test(reason)));
-  assert.ok(unsafeReviewGate.failures.some((reason) => /balanced accuracy regressed/.test(reason)));
-  assert.ok(unsafeReviewGate.failures.some((reason) => /balanced-accuracy floor failed/.test(reason)));
+  const tied = structuredClone(passingRuns);
+  for (const run of tied) run.arms.baseline = structuredClone(run.arms.candidate);
+  const noBenefit = promotionGate(tied);
+  assert.equal(noBenefit.technicalNonInferiority.pass, true);
+  assert.equal(noBenefit.materialBenefit.pass, false);
+  assert.equal(noBenefit.pass, false, "a quality/latency tie is not a promotion win");
 
-  runs[1]!.arms.candidate.vision.metrics.safeReviewSpecificity = 1;
-  runs[1]!.arms.candidate.vision.metrics.safeReviewBalancedAccuracy = 1;
-  runs[1]!.arms.candidate.vision.metrics.containmentRecall = 0;
-  runs[1]!.arms.candidate.vision.metrics.unsafeAutoClear = 1;
-  const unsafeExtraction = promotionGate(runs);
-  assert.equal(unsafeExtraction.pass, false);
-  assert.ok(unsafeExtraction.failures.some((reason) => /unsafe-extraction auto-clear gate failed/.test(reason)));
+  const forged = structuredClone(passingRuns);
+  forged[0]!.arms.candidate.decision.metrics.finalGuardedAgreement = 0;
+  const forgedGate = promotionGate(forged);
+  assert.equal(forgedGate.pass, false);
+  assert.ok(forgedGate.failures.some((reason) => /aggregates do not recompute/.test(reason)));
 
-  const weakButEqual = structuredClone(runs);
-  for (const run of weakButEqual) {
-    for (const arm of [run.arms.baseline, run.arms.candidate]) {
-      arm.decision.metrics.rawTerminalAgreement = 0.5;
-      arm.vision.metrics.normalizedStringAccuracy = 0.9;
-      arm.vision.metrics.numericAccuracy = 0.9;
-    }
-  }
-  const weak = promotionGate(weakButEqual);
-  assert.equal(weak.pass, false, "two equally weak arms cannot pass relative non-inferiority");
-  assert.ok(weak.failures.some((reason) => /absolute agreement floor/.test(reason)));
-  assert.ok(weak.failures.some((reason) => /absolute floor/.test(reason)));
+  const rawCorrectFinalWrong = structuredClone(passingRuns);
+  rawCorrectFinalWrong[0]!.arms.candidate = arm(decisionCases({ finalMiss: true }), visionCases());
+  const finalGuard = promotionGate(rawCorrectFinalWrong);
+  assert.equal(finalGuard.pass, false);
+  assert.ok(finalGuard.failures.some((reason) => /final guarded agreement must be 100%/.test(reason)));
 
-  const incomplete = structuredClone(weakButEqual);
-  incomplete[0]!.arms.candidate.decision.status = "incomplete";
-  const exhaustive = promotionGate(incomplete);
-  assert.ok(exhaustive.failures.some((reason) => /both arms must be complete/.test(reason)));
-  assert.ok(
-    exhaustive.failures.some((reason) => /candidate decision absolute agreement floor failed/.test(reason)),
-    "an incomplete arm must not suppress its independently computable floor failures"
-  );
-  assert.ok(
-    exhaustive.failures.some((reason) => /candidate normalized vision absolute floor failed/.test(reason)),
-    "gate diagnostics must remain exhaustive after a completeness failure"
-  );
+  const sameClassMoreOverrides = structuredClone(passingRuns);
+  sameClassMoreOverrides[0]!.arms.baseline = arm(decisionCases({ overrides: 1, finalMiss: true }), visionCases());
+  sameClassMoreOverrides[0]!.arms.candidate = arm(decisionCases({ overrides: 2 }), visionCases());
+  const overrideGate = promotionGate(sameClassMoreOverrides);
+  assert.equal(overrideGate.pass, false);
+  assert.ok(overrideGate.failures.some((reason) => /override count\/rate regressed/.test(reason)));
 
-  const malformed = promotionGate([{}]);
-  assert.equal(malformed.pass, false);
-  assert.ok(malformed.failures.some((reason) => /exactly four paired runs/.test(reason)));
-  assert.ok(malformed.failures.some((reason) => /both arms must be complete/.test(reason)));
-  assert.ok(malformed.failures.some((reason) => /candidate decision latency ceiling failed/.test(reason)));
+  const slow = structuredClone(passingRuns);
+  slow[0]!.arms.candidate = arm(decisionCases({ latency: 1_501 }), visionCases(30_001));
+  const slowGate = promotionGate(slow);
+  assert.equal(slowGate.pass, false);
+  assert.ok(slowGate.failures.some((reason) => /decision latency regressed beyond/.test(reason)));
+  assert.ok(slowGate.failures.some((reason) => /vision latency ceiling failed/.test(reason)));
+});
+
+test("completed fixed-denominator provider failures close promotion-fail while missing schedule remains incomplete", () => {
+  const reviewIds = new Set(["v09", "v10", "v11", "v16"]);
+  const decisionErrors = EVAL_SET.map((item) => ({
+    id: item.id, status: "error", expected: item.expected, latencyMsIncludingSeedSetup: 100,
+    error: { category: "provider_unavailable" },
+  }));
+  const visionErrors = Array.from({ length: 16 }, (_, index) => {
+    const id = `v${String(index + 1).padStart(2, "0")}`;
+    return { id, status: "error", safeReviewExpected: reviewIds.has(id), latencyMs: 100, error: { category: "provider_unavailable" } };
+  });
+  const failedArm = { decision: summarizeDecision(decisionErrors), vision: summarizeVision(visionErrors) };
+  const runs = ["AB", "BA", "BA", "AB"].map((order, index) => ({
+    run: index + 1, order,
+    arms: { baseline: structuredClone(failedArm), candidate: structuredClone(failedArm) },
+  }));
+  const gate = promotionGate(runs);
+  assert.equal(scheduledExperimentComplete(runs), true);
+  assert.equal(gate.pass, false);
+  assert.equal(terminalPromotionArtifactStatus(runs, gate.pass, false), "promotion-fail");
+  assert.equal(terminalPromotionArtifactStatus(runs, gate.pass, true), "incomplete");
+
+  const missing = structuredClone(runs);
+  missing[0]!.arms.candidate.decision.cases.pop();
+  missing[0]!.arms.candidate.decision = summarizeDecision(missing[0]!.arms.candidate.decision.cases);
+  assert.equal(scheduledExperimentComplete(missing), false);
+  assert.equal(terminalPromotionArtifactStatus(missing, false, false), "incomplete");
 });
 
 test("evaluation connection refusals retain fixed provider/phase forensics without raw diagnostics", () => {
@@ -403,6 +482,41 @@ test("evaluation connection refusals retain fixed provider/phase forensics witho
   assert.equal(dns.summary, "the upstream provider is unavailable");
   assert.equal(dns.source, "provider");
   assert.doesNotMatch(JSON.stringify(dns), /private host/i);
+
+  const serverFailure = categoricalEvalError(
+    Object.assign(new Error("500 body contained private upstream diagnostics"), { statusCode: 503 }),
+    "decision"
+  );
+  assert.deepEqual(serverFailure, {
+    category: "provider_unavailable",
+    summary: "the upstream provider is unavailable",
+    source: "provider",
+    phase: "decision",
+    httpStatus: 503,
+    attemptsObserved: null,
+  });
+  assert.doesNotMatch(JSON.stringify(serverFailure), /private upstream/i);
+});
+
+test("promotion credentials reject malformed, whitespace, control, plan, and temporary tokens without disclosure", () => {
+  assert.doesNotThrow(() => assertPromotionCredential(`sk-${"a".repeat(24)}`));
+  assert.doesNotThrow(() => assertPromotionCredential(`sk-ws${"A9_".repeat(8)}`));
+  for (const secret of [
+    ` sk-${"a".repeat(24)}`,
+    `sk-${"a".repeat(24)}\n`,
+    `sk-${"a".repeat(8)}\u0000${"b".repeat(16)}`,
+    `sk-sp-${"a".repeat(24)}`,
+    `st-${"a".repeat(24)}`,
+    "sk-short",
+    `sk-${"a".repeat(253)}`,
+  ]) {
+    assert.throws(
+      () => assertPromotionCredential(secret),
+      (error: unknown) => error instanceof PromotionEnvironmentError
+        && error.code === "promotion_credentials_invalid"
+        && !error.message.includes(secret)
+    );
+  }
 });
 
 test("latency summaries never fabricate zero for an empty conclusive subset", () => {
@@ -461,15 +575,18 @@ test("paired comparison interleaves every case and balances first-call exposure 
 });
 
 test("comparison CLI accepts only the preregistered distinct four-run model experiment", () => {
+  const expectedRelease = "a".repeat(40);
   const exact = [
     "--online", "--runs", "4",
     "--baseline-decision", PROMOTION_MODELS.baselineDecision,
     "--baseline-vision", PROMOTION_MODELS.baselineVision,
     "--candidate", PROMOTION_MODELS.candidate,
+    "--expected-release", expectedRelease,
     "--write", "eval/results/model-promotion-ab-attempt-02.json",
   ];
   assert.deepEqual(parsePromotionCli(exact), {
     ...PROMOTION_MODELS,
+    expectedRelease,
     write: "eval/results/model-promotion-ab-attempt-02.json",
   });
   for (const invalid of [
@@ -482,6 +599,7 @@ test("comparison CLI accepts only the preregistered distinct four-run model expe
     exact.map((value) => value === "eval/results/model-promotion-ab-attempt-02.json"
       ? "eval/results/renamed-attempt-02.json"
       : value),
+    exact.map((value) => value === expectedRelease ? "HEAD" : value),
   ]) {
     assert.throws(
       () => parsePromotionCli(invalid),
@@ -579,10 +697,68 @@ test("committed protocol fingerprint is checkout-EOL independent and dirtiness s
   }
 });
 
-test("only byte-exact attempts registered in the committed evidence ledger may remain untracked", async () => {
+test("same-release attestation detects head, protocol-blob, fixture, and origin-main drift", () => {
+  const start = {
+    observedAt: "2026-07-16T00:00:00.000Z",
+    gitCommit: "1".repeat(40),
+    originMainGitCommit: "1".repeat(40),
+    expectedReleaseGitCommit: "1".repeat(40),
+    protocolSha256: "2".repeat(64),
+    protocolBlobs: { "eval/compare.ts": "3".repeat(40) },
+    datasetSha256: "4".repeat(64),
+    fixtureSetSha256: "5".repeat(64),
+    fixtureBytesSha256: "6".repeat(64),
+    poppler: { sha256: "7".repeat(64), bundleFiles: 178, bundleSha256: "8".repeat(64) },
+  };
+  assert.deepEqual(comparePromotionReleaseSnapshots(start, { ...start, observedAt: "later" }), {
+    status: "passed", mismatches: [],
+  });
+  const head = comparePromotionReleaseSnapshots(start, { ...start, gitCommit: "9".repeat(40) });
+  assert.deepEqual(head.mismatches, ["head"]);
+  const protocol = comparePromotionReleaseSnapshots(start, {
+    ...start, protocolBlobs: { "eval/compare.ts": "a".repeat(40) },
+  });
+  assert.deepEqual(protocol.mismatches, ["protocol-blobs"]);
+  const fixture = comparePromotionReleaseSnapshots(start, { ...start, fixtureBytesSha256: "b".repeat(64) });
+  assert.deepEqual(fixture.mismatches, ["fixtures"]);
+  const origin = comparePromotionReleaseSnapshots(start, { ...start, originMainGitCommit: "c".repeat(40) });
+  assert.deepEqual(origin.mismatches, ["origin-main"]);
+});
+
+test("expected-release binding rejects a changed HEAD even when the new tree is clean", async () => {
+  const dir = resolve(".artifacts", `expected-release-${process.pid}`);
+  await mkdir(dir, { recursive: true });
+  const git = (args: string[]) => spawnSync("git", args, { cwd: dir, encoding: "utf8" });
+  try {
+    assert.equal(git(["init", "--quiet"]).status, 0);
+    assert.equal(git(["config", "user.email", "release-test@example.invalid"]).status, 0);
+    assert.equal(git(["config", "user.name", "Release Test"]).status, 0);
+    await writeFile(join(dir, "protocol.ts"), "export const release = 1;\n", "utf8");
+    assert.equal(git(["add", "protocol.ts"]).status, 0);
+    assert.equal(git(["commit", "--quiet", "-m", "release one"]).status, 0);
+    const release = git(["rev-parse", "HEAD"]).stdout.trim();
+    assert.equal(git(["update-ref", "refs/remotes/origin/main", release]).status, 0);
+    const start = await committedProtocolState(["protocol.ts"], {
+      cwd: dir, strict: true, expectedReleaseGitCommit: release, requireHeadMatchesOriginMain: true,
+    });
+    assert.equal(start.headMatchesExpectedRelease, true);
+    assert.equal(start.headMatchesOriginMain, true);
+    await writeFile(join(dir, "next.ts"), "export const next = 2;\n", "utf8");
+    assert.equal(git(["add", "next.ts"]).status, 0);
+    assert.equal(git(["commit", "--quiet", "-m", "release two"]).status, 0);
+    await assert.rejects(
+      committedProtocolState(["protocol.ts"], { cwd: dir, strict: true, expectedReleaseGitCommit: release }),
+      (error: unknown) => error instanceof PromotionEnvironmentError
+        && error.code === "promotion_protocol_tree_invalid"
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("evidence ledger requires committed regular byte-exact artifacts with matching status and provenance", async () => {
   const dir = resolve(".artifacts", `evidence-ledger-${process.pid}`);
   const resultPath = "eval/results/diagnostic-attempt-01.json";
-  const bytes = Buffer.from('{"status":"incomplete"}\n', "utf8");
   await mkdir(join(dir, "eval", "results"), { recursive: true });
   const git = (args: string[]) => spawnSync("git", args, { cwd: dir, encoding: "utf8" });
   try {
@@ -590,31 +766,58 @@ test("only byte-exact attempts registered in the committed evidence ledger may r
     assert.equal(git(["config", "user.email", "ledger-test@example.invalid"]).status, 0);
     assert.equal(git(["config", "user.name", "Ledger Test"]).status, 0);
     await writeFile(join(dir, "protocol.ts"), "export const protocol = 1;\n", "utf8");
+    assert.equal(git(["add", "protocol.ts"]).status, 0);
+    assert.equal(git(["commit", "--quiet", "-m", "source release"]).status, 0);
+    const sourceCommit = git(["rev-parse", "HEAD"]).stdout.trim();
+    const bytes = Buffer.from(JSON.stringify({
+      status: "incomplete",
+      provenance: { gitCommit: sourceCommit },
+      promotion: { pass: false },
+    }, null, 2) + "\n", "utf8");
+    await writeFile(join(dir, resultPath), bytes);
     await writeFile(join(dir, "eval", "results", "evidence-ledger.json"), JSON.stringify({
       schemaVersion: 1,
       attempts: [{
         path: resultPath,
         sha256: createHash("sha256").update(bytes).digest("hex"),
-        sourceCommit: "1".repeat(40),
+        sourceCommit,
         status: "incomplete",
         classification: "environment-invalid-diagnostic",
       }],
-    }));
-    assert.equal(git(["add", "protocol.ts", "eval/results/evidence-ledger.json"]).status, 0);
+    }, null, 2) + "\n");
+    assert.equal(git(["add", "protocol.ts", "eval/results/evidence-ledger.json", resultPath]).status, 0);
     assert.equal(git(["commit", "--quiet", "-m", "ledger fixture"]).status, 0);
-    await writeFile(join(dir, resultPath), bytes);
     const registered = await committedProtocolState(
-      ["protocol.ts", "eval/results/evidence-ledger.json"],
+      ["protocol.ts", "eval/results/evidence-ledger.json", resultPath],
       { cwd: dir, strict: true, allowResultArtifacts: true }
     );
     assert.equal(registered.protocolTreeClean, true);
-    assert.deepEqual(registered.allowedDirtyResultArtifacts, [{ status: "??", path: resultPath }]);
+    assert.deepEqual(registered.allowedDirtyResultArtifacts, []);
     assert.equal(registered.evidenceLedger[0]?.sha256, createHash("sha256").update(bytes).digest("hex"));
-    await writeFile(join(dir, resultPath), '{"status":"reclassified"}\n', "utf8");
+
+    await writeFile(join(dir, resultPath), bytes.toString("utf8").replace(/\n/g, "\r\n"), "utf8");
     await assert.rejects(
       committedProtocolState(
-        ["protocol.ts", "eval/results/evidence-ledger.json"],
+        ["protocol.ts", "eval/results/evidence-ledger.json", resultPath],
         { cwd: dir, strict: true, allowResultArtifacts: true }
+      ),
+      (error: unknown) => error instanceof PromotionEnvironmentError
+        && error.code === "promotion_protocol_tree_invalid"
+    );
+    await writeFile(join(dir, resultPath), bytes);
+
+    const activeResultPath = "eval/results/diagnostic-attempt-02.json";
+    await writeFile(join(dir, activeResultPath), '{"status":"running"}\n', "utf8");
+    const active = await committedProtocolState(
+      ["protocol.ts", "eval/results/evidence-ledger.json", resultPath],
+      { cwd: dir, strict: true, allowResultArtifacts: true, activeResultPath }
+    );
+    assert.deepEqual(active.allowedDirtyResultArtifacts, [{ status: "??", path: activeResultPath }]);
+    await writeFile(join(dir, "unknown.txt"), "dirty\n", "utf8");
+    await assert.rejects(
+      committedProtocolState(
+        ["protocol.ts", "eval/results/evidence-ledger.json", resultPath],
+        { cwd: dir, strict: true, allowResultArtifacts: true, activeResultPath }
       ),
       (error: unknown) => error instanceof PromotionEnvironmentError
         && error.code === "promotion_protocol_tree_invalid"
@@ -622,6 +825,24 @@ test("only byte-exact attempts registered in the committed evidence ledger may r
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("immutable attempt 01 is a committed LF-normalized byte-exact ledger artifact", async () => {
+  const path = "eval/results/model-promotion-ab-attempt-01.json";
+  const expected = "cdc2be2760e85feecb173083355c5b7f10f6f928852ddca4f052ac518b809588";
+  const working = await readFile(path);
+  assert.equal(createHash("sha256").update(working).digest("hex"), expected);
+  assert.equal(working.includes(Buffer.from("\r\n")), false);
+  const committed = spawnSync("git", ["show", `HEAD:${path}`], { cwd: resolve("."), encoding: null });
+  assert.equal(committed.status, 0);
+  assert.equal(createHash("sha256").update(committed.stdout).digest("hex"), expected);
+  assert.ok(working.equals(committed.stdout));
+  const attrs = spawnSync("git", ["check-attr", "text", "eol", "--", path], {
+    cwd: resolve("."), encoding: "utf8",
+  });
+  assert.equal(attrs.status, 0);
+  assert.match(attrs.stdout, /text: set/);
+  assert.match(attrs.stdout, /eol: lf/);
 });
 
 test("database bootstrap accepts only the dedicated autopilot runtime identity and separated admin DSN", () => {

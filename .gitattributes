@@ -22,3 +22,4 @@ runtime-apk-archives.sha256 text eol=lf
 .grype.yaml text eol=lf
 eval/promotion-poppler.lock.json text eol=lf
 eval/results/evidence-ledger.json text eol=lf
+eval/results/*-attempt-*.json text eol=lf

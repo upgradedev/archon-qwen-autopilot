@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import {
   mkdir,
+  lstat,
   mkdtemp,
   readFile,
   readdir,
@@ -52,7 +53,8 @@ export type PromotionEnvironmentErrorCode =
   | "promotion_artifact_invalid"
   | "promotion_artifact_exists"
   | "promotion_endpoint_invalid"
-  | "promotion_protocol_arguments_invalid";
+  | "promotion_protocol_arguments_invalid"
+  | "promotion_credentials_invalid";
 
 const SAFE_MESSAGES: Record<PromotionEnvironmentErrorCode, string> = {
   poppler_missing: "the project-contained promotion Poppler executable is unavailable",
@@ -72,6 +74,7 @@ const SAFE_MESSAGES: Record<PromotionEnvironmentErrorCode, string> = {
   promotion_artifact_exists: "the keyed evidence attempt already exists and is immutable",
   promotion_endpoint_invalid: "keyed evidence requires an allowlisted official provider endpoint",
   promotion_protocol_arguments_invalid: "keyed evidence arguments do not match the committed promotion experiment",
+  promotion_credentials_invalid: "keyed evidence requires a syntactically valid provider credential",
 };
 
 export class PromotionEnvironmentError extends Error {
@@ -513,14 +516,55 @@ export async function finalizePromotionEnvironment(
   }
 }
 
+// Failure paths before final attestation still have to erase the unique live root.
+// This helper is deliberately idempotent so an outer finally can invoke it after
+// artifact publication/persistence failures without weakening containment checks.
+export async function cleanupPromotionEnvironment(environment: PromotionEnvironment): Promise<void> {
+  try {
+    const root = await realpath(environment.repositoryRoot);
+    let liveRoot: string;
+    try {
+      liveRoot = await realpath(environment.temporaryRoot);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
+    if (!inside(root, liveRoot)
+      || relative(root, liveRoot).replace(/\\/g, "/").split("/")[0] !== ".artifacts") {
+      throw new PromotionEnvironmentError("promotion_temp_invalid");
+    }
+    await rm(liveRoot, { recursive: true, force: true });
+    try {
+      await lstat(liveRoot);
+      throw new PromotionEnvironmentError("promotion_temp_cleanup_failed");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  } catch (error) {
+    throw fixedEnvironmentError(error, "promotion_temp_cleanup_failed");
+  }
+}
+
 // The extraction seam reads these process variables lazily. Promotion runs point
 // both Poppler and every Node temporary file at the already-attested repository
 // paths; no absolute locator is serialized into evidence.
-export function applyPromotionEnvironment(environment: PromotionEnvironment): void {
+export function applyPromotionEnvironment(environment: PromotionEnvironment): () => void {
+  const previous = {
+    POPPLER_PDFTOPPM: process.env.POPPLER_PDFTOPPM,
+    TMPDIR: process.env.TMPDIR,
+    TEMP: process.env.TEMP,
+    TMP: process.env.TMP,
+  };
   process.env.POPPLER_PDFTOPPM = environment.executablePath;
   process.env.TMPDIR = environment.temporaryRoot;
   process.env.TEMP = environment.temporaryRoot;
   process.env.TMP = environment.temporaryRoot;
+  return () => {
+    for (const [name, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  };
 }
 
 export function promotionEnvironmentDiagnostic(error: PromotionEnvironmentError): {

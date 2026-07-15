@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { lstat, open, readFile, realpath, rename, unlink } from "node:fs/promises";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { link, lstat, open, readFile, realpath, rename, unlink } from "node:fs/promises";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
   toSafeOperationalError,
   type OperationalErrorCode,
 } from "../src/security/operational-error.js";
 import { PromotionEnvironmentError } from "./promotion-environment.js";
+import { verifiedEvidenceLedger } from "./protocol-provenance.js";
 
 export interface CategoricalEvalError {
   category: OperationalErrorCode;
@@ -36,17 +37,20 @@ export function categoricalEvalError(
   ]);
   const normalizedCode = typeof candidate?.code === "string" ? candidate.code.toUpperCase() : "";
   const sdkCode = knownSdkCodes.has(normalizedCode) ? normalizedCode : undefined;
+  const providerHttpFailure = httpStatus !== undefined && httpStatus >= 500;
   const category: OperationalErrorCode = normalizedCode === "ABORT_ERR"
     ? "timeout"
     : ["ENOTFOUND", "EAI_AGAIN"].includes(normalizedCode)
       ? "provider_unavailable"
+      : providerHttpFailure
+        ? "provider_unavailable"
       : safe.code;
   const providerSdkError = knownSdkCodes.has(normalizedCode);
   const source = category === "storage_unavailable"
     ? "storage"
     : category === "delivery_unavailable"
       ? "delivery"
-      : providerSdkError
+       : providerSdkError || providerHttpFailure
         || ["authentication_failed", "rate_limited", "provider_unavailable", "invalid_upstream_response"].includes(category)
         ? "provider"
         : "runtime";
@@ -110,21 +114,11 @@ export async function promotionEvidenceArtifactPath(
     throw new PromotionEnvironmentError("promotion_artifact_invalid");
   }
   try {
-    const ledgerPath = await realpath(resolve(root, "eval", "results", "evidence-ledger.json"));
-    if (relative(root, ledgerPath).replace(/\\/g, "/") !== "eval/results/evidence-ledger.json") {
-      throw new PromotionEnvironmentError("promotion_artifact_invalid");
-    }
-    const ledger = JSON.parse(await readFile(ledgerPath, "utf8")) as {
-      schemaVersion?: unknown;
-      attempts?: Array<{ path?: unknown }>;
-    };
-    if (ledger.schemaVersion !== 1 || !Array.isArray(ledger.attempts)) {
-      throw new PromotionEnvironmentError("promotion_artifact_invalid");
-    }
-    if (ledger.attempts.some((entry) => entry.path === rel)) {
+    const attempts = await verifiedEvidenceLedger(root);
+    if (attempts.some((entry) => entry.path === rel)) {
       throw new PromotionEnvironmentError("promotion_artifact_exists");
     }
-    const priorAttempts = ledger.attempts
+    const priorAttempts = attempts
       .map((entry) => typeof entry.path === "string"
         ? new RegExp(`^eval/results/${escapeRegExp(prefix)}-attempt-([0-9]{2})\\.json$`).exec(entry.path)
         : null)
@@ -162,18 +156,44 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+export interface EvidencePublicationOptions {
+  // A narrow deterministic fault-injection seam for proving that an interruption
+  // before publication cannot expose a partial authoritative target.
+  beforePublish?: (stagedPath: string) => Promise<void>;
+}
+
 // A previous attempt—successful or partial—is evidence and must never be
-// replaced. Only the creating process may update the path after this exclusive
-// first write; a retry must select a fresh, attempt-qualified filename.
-export async function createExclusiveEvidenceArtifact(path: string, content: string): Promise<void> {
-  const handle = await open(path, "wx");
+// replaced. Initial publication is a same-directory durable stage followed by an
+// atomic hard-link. link(2) never replaces an existing name, so a competing writer
+// receives EEXIST and the prior attempt remains byte-for-byte unchanged.
+export async function createExclusiveEvidenceArtifact(
+  path: string,
+  content: string,
+  options: EvidencePublicationOptions = {}
+): Promise<void> {
+  const temp = `${path}.initial-${process.pid}-${randomUUID()}`;
+  let failure: unknown;
   try {
-    await handle.writeFile(content, "utf8");
-    await handle.sync();
-  } finally {
-    await handle.close();
+    const handle = await open(temp, "wx");
+    try {
+      await handle.writeFile(content, "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await options.beforePublish?.(temp);
+    await link(temp, path);
+    await syncDirectory(dirname(path));
+  } catch (error) {
+    failure = error;
   }
-  await syncDirectory(dirname(path));
+  try {
+    await removeStagedFile(temp);
+  } catch (cleanupError) {
+    if (failure !== undefined) throw new AggregateError([failure, cleanupError], "evidence publication and cleanup failed");
+    throw cleanupError;
+  }
+  if (failure !== undefined) throw failure;
 }
 
 // Progress updates are whole-file atomic replacements in the same directory.
@@ -181,33 +201,63 @@ export async function createExclusiveEvidenceArtifact(path: string, content: str
 // at the authoritative path; the previous fsynced JSON remains parseable.
 export async function persistEvidenceArtifact(path: string, content: string): Promise<void> {
   const temp = `${path}.next-${process.pid}-${randomUUID()}`;
-  const handle = await open(temp, "wx");
+  let failure: unknown;
   try {
-    await handle.writeFile(content, "utf8");
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-  try {
+    const handle = await open(temp, "wx");
+    try {
+      await handle.writeFile(content, "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
     await rename(temp, path);
     await syncDirectory(dirname(path));
   } catch (err) {
-    await unlink(temp).catch(() => {});
-    throw err;
+    failure = err;
+  }
+  try {
+    await removeStagedFile(temp);
+  } catch (cleanupError) {
+    if (failure !== undefined) throw new AggregateError([failure, cleanupError], "evidence persistence and cleanup failed");
+    throw cleanupError;
+  }
+  if (failure !== undefined) throw failure;
+}
+
+export async function probeEvidencePublicationDirectory(path: string): Promise<{
+  hardLinkPublication: "passed";
+  directorySync: "passed";
+  cleanup: "passed";
+}> {
+  const target = join(path, `.promotion-publication-probe-${process.pid}-${randomUUID()}`);
+  const content = `publication-probe-${randomUUID()}\n`;
+  try {
+    await createExclusiveEvidenceArtifact(target, content);
+    if (await readFile(target, "utf8") !== content) throw new Error("publication probe content mismatch");
+  } finally {
+    try {
+      await unlink(target);
+      await syncDirectory(path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+  return { hardLinkPublication: "passed", directorySync: "passed", cleanup: "passed" };
+}
+
+async function removeStagedFile(path: string): Promise<void> {
+  try {
+    await unlink(path);
+    await syncDirectory(dirname(path));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
   }
 }
 
 async function syncDirectory(path: string): Promise<void> {
-  try {
-    const directory = await open(path, "r");
-    try { await directory.sync(); } finally { await directory.close(); }
-  } catch (err) {
-    // Windows/filesystems may not expose directory fsync. File fsync + same-dir
-    // atomic rename still preserves parseable content; POSIX fsync errors surface.
-    const code = (err as NodeJS.ErrnoException).code;
-    if (process.platform === "win32" && ["EACCES", "EINVAL", "ENOTSUP", "EPERM"].includes(code ?? "")) return;
-    throw err;
-  }
+  const directory = await open(path, process.platform === "win32" ? "r+" : "r");
+  try { await directory.sync(); } finally { await directory.close(); }
 }
 
 function commandToken(value: string): string {

@@ -15,6 +15,7 @@ import {
 } from "../artifact-safety.js";
 import {
   applyPromotionEnvironment,
+  cleanupPromotionEnvironment,
   finalizePromotionEnvironment,
   preflightPromotionEnvironment,
   PROMOTION_PARAMETER_LOCK,
@@ -197,8 +198,10 @@ async function main(): Promise<void> {
   const environment = online
     ? await preflightPromotionEnvironment({ pdfFixtures: vision.pdfFixtures })
     : null;
-  if (environment) applyPromotionEnvironment(environment);
-  const prov = await provenance(fixtureSetSha256, commandArgs, endpoint, environment?.attestation ?? null, protocol);
+  const restoreEnvironment = environment ? applyPromotionEnvironment(environment) : () => {};
+  let environmentFinalized = false;
+  try {
+    const prov = await provenance(fixtureSetSha256, commandArgs, endpoint, environment?.attestation ?? null, protocol);
   console.log(`Vision protocol sha256:${prov.protocolSha256 ?? "unavailable"} · git ${prov.gitCommit ?? "unknown"} · ${prov.protocolTreeClean === true ? "inputs clean (registered result artifacts allowed)" : "dirty/unavailable"}`);
   if (!online) return;
   if (prov.protocolTreeClean !== true || !prov.gitCommit) throw new Error("online vision evidence requires committed, unchanged protocol inputs and no dirty paths outside eval/results/*.json");
@@ -264,6 +267,7 @@ async function main(): Promise<void> {
   let environmentDiagnostic: ReturnType<typeof promotionEnvironmentDiagnostic> | null = null;
   try {
     prov.promotionEnvironment = await finalizePromotionEnvironment(environment!);
+    environmentFinalized = true;
   } catch (error) {
     const fixed = error instanceof PromotionEnvironmentError
       ? error
@@ -310,6 +314,14 @@ async function main(): Promise<void> {
   await persist();
   console.log(`Vision artifact: ${relative(process.cwd(), evidenceTarget)} · status ${artifact.status}`);
   if (artifact.status !== "complete") process.exitCode = 2;
+  } finally {
+    restoreEnvironment();
+    if (environment && !environmentFinalized) {
+      await cleanupPromotionEnvironment(environment).catch(() => {
+        throw new PromotionEnvironmentError("promotion_temp_cleanup_failed");
+      });
+    }
+  }
 }
 
 main().catch((err) => {

@@ -27,6 +27,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, existsSync, readdirSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 
@@ -733,6 +734,7 @@ test("CHECK 8 · promotion evidence: attempt 01 remains immutable and environmen
   const promotionPreflight = readFileSync(join(ROOT, "eval", "promotion-preflight.ts"), "utf8");
   const packageJson = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
   const ledger = JSON.parse(readFileSync(join(ROOT, "eval", "results", "evidence-ledger.json"), "utf8"));
+  const attempt01 = readFileSync(join(ROOT, "eval", "results", "model-promotion-ab-attempt-01.json"));
   for (const text of [protocol, results]) {
     assert.match(text, /attempt(?: |-)?01/i);
     assert.match(text, /environment-invalid diagnostic/i);
@@ -745,7 +747,11 @@ test("CHECK 8 · promotion evidence: attempt 01 remains immutable and environmen
   assert.match(protocol, /all four paired runs/);
   assert.match(protocol, /30,000 ms/);
   assert.match(protocol, /1\.5×/);
-  assert.match(comparison, /const expectedOrder = \["AB", "BA", "BA", "AB"\]/);
+  assert.match(protocol, /--expected-release/);
+  assert.match(protocol, /at least \*\*4 correct fields\*\*/);
+  assert.match(protocol, /\*\*10% aggregate error-inclusive latency win\*\*/);
+  assert.match(protocol, /tie[\s\S]{0,120}promotion-fail/i);
+  assert.match(comparison, /const PROMOTION_RUN_ORDER = \["AB", "BA", "BA", "AB"\]/);
   assert.match(comparison, /maxMeanLatencyMsIncludingSeedSetup: 30_000/);
   assert.match(comparison, /maxMeanLatencyMs: 30_000/);
   assert.match(comparison, /maxMeanLatencyRatioVsBaseline: 1\.5/);
@@ -774,6 +780,15 @@ test("CHECK 8 · promotion evidence: attempt 01 remains immutable and environmen
       classification: "environment-invalid-diagnostic",
     }],
   });
+  assert.equal(
+    createHash("sha256").update(attempt01).digest("hex"),
+    "cdc2be2760e85feecb173083355c5b7f10f6f928852ddca4f052ac518b809588"
+  );
+  assert.equal(attempt01.includes(Buffer.from("\r\n")), false);
+  assert.match(comparison, /"\.gitattributes", "tsconfig\.json"/);
+  assert.match(comparison, /finalGuardedAgreement: 1/);
+  assert.match(comparison, /aggregateCorrectFieldGain: 4/);
+  assert.match(comparison, /aggregateLatencyWinRatio: 0\.9/);
   assert.match(evaluation, /model-promotion-ab-attempt-02\.json/);
   assert.doesNotMatch(evaluation, /model-promotion-ab-attempt-01\.json/);
   const commandSection = protocol.match(
