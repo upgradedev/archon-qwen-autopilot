@@ -537,6 +537,29 @@ test("CHECK 6 · media: proof narration separates deployed application SHA from 
   );
 });
 
+test("CHECK 6 · media: cleanup-zero precedes transactional canonical promotion", () => {
+  const capture = readFileSync(join(ROOT, "demo", "media-tools", "capture-final-media.cjs"), "utf8");
+  const mainBody = capture.slice(capture.indexOf("async function main()"));
+  const recoveryCall = mainBody.indexOf("recoverInterruptedPromotions();");
+  const releaseGateCall = mainBody.indexOf("parseReleaseEvidence({");
+  const cleanupCall = mainBody.indexOf("await cleanupAndVerifyCapturePending(");
+  const promotionCall = mainBody.indexOf("transactionalPromote(promotionEntries");
+  assert.ok(recoveryCall >= 0 && recoveryCall < releaseGateCall, "interrupted promotion recovery must precede the clean-source gate");
+  assert.ok(cleanupCall >= 0, "live capture must call the fail-closed cleanup gate");
+  assert.ok(promotionCall > cleanupCall, "canonical promotion must occur only after cleanup-zero succeeds");
+  assert.match(capture, /post-cleanup query found run-prefix PENDING residue/);
+  assert.match(capture, /rollbackPromotionTransaction/);
+  assert.match(capture, /recoverInterruptedPromotions/);
+  assert.match(capture, /REVIEW_MANIFEST_PATH\s*=\s*path\.join\(GALLERY_DIR, 'CAPTURE_REVIEW\.json'\)/);
+
+  const packet = readFileSync(join(ROOT, "demo", "DEVPOST_PACKET.md"), "utf8");
+  const checklist = readFileSync(join(ROOT, "demo", "FINAL_MEDIA_CHECKLIST.md"), "utf8");
+  for (const text of [packet, checklist]) {
+    assert.match(text, /CAPTURE_REVIEW\.json/);
+    assert.match(text, /cleanupZero|cleanup-zero/i);
+  }
+});
+
 test("CHECK 6 · submission copy: internal scoring, Built-with tags, and operator notes stay out of public copy", () => {
   const memo = readFileSync(join(ROOT, "demo", "JUDGE_REVIEW.md"), "utf8");
   assert.match(memo, /internal readiness memo[^\n]*not submission copy/i);

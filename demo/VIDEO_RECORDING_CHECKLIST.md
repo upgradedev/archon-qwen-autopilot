@@ -22,6 +22,8 @@ are locked in [`VIDEO_SCRIPT.md`](VIDEO_SCRIPT.md).
   are outside the capture region.
 - [ ] The five sanitized renderer inputs exist under `demo/final-media/` with their
   exact required names and have passed metadata/pixel review.
+- [ ] `demo/gallery/CAPTURE_REVIEW.json` is tracked and matches those files; its
+  authenticated cleanup gate reports zero run-prefix PENDING residue.
 - [ ] Fonts, architecture art, logos, and footage have public-use rights. For
   narrated mode, voice/music rights are separately confirmed; otherwise select the
   `CAPTION_ONLY=true` no-TTS/no-third-party-music path.

@@ -412,7 +412,9 @@ application SHA, its immutable CI run, this app's `/health` + `/ready`, authenti
 `/ready/deep`, and exercised decision + vision model IDs have been freshly captured
 using [`demo/BUILD_RECORDING.md`](./demo/BUILD_RECORDING.md). The sanitized composite
 belongs at `demo/final-media/autopilot-alibaba-proof.png`; the same evidence belongs
-in the reviewed nine-beat `demo/final-media/autopilot-demo.mp4`.
+in the reviewed nine-beat `demo/final-media/autopilot-demo.mp4`. Final PNGs are
+accepted only with tracked `demo/gallery/CAPTURE_REVIEW.json`, whose exact-release,
+exercised-model, artifact-hash, and authenticated cleanup-zero gates all pass.
 
 The final sanitized proof must show the app-specific ECS region/service identity
 without exposing instance IDs, administrative principals, key paths or secret-file

@@ -83,6 +83,11 @@ signed-out publication checks.
   `autopilot-live-intake-pending.png`, `autopilot-human-amend-diff.png`,
   `autopilot-correction-learning.png`, `autopilot-security-pending.png`, and
   `autopilot-alibaba-proof.png` under `demo/final-media/`.
+- [ ] Require tracked `demo/gallery/CAPTURE_REVIEW.json` to say `status: passed`,
+  identify the exact deployed application SHA and public source HEAD at capture,
+  record the exercised models/workflows, set both `cleanupZero=true` flags with zero
+  matching PENDING residue, and match every uploaded PNG's hash, dimensions, RGB
+  mode, and empty metadata-key list. A missing/stale manifest blocks publication.
 - [ ] Build with `PUBLIC_APP_URL` and `VIDEO_MODEL_LABEL` set to the verified final
   deployment/model IDs. The fail-closed nine-beat renderer must report `9 beats` and
   must read only the explicitly promoted captures under `demo/final-media/`.
@@ -147,6 +152,8 @@ signed-out publication checks.
 - [ ] Put the reviewer Bearer token only in Devpost's private testing instructions.
 - [ ] Add the optional public post URL.
 - [ ] Test every link and the full judge flow in a signed-out/incognito window.
+- [ ] Re-hash the uploaded gallery files against `demo/gallery/CAPTURE_REVIEW.json`;
+  do not accept a capture run that exited nonzero or required manual partial-file repair.
 - [ ] Complete [`RIGHTS_ELIGIBILITY_SIGNOFF.md`](RIGHTS_ELIGIBILITY_SIGNOFF.md) as the
   entrant or authorized representative; do not commit personal data or signatures.
 - [ ] Keep the live app, TLS, active private reviewer credential, judge reserve,

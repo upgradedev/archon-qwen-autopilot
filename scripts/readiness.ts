@@ -431,7 +431,34 @@ async function presentation(): Promise<CriterionSpec> {
     );
   }
 
-  // 5/6) Human-only presentation surfaces — a hosted video URL + a current live box.
+  // 5) The media release gate is executable offline: cleanup failure/residue blocks
+  //    promotion and a synthetic mid-commit fault restores the reviewed finals.
+  {
+    let passed = false;
+    let evidence = "media capture self-test did not run";
+    try {
+      const output = execFileSync(process.execPath, ["demo/media-tools/capture-final-media.cjs", "--self-test"], {
+        cwd: ROOT,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 60_000,
+      });
+      passed = /cleanup-zero, rollback, and interrupted-transaction guards passed/i.test(output);
+      evidence = passed
+        ? "cleanup failure + post-cleanup residue fail closed; promotion rollback/recovery self-test passed"
+        : "media capture self-test returned without its complete acceptance marker";
+    } catch (error) {
+      evidence = `media capture self-test failed (${error instanceof Error ? error.message.split("\n")[0] : "unknown error"})`;
+    }
+    checks.push(assertCheck(
+      "media-capture-fail-closed",
+      "Final-media gate proves cleanup-zero before rollback-capable canonical promotion",
+      passed,
+      evidence,
+    ));
+  }
+
+  // 6/7) Human-only presentation surfaces — a hosted video URL + a current live box.
   checks.push(gate("video-hosted", "Demo video hosted on a Public judges-accessible page", "Upload demo/final-media/autopilot-demo.mp4 and record its Public URL in the submission."));
   checks.push(gate("live-box-redeploy", "Live deployment serves the current image", "Redeploy the Alibaba Cloud box from the merged branch so the live OpenAPI + sinks match this repo."));
 

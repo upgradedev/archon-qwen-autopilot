@@ -32,6 +32,12 @@ Final expected artifacts:
   silence, fixed 168-second/30-fps timings, readability, 1080p stream probes, and
   SHA-256 values for the exclusively promoted MP4 and SRT.
 
+The live capture transaction also writes tracked
+`../gallery/CAPTURE_REVIEW.json`. It is the canonical secret-safe acceptance record:
+exact deployed SHA, public source HEAD at capture, exercised model/workflow gates,
+authenticated cleanup-zero proof, and hashes/dimensions/metadata state for every
+promoted PNG. Finals without a matching `status: passed` manifest are not approved.
+
 ## Reproducible authored-asset pass
 
 The canonical thumbnail and architecture raster are maintained together:
