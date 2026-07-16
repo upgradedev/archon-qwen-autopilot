@@ -1,0 +1,236 @@
+{
+  "schemaVersion": 1,
+  "protocolId": "autopilot-synthetic-impact-v1",
+  "title": "Fixed synthetic AP triage workflow-model comparison",
+  "frozenOn": "2026-07-16",
+  "registration": {
+    "status": "repository-local analysis-plan freeze",
+    "timing": "The plan is frozen before generating the derived results files, but after the underlying developer regression fixtures and their deterministic outcomes already existed.",
+    "notClaimed": "This is not an external, prospective, outcome-blind preregistration."
+  },
+  "researchQuestion": "On a fixed synthetic AP case set, how do a manual checklist workflow model and an Autopilot-assisted review workflow model compare on modeled active-review time, modeled human touches, and policy-label mismatches?",
+  "caseSet": {
+    "file": "impact/cases.json",
+    "sourceDataset": "eval/dataset.ts",
+    "sourceDatasetSize": 22,
+    "size": 12,
+    "caseIds": [
+      "s01",
+      "s05",
+      "s08",
+      "s11",
+      "s13",
+      "s14",
+      "s15",
+      "s17",
+      "s18",
+      "s19",
+      "s21",
+      "s22"
+    ],
+    "selectionRule": "A fixed, developer-selected stratified subset spanning clean new-vendor, clean recurring-vendor, missing-field, unreconciled, duplicate, anomaly, precedence, currency-change, and no-total paths.",
+    "labelAuthority": "Developer-authored AP policy labels from the tuned regression set; not independent expert ground truth.",
+    "exclusionsAfterFreeze": "None. Missing, malformed, or duplicate observations fail analysis; no case is dropped or imputed."
+  },
+  "arms": {
+    "manual": {
+      "name": "Manual checklist workflow model",
+      "definition": "A synthetic first-pass AP clerk checklist: read, normalize, validate required fields, attempt reconciliation, retrieve history, apply history checks when history exists, choose the policy route, and record a rationale.",
+      "decisionSource": "Frozen developer application of that checklist to each authored case. No person was timed or observed.",
+      "timeMeasure": "Modeled active-review seconds from the task weights below; not elapsed time.",
+      "touchMeasure": "Count of preregistered human checkpoints in the listed task sequence."
+    },
+    "assisted": {
+      "name": "Autopilot-assisted review workflow model",
+      "definition": "The agent performs normalization/evidence gathering and proposes a route; the synthetic human workflow reviews normalized fields, inspects the trace, inspects exception detail when present, confirms the policy route, and approves or defers.",
+      "decisionSource": "Frozen deterministic offline replay through eval/lib.ts runScenario with FakeQwenChatClient. The replay shares the production tool-call parsing seam but is not a live-Qwen or production observation.",
+      "timeMeasure": "Modeled human active-review seconds only. Model latency, queue time, and downstream execution time are excluded.",
+      "touchMeasure": "Count of preregistered human review checkpoints in the listed task sequence."
+    }
+  },
+  "endpoints": {
+    "primary": [
+      {
+        "id": "modeled_active_review_seconds",
+        "direction": "lower is better",
+        "derivation": "For each arm and case, sum the base seconds of every listed human task; paired delta is manual minus assisted."
+      },
+      {
+        "id": "modeled_human_touches",
+        "direction": "lower is better",
+        "derivation": "For each arm and case, sum humanTouches for every listed task; paired delta is manual minus assisted."
+      }
+    ],
+    "safety": [
+      {
+        "id": "policy_label_mismatch",
+        "direction": "lower is better",
+        "derivation": "Action differs from the developer-authored expectedAction for that case."
+      }
+    ]
+  },
+  "analysisPlan": {
+    "unit": "paired synthetic case",
+    "denominator": 12,
+    "descriptiveOnly": true,
+    "missingData": "fail closed; no exclusions or imputation",
+    "rounding": "Counts and totals remain integers; means, medians, rates, and percentages round to one decimal place.",
+    "baseComparison": "Sum and compare base task weights within each paired case, then aggregate all 12 fixed cases.",
+    "sensitivity": "Report a deliberately adverse bound (manual low minus assisted high) and favorable bound (manual high minus assisted low). These bounds explore only the declared task-weight assumptions; they are not confidence intervals.",
+    "subgroups": "Report descriptive category aggregates only; no subgroup significance tests.",
+    "replayValidation": "Every check and write reruns all 12 selected eval/dataset.ts scenarios through eval/lib.ts runScenario in offline mode and requires final action, reported model id, raw model action, stop reason, read/analyze steps, trace tools, and policyOverride to match the frozen raw observation. Local latency is excluded.",
+    "runtimeAndSourceIdentity": "Every check and write requires process.version v24.18.0, a committed raw evidence input, and the complete local replay closure: src; all transitively loaded eval modules; the analyzer/provenance gate; protocol/case inputs; and package, lock, and TypeScript manifests. Eval replay modules are dynamically imported only after those gates. Source refresh requires a completely clean committed HEAD (commit A), records that exact commit/tree, reruns all 12 cases, and produces only raw/results evidence for descendant commit B. Later evidence-only commits are allowed and are not serialized into generated output.",
+    "inference": "No p-values, confidence intervals, causal claims, population estimates, or production generalization."
+  },
+  "taskWeights": {
+    "manual": {
+      "read_invoice": {
+        "seconds": {
+          "low": 20,
+          "base": 30,
+          "high": 45
+        },
+        "humanTouches": 1,
+        "description": "Open and read the incoming invoice."
+      },
+      "normalize_fields": {
+        "seconds": {
+          "low": 15,
+          "base": 25,
+          "high": 40
+        },
+        "humanTouches": 1,
+        "description": "Normalize aliases, types, dates, currency, and amounts."
+      },
+      "check_required_fields": {
+        "seconds": {
+          "low": 10,
+          "base": 15,
+          "high": 25
+        },
+        "humanTouches": 1,
+        "description": "Check the required AP fields."
+      },
+      "reconcile_amounts": {
+        "seconds": {
+          "low": 12,
+          "base": 20,
+          "high": 30
+        },
+        "humanTouches": 1,
+        "description": "Attempt subtotal, tax, total, and line reconciliation."
+      },
+      "retrieve_vendor_history": {
+        "seconds": {
+          "low": 20,
+          "base": 35,
+          "high": 55
+        },
+        "humanTouches": 1,
+        "description": "Search prior completed invoices and corrections."
+      },
+      "check_duplicate": {
+        "seconds": {
+          "low": 12,
+          "base": 20,
+          "high": 32
+        },
+        "humanTouches": 1,
+        "description": "Compare reference, vendor, date, and amount against history."
+      },
+      "compare_amount_and_currency": {
+        "seconds": {
+          "low": 12,
+          "base": 22,
+          "high": 35
+        },
+        "humanTouches": 1,
+        "description": "Compare amount range and currency against vendor history."
+      },
+      "choose_policy_route": {
+        "seconds": {
+          "low": 12,
+          "base": 20,
+          "high": 30
+        },
+        "humanTouches": 1,
+        "description": "Select accrue, pay, query, or specialist review."
+      },
+      "record_rationale": {
+        "seconds": {
+          "low": 12,
+          "base": 18,
+          "high": 28
+        },
+        "humanTouches": 1,
+        "description": "Record the first-pass decision rationale."
+      }
+    },
+    "assisted": {
+      "review_normalized_invoice": {
+        "seconds": {
+          "low": 10,
+          "base": 16,
+          "high": 25
+        },
+        "humanTouches": 1,
+        "description": "Review the normalized invoice fields shown by Autopilot."
+      },
+      "inspect_agent_evidence": {
+        "seconds": {
+          "low": 12,
+          "base": 20,
+          "high": 32
+        },
+        "humanTouches": 1,
+        "description": "Inspect the auditable tool trace and validation findings."
+      },
+      "inspect_exception_detail": {
+        "seconds": {
+          "low": 8,
+          "base": 14,
+          "high": 22
+        },
+        "humanTouches": 1,
+        "description": "Inspect the specific exception, collision, or ambiguous evidence."
+      },
+      "confirm_policy_route": {
+        "seconds": {
+          "low": 8,
+          "base": 12,
+          "high": 20
+        },
+        "humanTouches": 1,
+        "description": "Confirm or correct the proposed AP route."
+      },
+      "approve_or_defer": {
+        "seconds": {
+          "low": 6,
+          "base": 10,
+          "high": 16
+        },
+        "humanTouches": 1,
+        "description": "Approve the exact proposal or defer it for follow-up."
+      }
+    }
+  },
+  "assumptions": [
+    "The task list is a workflow model, not a time-and-motion observation.",
+    "Task weights are authored assumptions chosen before derived-result generation and are visible for replacement by future measured values.",
+    "Every task represents active human review; system latency and downstream execution are excluded.",
+    "The manual arm is a reasonable standardized checklist and is not intentionally deprived of history, duplicate, or variance checks.",
+    "Both actions and labels are developer-authored, so mismatch counts are a policy-regression signal rather than an estimate of human or production error.",
+    "The 12 cases are synthetic and developer-selected, not random, representative, independent, or production sampled."
+  ],
+  "prohibitedClaims": [
+    "ROI",
+    "labor savings",
+    "headcount reduction",
+    "production throughput",
+    "production error reduction",
+    "human accuracy improvement",
+    "causal impact",
+    "population generalization",
+    "statistical significance"
+  ]
+}

@@ -47,6 +47,13 @@ archon-autopilot (container :9000, read-only root)
 Prerequisites on the ECS host:
 
 - the shared pgvector service plus private data and egress networks;
+- Docker plus the exact project-contained Docker Buildx `v0.35.0` plugin. Install
+  or attest it with `sudo bash deploy/bootstrap-buildx.sh`; the script downloads
+  only Docker's official Linux-amd64 release, verifies SHA-256
+  `d41ece72044243b4f58b343441ae37446d9c29a7d6b5e11c61847bbcf8f7dfda`,
+  and keeps the plugin under this checkout's ignored `.artifacts/docker-config`.
+  That Docker config is deliberately closed: no `config.json`, extra plugin
+  directories, or sibling CLI plugins are permitted;
 - `<autopilot-checkout>/.env` (gitignored, regular/non-symlink, exact mode `0600`) containing only runtime
   settings: dedicated `DATABASE_URL`, DashScope key and reviewer token;
 - `<autopilot-checkout>/.env.migration` (gitignored, regular/non-symlink, exact mode `0600`) containing the
@@ -63,17 +70,22 @@ cd <autopilot-checkout>
 git fetch origin main
 git switch main
 git merge --ff-only origin/main
-EXPECTED_RELEASE=<trusted-40-character-final-main-sha> bash deploy/redeploy.sh
+sudo bash deploy/bootstrap-buildx.sh
+sudo DOCKER_CONFIG="$PWD/.artifacts/docker-config" \
+  EXPECTED_RELEASE=<trusted-40-character-final-main-sha> bash deploy/redeploy.sh
 ```
 
-The script first acquires a host-global exclusive lock (shared by every checkout), proves
+The script first rechecks the canonical path, closed directory set, root ownership,
+mode, link count, exact SHA-256, and reported version of the selected Buildx artifact,
+then acquires a host-global exclusive lock (shared by every checkout). It proves
 `HEAD == origin/main == EXPECTED_RELEASE`, rejects tracked or non-ignored untracked
 changes, ignored untracked files admitted by Docker's reviewed source allowlist,
 and hidden assume-unchanged/skip-worktree index flags, then validates both env-file
 types and exact permissions. Before build or database mutation it requires a reliable
 Docker inventory, refuses stale rollback state, captures the serving container and
 image by immutable ID, requires the runtime `DATABASE_URL` to be unchanged, and proves
-the old release is DB-ready. Database credential rotation is deliberately a separate
+the old release is DB-ready. The same Buildx artifact is rechecked immediately before
+invoking `docker buildx build`. Database credential rotation is deliberately a separate
 two-phase operation, not an ordinary redeploy.
 
 The controller creates the build context from `git archive EXPECTED_RELEASE`, records

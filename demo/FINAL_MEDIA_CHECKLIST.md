@@ -85,8 +85,9 @@ signed-out publication checks.
   `autopilot-alibaba-proof.png` under `demo/final-media/`.
 - [ ] Require tracked `demo/gallery/CAPTURE_REVIEW.json` to say `status: passed`,
   identify the exact deployed application SHA and public source HEAD at capture,
-  record the exercised models/workflows, set both `cleanupZero=true` flags with zero
-  matching PENDING residue, and match every uploaded PNG's hash, dimensions, RGB
+  record the exercised models/workflows, set both `pendingCleanupZero=true` flags with
+  zero matching PENDING capture residue (rejected audit history remains), and match
+  every uploaded PNG's hash, dimensions, RGB
   mode, and empty metadata-key list. A missing/stale manifest blocks publication.
 - [ ] Build with `PUBLIC_APP_URL` and `VIDEO_MODEL_LABEL` set to the verified final
   deployment/model IDs. The fail-closed nine-beat renderer must report `9 beats` and

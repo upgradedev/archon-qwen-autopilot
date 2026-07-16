@@ -345,6 +345,52 @@ async function problem(): Promise<CriterionSpec> {
   // does not claim a mailbox receipt. Do not turn that non-goal into a fake release
   // blocker merely because external SMTP credentials are absent.
 
+  // Fixed synthetic workflow-model evidence — recompute every derived row and
+  // byte-check the generated artifacts. This is deliberately not a human/ROI claim.
+  {
+    let verified = false;
+    let detail = "";
+    try {
+      const output = execFileSync(
+        process.execPath,
+        ["--import", "tsx", join(ROOT, "impact", "analyze.mjs"), "--check"],
+        { cwd: ROOT, encoding: "utf8", env: { ...process.env, DASHSCOPE_API_KEY: "" } }
+      ).trim();
+      const report = JSON.parse(readFileSync(join(ROOT, "impact", "results.json"), "utf8"));
+      const baseDelta = Number(report.aggregate?.modeledActiveReviewSeconds?.base?.pairedDeltaTotal);
+      const touchDelta = Number(report.aggregate?.modeledHumanTouches?.pairedDeltaTotal);
+      const manualMismatch = Number(report.aggregate?.policyLabelMismatch?.manual?.count);
+      const assistedMismatch = Number(report.aggregate?.policyLabelMismatch?.assisted?.count);
+      const prohibited = new Set((report.claimBoundary?.notPermitted ?? []).map((claim: unknown) => String(claim).toLowerCase()));
+      verified =
+        output.includes("impact-study check: PASS") &&
+        report.studyType === "fixed synthetic workflow-model comparison" &&
+        report.denominator === 12 &&
+        baseDelta > 0 &&
+        touchDelta > 0 &&
+        assistedMismatch <= manualMismatch &&
+        prohibited.has("roi") &&
+        prohibited.has("labor savings");
+      detail =
+        output +
+        "; n=" + report.denominator +
+        ", modeled base seconds delta=" + baseDelta +
+        ", modeled touches delta=" + touchDelta +
+        ", policy-label mismatches manual/assisted=" + manualMismatch + "/" + assistedMismatch +
+        "; synthetic assumptions only, no human/ROI extrapolation";
+    } catch (error) {
+      detail = safeOperationalSummary(error, "synthetic impact study");
+    }
+    checks.push(
+      assertCheck(
+        "synthetic-impact-study",
+        "Fixed synthetic impact study: protocol/raw rows/results reproduce with bounded claims",
+        verified,
+        detail
+      )
+    );
+  }
+
   return { key: "problem", name: "Problem value", weight: 25, checks };
 }
 

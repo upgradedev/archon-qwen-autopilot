@@ -1,4 +1,4 @@
-// Documentation-drift fitness functions — eight offline checks that keep the README
+// Documentation-drift fitness functions — nine offline checks that keep the README
 // honest against the code, run as their own `docs-consistency` CI job.
 //
 //   CHECK 1  README claims ↔ code  — model ids, HTTP endpoints, and the MCP-tool /
@@ -19,6 +19,7 @@
 //   CHECK 7  Workflow actions, Node, container services, k6, and the video renderer
 //            use exact versions plus content digests/hashes where the platform allows.
 //   CHECK 8  Promotion attempt 01 remains explicitly immutable and environment-invalid.
+//   CHECK 9  Synthetic impact protocol/raw rows/results remain deterministic and bounded.
 //
 // Direction of every check is chosen so it passes CLEAN on current main: a
 // README-claims-something-code-lacks direction is a HARD FAIL (no phantom); a
@@ -28,6 +29,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, existsSync, readdirSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
@@ -551,12 +553,62 @@ test("CHECK 6 · media: cleanup-zero precedes transactional canonical promotion"
   assert.match(capture, /rollbackPromotionTransaction/);
   assert.match(capture, /recoverInterruptedPromotions/);
   assert.match(capture, /REVIEW_MANIFEST_PATH\s*=\s*path\.join\(GALLERY_DIR, 'CAPTURE_REVIEW\.json'\)/);
+  assert.match(
+    capture,
+    /const required = canonicalReleaseWorkflows\(\);/,
+    "the live GitHub gate must use the fail-closed canonical workflow set",
+  );
+  assert.match(
+    capture,
+    /REQUIRED_RELEASE_WORKFLOWS must contain exactly:/,
+    "a workflow override may attest only the full canonical CI + CodeQL + image-supply-chain set",
+  );
+  for (const workflowPath of [
+    ".github/workflows/ci.yml",
+    ".github/workflows/codeql.yml",
+    ".github/workflows/supply-chain.yml",
+  ]) {
+    assert.ok(
+      capture.includes(workflowPath),
+      `the release gate must bind workflow evidence to canonical path ${workflowPath}`,
+    );
+  }
+  assert.match(
+    capture,
+    /run\.name === workflow\.name[\s\S]*run\.path === workflow\.path[\s\S]*run\.head_sha === sha/,
+    "workflow evidence must bind name, canonical path, and exact release SHA",
+  );
+  assert.match(
+    capture,
+    /Number\(b\.run_number\) - Number\(a\.run_number\)[\s\S]*Number\(b\.run_attempt\) - Number\(a\.run_attempt\)/,
+    "the canonical exact-SHA workflow gate must evaluate the latest run and latest attempt",
+  );
+  assert.match(
+    capture,
+    /spoofedSameName[\s\S]*a same-name workflow at the wrong path must not satisfy the release gate/,
+    "the capture self-test must reject a duplicate workflow name at a noncanonical path",
+  );
+  assert.match(
+    capture,
+    /an earlier successful attempt must not hide a failed latest attempt/,
+    "the capture self-test must fail closed when the latest canonical attempt fails",
+  );
+  assert.doesNotMatch(
+    capture,
+    /\.addInitScript\s*\(/,
+    "reviewer credentials must never be installed into every navigation/child frame",
+  );
+  assert.match(
+    capture,
+    /installReviewerSessionOnPinnedTopFrame[\s\S]*page\.goto[\s\S]*new URL\(page\.url\(\)\)\.origin[\s\S]*page\.evaluate[\s\S]*location\.origin !== expectedOrigin[\s\S]*window\.top !== window[\s\S]*sessionStorage\.setItem[\s\S]*page\.reload[\s\S]*new URL\(page\.url\(\)\)\.origin/,
+    "the reviewer token must be installed only after a pinned-origin top-frame navigation and rechecked after reload",
+  );
 
   const packet = readFileSync(join(ROOT, "demo", "DEVPOST_PACKET.md"), "utf8");
   const checklist = readFileSync(join(ROOT, "demo", "FINAL_MEDIA_CHECKLIST.md"), "utf8");
   for (const text of [packet, checklist]) {
     assert.match(text, /CAPTURE_REVIEW\.json/);
-    assert.match(text, /cleanupZero|cleanup-zero/i);
+    assert.match(text, /pendingCleanupZero|cleanup-zero/i);
   }
 });
 
@@ -973,4 +1025,140 @@ test("CHECK 8 · promotion evidence: attempt 01 remains immutable and environmen
     /model-promotion-ab-attempt-01\.json/,
     "the current command must never target the immutable diagnostic"
   );
+});
+
+test("CHECK 9 · synthetic impact evidence: fixed denominator, deterministic derivation, bounded claims", () => {
+  const packageJson = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
+  assert.equal(packageJson.scripts["impact:refresh-source"], "node --import tsx impact/analyze.mjs --refresh-source");
+  assert.equal(packageJson.scripts["impact:write"], "node --import tsx impact/analyze.mjs --write");
+  assert.equal(packageJson.scripts["impact:check-raw"], "node --import tsx impact/analyze.mjs --check-raw");
+  assert.equal(packageJson.scripts["impact:check"], "node --import tsx impact/analyze.mjs --check");
+
+  const analyzer = readFileSync(join(ROOT, "impact", "analyze.mjs"), "utf8");
+  const provenance = readFileSync(join(ROOT, "impact", "provenance.mjs"), "utf8");
+  const replaySourcePaths = [
+    "src",
+    "eval/lib.ts",
+    "eval/dataset.ts",
+    "eval/artifact-safety.ts",
+    "eval/promotion-environment.ts",
+    "eval/protocol-provenance.ts",
+    "impact/analyze.mjs",
+    "impact/provenance.mjs",
+    "impact/protocol.json",
+    "impact/cases.json",
+    "package.json",
+    "package-lock.json",
+    "tsconfig.json",
+  ];
+  assert.doesNotMatch(analyzer, /^import\s+.*from\s+["']\.\.\/eval\//m);
+  assert.match(analyzer, /import\("\.\.\/eval\/dataset\.ts"\)/);
+  assert.match(analyzer, /import\("\.\.\/eval\/lib\.ts"\)/);
+  const analyzerMain = analyzer.slice(analyzer.indexOf("async function main()"));
+  const runtimeGate = analyzerMain.indexOf("assertLockedImpactRuntime();");
+  const rawCommitGate = analyzerMain.indexOf("assertCommittedReplayEvidenceInputs(");
+  const sourceGate = analyzerMain.indexOf("verifyReplaySourceIdentity(");
+  const replayImport = analyzerMain.indexOf("await loadVerifiedReplayModules();");
+  assert.ok(
+    runtimeGate >= 0 && rawCommitGate > runtimeGate && sourceGate > runtimeGate
+      && replayImport > rawCommitGate && replayImport > sourceGate,
+    "no eval replay module may load before runtime, committed-raw, and source-identity gates",
+  );
+  assert.match(analyzerMain, /captureReplaySourceIdentityAtCleanHead[\s\S]*--refresh-source/);
+  assert.match(provenance, /impact source refresh requires a completely clean committed HEAD \(commit A\)/);
+  for (const sourcePath of replaySourcePaths) {
+    assert.ok(provenance.includes(`"${sourcePath}"`), `impact provenance closure omits ${sourcePath}`);
+  }
+
+  const output = execFileSync(
+    process.execPath,
+    ["--import", "tsx", join(ROOT, "impact", "analyze.mjs"), "--check"],
+    { cwd: ROOT, encoding: "utf8", env: { ...process.env, DASHSCOPE_API_KEY: "" } },
+  );
+  assert.match(output, /impact-study check: PASS \(12 fixed synthetic cases; outputs byte-identical\)/);
+
+  const protocol = JSON.parse(readFileSync(join(ROOT, "impact", "protocol.json"), "utf8"));
+  const casesFile = JSON.parse(readFileSync(join(ROOT, "impact", "cases.json"), "utf8"));
+  const rawText = readFileSync(join(ROOT, "impact", "raw-observations.json"), "utf8");
+  const raw = JSON.parse(rawText);
+  const results = JSON.parse(readFileSync(join(ROOT, "impact", "results.json"), "utf8"));
+  const study = readFileSync(join(ROOT, "docs", "IMPACT_STUDY.md"), "utf8");
+  const matrix = readFileSync(join(ROOT, "docs", "CLAIM_EVIDENCE_MATRIX.md"), "utf8");
+
+  assert.equal(protocol.registration.status, "repository-local analysis-plan freeze");
+  assert.match(protocol.registration.notClaimed, /not an external, prospective, outcome-blind preregistration/i);
+  assert.equal(protocol.analysisPlan.descriptiveOnly, true);
+  assert.match(protocol.analysisPlan.replayValidation, /reruns all 12[\s\S]*runScenario[\s\S]*seven|requires final action/i);
+  assert.equal(protocol.caseSet.size, 12);
+  assert.deepEqual(protocol.caseSet.caseIds, casesFile.cases.map((item: { id: string }) => item.id));
+  assert.equal(new Set(protocol.caseSet.caseIds).size, 12);
+  assert.equal(raw.observations.length, 12);
+  assert.deepEqual(raw.observations.map((row: { caseId: string }) => row.caseId), protocol.caseSet.caseIds);
+  assert.equal(raw.collection.mode, "offline");
+  assert.equal(raw.collection.networkUsed, false);
+  assert.equal(raw.collection.runtime, "Node.js 24.18.0");
+  assert.match(raw.collection.sourceCommit, /^[0-9a-f]{40}$/);
+  assert.deepEqual(raw.collection.sourceIdentity.replaySourcePaths, replaySourcePaths);
+  assert.doesNotMatch(rawText, /"(?:seconds|touches|duration|latencyMs)"\s*:/);
+
+  assert.equal(results.studyType, "fixed synthetic workflow-model comparison");
+  assert.equal(results.denominator, 12);
+  assert.equal(results.rawReplayValidation.casesReplayed, 12);
+  assert.equal(results.rawReplayValidation.casesMatchingFrozenRaw, 12);
+  assert.deepEqual(results.rawReplayValidation.comparedFields, [
+    "action",
+    "reportedModelId",
+    "rawModelAction",
+    "stopReason",
+    "readAnalyzeSteps",
+    "traceTools",
+    "policyOverride",
+  ]);
+  assert.match(results.rawReplayValidation.runner, /runScenario\(scenario, offline\)/);
+  assert.equal(results.aggregate.policyLabelMismatch.manual.count, 0);
+  assert.equal(results.aggregate.policyLabelMismatch.assisted.count, 0);
+  assert.ok(results.aggregate.modeledActiveReviewSeconds.base.pairedDeltaTotal > 0);
+  assert.ok(results.aggregate.modeledHumanTouches.pairedDeltaTotal > 0);
+  assert.equal(results.aggregate.modeledActiveReviewSeconds.sensitivity.adverseWeights.casesWithPositiveDelta, 9);
+  assert.equal(results.aggregate.modeledActiveReviewSeconds.sensitivity.adverseWeights.casesAtOrBelowZero, 3);
+  for (const digest of Object.values(results.inputSha256)) assert.match(String(digest), /^[0-9a-f]{64}$/);
+
+  const base = results.aggregate.modeledActiveReviewSeconds.base;
+  const touches = results.aggregate.modeledHumanTouches;
+  assert.ok(
+    study.includes(
+      "| Base modeled active-review seconds, total | " +
+      Number(base.manualTotal).toLocaleString("en-US") + " | " +
+      Number(base.assistedTotal).toLocaleString("en-US") + " | " +
+      Number(base.pairedDeltaTotal).toLocaleString("en-US") + " |",
+    ),
+    "judge-facing study totals must match generated results",
+  );
+  assert.ok(
+    study.includes(
+      "| Modeled human touches, total | " +
+      touches.manualTotal + " | " + touches.assistedTotal + " | " + touches.pairedDeltaTotal + " |",
+    ),
+    "judge-facing touch totals must match generated results",
+  );
+
+  const boundedClaim = /fixed synthetic workflow-model comparison;\s*not a human\s+study,\s*field\s+trial,\s*production\s+benchmark,\s*labor-savings\s+claim,\s*or ROI\s+analysis/i;
+  assert.match(README, boundedClaim);
+  assert.match(study, boundedClaim);
+  assert.match(matrix, boundedClaim);
+  assert.match(study, /Both arms have 0\/12 label mismatches\. This does \*\*not\*\* establish error\s+reduction/i);
+  assert.match(study, /task-weight sensitivity bounds, not confidence intervals/i);
+  for (const prohibited of [
+    "ROI",
+    "labor savings",
+    "headcount reduction",
+    "production throughput",
+    "production error reduction",
+    "human accuracy improvement",
+    "causal impact",
+    "population generalization",
+    "statistical significance",
+  ]) {
+    assert.ok(results.claimBoundary.notPermitted.includes(prohibited), "missing impact claim boundary: " + prohibited);
+  }
 });

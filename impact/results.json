@@ -1,0 +1,745 @@
+{
+  "schemaVersion": 1,
+  "protocolId": "autopilot-synthetic-impact-v1",
+  "studyType": "fixed synthetic workflow-model comparison",
+  "registration": {
+    "status": "repository-local analysis-plan freeze",
+    "timing": "The plan is frozen before generating the derived results files, but after the underlying developer regression fixtures and their deterministic outcomes already existed.",
+    "notClaimed": "This is not an external, prospective, outcome-blind preregistration."
+  },
+  "sourceReplay": {
+    "sourceCommit": "46c0f27888f1b051012529f08e9526d2c2c2b7af",
+    "runtime": "Node.js 24.18.0",
+    "agentRunner": "eval/lib.ts runScenario",
+    "mode": "offline",
+    "modelSeam": "FakeQwenChatClient",
+    "networkUsed": false,
+    "sourceIdentity": {
+      "gitCommit": "46c0f27888f1b051012529f08e9526d2c2c2b7af",
+      "gitTree": "4a2df2232491d8bcc77dd1f52db667f86eb04fbc",
+      "replaySourcePaths": [
+        "src",
+        "eval/lib.ts",
+        "eval/dataset.ts",
+        "eval/artifact-safety.ts",
+        "package-lock.json",
+        "tsconfig.json"
+      ],
+      "sourceCommitIsAncestor": true,
+      "currentHeadSourceClosureMatches": true,
+      "worktreeSourceClosureClean": true,
+      "indexFlagsClean": true
+    }
+  },
+  "rawReplayValidation": {
+    "runner": "eval/lib.ts runScenario(scenario, offline)",
+    "modelSeam": "FakeQwenChatClient",
+    "networkUsed": false,
+    "casesReplayed": 12,
+    "casesMatchingFrozenRaw": 12,
+    "comparedFields": [
+      "action",
+      "reportedModelId",
+      "rawModelAction",
+      "stopReason",
+      "readAnalyzeSteps",
+      "traceTools",
+      "policyOverride"
+    ],
+    "excludedField": "latencyMs (nondeterministic local test timing; not an impact endpoint)"
+  },
+  "inputSha256": {
+    "protocolJson": "932cafd5714db6d51de867fc449cecd4daaa40c562366a98aa63964da56d6c1c",
+    "casesJson": "aea7709a56541169b0f4f96b0e69dac690d3f2ec6ec2cbd2dfbde69ab7427388",
+    "rawObservationsJson": "dace812e413c08350e721abd3cb0fc7918a7f3a958be9e1c8fc1f5946296a024",
+    "analysisScript": "1d8840a598377ba4acd63825a29d1f53726d012d9f00ea85866ed3534b4ca8da",
+    "provenanceScript": "fbe5634a6672bbd4a375df4b1a1e43496a4a1ba39ef13fd73b8eb922e82d7fcf",
+    "evalDataset": "f09277878dcbbc8c35ddb5089ab18035f961265b9516aafe570a2f7b9711f6af"
+  },
+  "denominator": 12,
+  "labelAuthority": "developer-authored AP policy labels; not expert ground truth",
+  "endpoints": {
+    "primary": [
+      {
+        "id": "modeled_active_review_seconds",
+        "direction": "lower is better",
+        "derivation": "For each arm and case, sum the base seconds of every listed human task; paired delta is manual minus assisted."
+      },
+      {
+        "id": "modeled_human_touches",
+        "direction": "lower is better",
+        "derivation": "For each arm and case, sum humanTouches for every listed task; paired delta is manual minus assisted."
+      }
+    ],
+    "safety": [
+      {
+        "id": "policy_label_mismatch",
+        "direction": "lower is better",
+        "derivation": "Action differs from the developer-authored expectedAction for that case."
+      }
+    ]
+  },
+  "aggregate": {
+    "policyLabelMismatch": {
+      "manual": {
+        "count": 0,
+        "denominator": 12,
+        "ratePct": 0
+      },
+      "assisted": {
+        "count": 0,
+        "denominator": 12,
+        "ratePct": 0
+      },
+      "pairedCountDelta": 0
+    },
+    "modeledActiveReviewSeconds": {
+      "base": {
+        "manualTotal": 2292,
+        "assistedTotal": 836,
+        "pairedDeltaTotal": 1456,
+        "manualMean": 191,
+        "assistedMean": 69.7,
+        "pairedMeanDelta": 121.3,
+        "manualMedian": 205,
+        "assistedMedian": 72,
+        "pairedMedianDelta": 133,
+        "withinModelReductionPct": 63.5
+      },
+      "sensitivity": {
+        "adverseWeights": {
+          "definition": "manual low minus assisted high",
+          "pairedDeltaTotal": 68,
+          "pairedMeanDelta": 5.7,
+          "casesWithPositiveDelta": 9,
+          "casesAtOrBelowZero": 3
+        },
+        "favorableWeights": {
+          "definition": "manual high minus assisted low",
+          "pairedDeltaTotal": 3060,
+          "pairedMeanDelta": 255,
+          "casesWithPositiveDelta": 12,
+          "casesAtOrBelowZero": 0
+        },
+        "interpretation": "These are assumption bounds over authored task weights, not confidence intervals."
+      }
+    },
+    "modeledHumanTouches": {
+      "manualTotal": 100,
+      "assistedTotal": 58,
+      "pairedDeltaTotal": 42,
+      "manualMean": 8.3,
+      "assistedMean": 4.8,
+      "pairedMeanDelta": 3.5,
+      "manualMedian": 9,
+      "assistedMedian": 5,
+      "pairedMedianDelta": 4,
+      "withinModelReductionPct": 42
+    },
+    "assistedReplay": {
+      "finalActionsMatchingDeveloperLabels": 12,
+      "rawModelActionsMatchingDeveloperLabels": 12,
+      "policyOverrideCount": 2,
+      "meanReadAnalyzeSteps": 2.5
+    }
+  },
+  "categoryBreakdown": [
+    {
+      "category": "ambiguous_messy",
+      "n": 2,
+      "manualPolicyLabelMismatches": 0,
+      "assistedPolicyLabelMismatches": 0,
+      "manualBaseSecondsTotal": 368,
+      "assistedBaseSecondsTotal": 144,
+      "pairedBaseSecondsDeltaTotal": 224,
+      "pairedHumanTouchDeltaTotal": 6
+    },
+    {
+      "category": "amount_anomaly",
+      "n": 1,
+      "manualPolicyLabelMismatches": 0,
+      "assistedPolicyLabelMismatches": 0,
+      "manualBaseSecondsTotal": 205,
+      "assistedBaseSecondsTotal": 72,
+      "pairedBaseSecondsDeltaTotal": 133,
+      "pairedHumanTouchDeltaTotal": 4
+    },
+    {
+      "category": "clean_new_vendor",
+      "n": 1,
+      "manualPolicyLabelMismatches": 0,
+      "assistedPolicyLabelMismatches": 0,
+      "manualBaseSecondsTotal": 163,
+      "assistedBaseSecondsTotal": 58,
+      "pairedBaseSecondsDeltaTotal": 105,
+      "pairedHumanTouchDeltaTotal": 3
+    },
+    {
+      "category": "clean_recurring_vendor",
+      "n": 1,
+      "manualPolicyLabelMismatches": 0,
+      "assistedPolicyLabelMismatches": 0,
+      "manualBaseSecondsTotal": 205,
+      "assistedBaseSecondsTotal": 58,
+      "pairedBaseSecondsDeltaTotal": 147,
+      "pairedHumanTouchDeltaTotal": 5
+    },
+    {
+      "category": "missing_fields",
+      "n": 1,
+      "manualPolicyLabelMismatches": 0,
+      "assistedPolicyLabelMismatches": 0,
+      "manualBaseSecondsTotal": 163,
+      "assistedBaseSecondsTotal": 72,
+      "pairedBaseSecondsDeltaTotal": 91,
+      "pairedHumanTouchDeltaTotal": 2
+    },
+    {
+      "category": "precedence",
+      "n": 3,
+      "manualPolicyLabelMismatches": 0,
+      "assistedPolicyLabelMismatches": 0,
+      "manualBaseSecondsTotal": 615,
+      "assistedBaseSecondsTotal": 216,
+      "pairedBaseSecondsDeltaTotal": 399,
+      "pairedHumanTouchDeltaTotal": 12
+    },
+    {
+      "category": "suspected_duplicate",
+      "n": 2,
+      "manualPolicyLabelMismatches": 0,
+      "assistedPolicyLabelMismatches": 0,
+      "manualBaseSecondsTotal": 410,
+      "assistedBaseSecondsTotal": 144,
+      "pairedBaseSecondsDeltaTotal": 266,
+      "pairedHumanTouchDeltaTotal": 8
+    },
+    {
+      "category": "unreconciled",
+      "n": 1,
+      "manualPolicyLabelMismatches": 0,
+      "assistedPolicyLabelMismatches": 0,
+      "manualBaseSecondsTotal": 163,
+      "assistedBaseSecondsTotal": 72,
+      "pairedBaseSecondsDeltaTotal": 91,
+      "pairedHumanTouchDeltaTotal": 2
+    }
+  ],
+  "rows": [
+    {
+      "caseId": "s01",
+      "category": "clean_new_vendor",
+      "expectedAction": "draft_journal_entry",
+      "actions": {
+        "manual": "draft_journal_entry",
+        "assisted": "draft_journal_entry",
+        "manualPolicyLabelMismatch": false,
+        "assistedPolicyLabelMismatch": false
+      },
+      "modeledActiveReviewSeconds": {
+        "manual": {
+          "low": 101,
+          "base": 163,
+          "high": 253
+        },
+        "assisted": {
+          "low": 36,
+          "base": 58,
+          "high": 93
+        },
+        "pairedBaseDelta": 105,
+        "adverseWeightDelta": 8,
+        "favorableWeightDelta": 217
+      },
+      "modeledHumanTouches": {
+        "manual": 7,
+        "assisted": 4,
+        "pairedDelta": 3
+      },
+      "assistedReplay": {
+        "rawModelAction": "draft_journal_entry",
+        "stopReason": "terminal_action",
+        "readAnalyzeSteps": 2,
+        "traceTools": [
+          "recall_vendor_history",
+          "validate_invoice",
+          "proposal_argument_guard"
+        ],
+        "policyOverride": true
+      }
+    },
+    {
+      "caseId": "s05",
+      "category": "clean_recurring_vendor",
+      "expectedAction": "draft_payment",
+      "actions": {
+        "manual": "draft_payment",
+        "assisted": "draft_payment",
+        "manualPolicyLabelMismatch": false,
+        "assistedPolicyLabelMismatch": false
+      },
+      "modeledActiveReviewSeconds": {
+        "manual": {
+          "low": 125,
+          "base": 205,
+          "high": 320
+        },
+        "assisted": {
+          "low": 36,
+          "base": 58,
+          "high": 93
+        },
+        "pairedBaseDelta": 147,
+        "adverseWeightDelta": 32,
+        "favorableWeightDelta": 284
+      },
+      "modeledHumanTouches": {
+        "manual": 9,
+        "assisted": 4,
+        "pairedDelta": 5
+      },
+      "assistedReplay": {
+        "rawModelAction": "draft_payment",
+        "stopReason": "terminal_action",
+        "readAnalyzeSteps": 3,
+        "traceTools": [
+          "recall_vendor_history",
+          "validate_invoice",
+          "compute_variance_vs_history",
+          "proposal_argument_guard"
+        ],
+        "policyOverride": true
+      }
+    },
+    {
+      "caseId": "s08",
+      "category": "missing_fields",
+      "expectedAction": "draft_vendor_reply",
+      "actions": {
+        "manual": "draft_vendor_reply",
+        "assisted": "draft_vendor_reply",
+        "manualPolicyLabelMismatch": false,
+        "assistedPolicyLabelMismatch": false
+      },
+      "modeledActiveReviewSeconds": {
+        "manual": {
+          "low": 101,
+          "base": 163,
+          "high": 253
+        },
+        "assisted": {
+          "low": 44,
+          "base": 72,
+          "high": 115
+        },
+        "pairedBaseDelta": 91,
+        "adverseWeightDelta": -14,
+        "favorableWeightDelta": 209
+      },
+      "modeledHumanTouches": {
+        "manual": 7,
+        "assisted": 5,
+        "pairedDelta": 2
+      },
+      "assistedReplay": {
+        "rawModelAction": "draft_vendor_reply",
+        "stopReason": "terminal_action",
+        "readAnalyzeSteps": 2,
+        "traceTools": [
+          "recall_vendor_history",
+          "validate_invoice"
+        ],
+        "policyOverride": false
+      }
+    },
+    {
+      "caseId": "s11",
+      "category": "unreconciled",
+      "expectedAction": "draft_vendor_reply",
+      "actions": {
+        "manual": "draft_vendor_reply",
+        "assisted": "draft_vendor_reply",
+        "manualPolicyLabelMismatch": false,
+        "assistedPolicyLabelMismatch": false
+      },
+      "modeledActiveReviewSeconds": {
+        "manual": {
+          "low": 101,
+          "base": 163,
+          "high": 253
+        },
+        "assisted": {
+          "low": 44,
+          "base": 72,
+          "high": 115
+        },
+        "pairedBaseDelta": 91,
+        "adverseWeightDelta": -14,
+        "favorableWeightDelta": 209
+      },
+      "modeledHumanTouches": {
+        "manual": 7,
+        "assisted": 5,
+        "pairedDelta": 2
+      },
+      "assistedReplay": {
+        "rawModelAction": "draft_vendor_reply",
+        "stopReason": "terminal_action",
+        "readAnalyzeSteps": 2,
+        "traceTools": [
+          "recall_vendor_history",
+          "validate_invoice"
+        ],
+        "policyOverride": false
+      }
+    },
+    {
+      "caseId": "s13",
+      "category": "suspected_duplicate",
+      "expectedAction": "flag_for_review",
+      "actions": {
+        "manual": "flag_for_review",
+        "assisted": "flag_for_review",
+        "manualPolicyLabelMismatch": false,
+        "assistedPolicyLabelMismatch": false
+      },
+      "modeledActiveReviewSeconds": {
+        "manual": {
+          "low": 125,
+          "base": 205,
+          "high": 320
+        },
+        "assisted": {
+          "low": 44,
+          "base": 72,
+          "high": 115
+        },
+        "pairedBaseDelta": 133,
+        "adverseWeightDelta": 10,
+        "favorableWeightDelta": 276
+      },
+      "modeledHumanTouches": {
+        "manual": 9,
+        "assisted": 5,
+        "pairedDelta": 4
+      },
+      "assistedReplay": {
+        "rawModelAction": "flag_for_review",
+        "stopReason": "terminal_action",
+        "readAnalyzeSteps": 3,
+        "traceTools": [
+          "recall_vendor_history",
+          "check_duplicate",
+          "validate_invoice"
+        ],
+        "policyOverride": false
+      }
+    },
+    {
+      "caseId": "s14",
+      "category": "suspected_duplicate",
+      "expectedAction": "flag_for_review",
+      "actions": {
+        "manual": "flag_for_review",
+        "assisted": "flag_for_review",
+        "manualPolicyLabelMismatch": false,
+        "assistedPolicyLabelMismatch": false
+      },
+      "modeledActiveReviewSeconds": {
+        "manual": {
+          "low": 125,
+          "base": 205,
+          "high": 320
+        },
+        "assisted": {
+          "low": 44,
+          "base": 72,
+          "high": 115
+        },
+        "pairedBaseDelta": 133,
+        "adverseWeightDelta": 10,
+        "favorableWeightDelta": 276
+      },
+      "modeledHumanTouches": {
+        "manual": 9,
+        "assisted": 5,
+        "pairedDelta": 4
+      },
+      "assistedReplay": {
+        "rawModelAction": "flag_for_review",
+        "stopReason": "terminal_action",
+        "readAnalyzeSteps": 3,
+        "traceTools": [
+          "recall_vendor_history",
+          "check_duplicate",
+          "validate_invoice"
+        ],
+        "policyOverride": false
+      }
+    },
+    {
+      "caseId": "s15",
+      "category": "amount_anomaly",
+      "expectedAction": "flag_for_review",
+      "actions": {
+        "manual": "flag_for_review",
+        "assisted": "flag_for_review",
+        "manualPolicyLabelMismatch": false,
+        "assistedPolicyLabelMismatch": false
+      },
+      "modeledActiveReviewSeconds": {
+        "manual": {
+          "low": 125,
+          "base": 205,
+          "high": 320
+        },
+        "assisted": {
+          "low": 44,
+          "base": 72,
+          "high": 115
+        },
+        "pairedBaseDelta": 133,
+        "adverseWeightDelta": 10,
+        "favorableWeightDelta": 276
+      },
+      "modeledHumanTouches": {
+        "manual": 9,
+        "assisted": 5,
+        "pairedDelta": 4
+      },
+      "assistedReplay": {
+        "rawModelAction": "flag_for_review",
+        "stopReason": "terminal_action",
+        "readAnalyzeSteps": 3,
+        "traceTools": [
+          "recall_vendor_history",
+          "validate_invoice",
+          "compute_variance_vs_history"
+        ],
+        "policyOverride": false
+      }
+    },
+    {
+      "caseId": "s17",
+      "category": "precedence",
+      "expectedAction": "flag_for_review",
+      "actions": {
+        "manual": "flag_for_review",
+        "assisted": "flag_for_review",
+        "manualPolicyLabelMismatch": false,
+        "assistedPolicyLabelMismatch": false
+      },
+      "modeledActiveReviewSeconds": {
+        "manual": {
+          "low": 125,
+          "base": 205,
+          "high": 320
+        },
+        "assisted": {
+          "low": 44,
+          "base": 72,
+          "high": 115
+        },
+        "pairedBaseDelta": 133,
+        "adverseWeightDelta": 10,
+        "favorableWeightDelta": 276
+      },
+      "modeledHumanTouches": {
+        "manual": 9,
+        "assisted": 5,
+        "pairedDelta": 4
+      },
+      "assistedReplay": {
+        "rawModelAction": "flag_for_review",
+        "stopReason": "terminal_action",
+        "readAnalyzeSteps": 3,
+        "traceTools": [
+          "recall_vendor_history",
+          "check_duplicate",
+          "validate_invoice"
+        ],
+        "policyOverride": false
+      }
+    },
+    {
+      "caseId": "s18",
+      "category": "precedence",
+      "expectedAction": "draft_vendor_reply",
+      "actions": {
+        "manual": "draft_vendor_reply",
+        "assisted": "draft_vendor_reply",
+        "manualPolicyLabelMismatch": false,
+        "assistedPolicyLabelMismatch": false
+      },
+      "modeledActiveReviewSeconds": {
+        "manual": {
+          "low": 125,
+          "base": 205,
+          "high": 320
+        },
+        "assisted": {
+          "low": 44,
+          "base": 72,
+          "high": 115
+        },
+        "pairedBaseDelta": 133,
+        "adverseWeightDelta": 10,
+        "favorableWeightDelta": 276
+      },
+      "modeledHumanTouches": {
+        "manual": 9,
+        "assisted": 5,
+        "pairedDelta": 4
+      },
+      "assistedReplay": {
+        "rawModelAction": "draft_vendor_reply",
+        "stopReason": "terminal_action",
+        "readAnalyzeSteps": 2,
+        "traceTools": [
+          "recall_vendor_history",
+          "validate_invoice"
+        ],
+        "policyOverride": false
+      }
+    },
+    {
+      "caseId": "s19",
+      "category": "precedence",
+      "expectedAction": "flag_for_review",
+      "actions": {
+        "manual": "flag_for_review",
+        "assisted": "flag_for_review",
+        "manualPolicyLabelMismatch": false,
+        "assistedPolicyLabelMismatch": false
+      },
+      "modeledActiveReviewSeconds": {
+        "manual": {
+          "low": 125,
+          "base": 205,
+          "high": 320
+        },
+        "assisted": {
+          "low": 44,
+          "base": 72,
+          "high": 115
+        },
+        "pairedBaseDelta": 133,
+        "adverseWeightDelta": 10,
+        "favorableWeightDelta": 276
+      },
+      "modeledHumanTouches": {
+        "manual": 9,
+        "assisted": 5,
+        "pairedDelta": 4
+      },
+      "assistedReplay": {
+        "rawModelAction": "flag_for_review",
+        "stopReason": "terminal_action",
+        "readAnalyzeSteps": 3,
+        "traceTools": [
+          "recall_vendor_history",
+          "validate_invoice",
+          "compute_variance_vs_history"
+        ],
+        "policyOverride": false
+      }
+    },
+    {
+      "caseId": "s21",
+      "category": "ambiguous_messy",
+      "expectedAction": "flag_for_review",
+      "actions": {
+        "manual": "flag_for_review",
+        "assisted": "flag_for_review",
+        "manualPolicyLabelMismatch": false,
+        "assistedPolicyLabelMismatch": false
+      },
+      "modeledActiveReviewSeconds": {
+        "manual": {
+          "low": 125,
+          "base": 205,
+          "high": 320
+        },
+        "assisted": {
+          "low": 44,
+          "base": 72,
+          "high": 115
+        },
+        "pairedBaseDelta": 133,
+        "adverseWeightDelta": 10,
+        "favorableWeightDelta": 276
+      },
+      "modeledHumanTouches": {
+        "manual": 9,
+        "assisted": 5,
+        "pairedDelta": 4
+      },
+      "assistedReplay": {
+        "rawModelAction": "flag_for_review",
+        "stopReason": "terminal_action",
+        "readAnalyzeSteps": 2,
+        "traceTools": [
+          "recall_vendor_history",
+          "validate_invoice"
+        ],
+        "policyOverride": false
+      }
+    },
+    {
+      "caseId": "s22",
+      "category": "ambiguous_messy",
+      "expectedAction": "draft_vendor_reply",
+      "actions": {
+        "manual": "draft_vendor_reply",
+        "assisted": "draft_vendor_reply",
+        "manualPolicyLabelMismatch": false,
+        "assistedPolicyLabelMismatch": false
+      },
+      "modeledActiveReviewSeconds": {
+        "manual": {
+          "low": 101,
+          "base": 163,
+          "high": 253
+        },
+        "assisted": {
+          "low": 44,
+          "base": 72,
+          "high": 115
+        },
+        "pairedBaseDelta": 91,
+        "adverseWeightDelta": -14,
+        "favorableWeightDelta": 209
+      },
+      "modeledHumanTouches": {
+        "manual": 7,
+        "assisted": 5,
+        "pairedDelta": 2
+      },
+      "assistedReplay": {
+        "rawModelAction": "draft_vendor_reply",
+        "stopReason": "terminal_action",
+        "readAnalyzeSteps": 2,
+        "traceTools": [
+          "recall_vendor_history",
+          "validate_invoice"
+        ],
+        "policyOverride": false
+      }
+    }
+  ],
+  "claimBoundary": {
+    "permitted": "Within this authored 12-case workflow model, the assisted arm uses fewer modeled base active-review seconds and human checkpoints while both arms match the developer policy labels.",
+    "notPermitted": [
+      "ROI",
+      "labor savings",
+      "headcount reduction",
+      "production throughput",
+      "production error reduction",
+      "human accuracy improvement",
+      "causal impact",
+      "population generalization",
+      "statistical significance"
+    ],
+    "caveat": "No humans were timed, no production invoices were sampled, task weights are assumptions, and labels are not independent expert ground truth."
+  }
+}

@@ -34,7 +34,12 @@ const FIXED_REPOSITORY = 'upgradedev/archon-qwen-autopilot';
 const FIXED_PROJECT = 'archon-qwen-autopilot';
 const FIXED_REGION = 'ap-southeast-1';
 const DEFAULT_URL = 'https://autopilot.43.106.13.19.sslip.io';
-const DEFAULT_WORKFLOWS = ['CI', 'CodeQL', 'Production Image Supply Chain'];
+const CANONICAL_RELEASE_WORKFLOWS = Object.freeze([
+  Object.freeze({ name: 'CI', path: '.github/workflows/ci.yml' }),
+  Object.freeze({ name: 'CodeQL', path: '.github/workflows/codeql.yml' }),
+  Object.freeze({ name: 'Production Image Supply Chain', path: '.github/workflows/supply-chain.yml' }),
+]);
+const DEFAULT_WORKFLOWS = Object.freeze(CANONICAL_RELEASE_WORKFLOWS.map(({ name }) => name));
 const FINAL_NAMES = Object.freeze([
   'autopilot-live-intake-pending.png',
   'autopilot-human-amend-diff.png',
@@ -117,12 +122,49 @@ function argumentValue(name) {
 function tokenFromExplicitCredentialFile(rawPath) {
   if (!rawPath) return '';
   const file = insideRepo(rawPath, '--reviewer-credential-file', { mustExist: true });
+  const lexical = fs.lstatSync(file);
+  assert.equal(lexical.isSymbolicLink(), false, 'reviewer credential file must not be a symlink');
+  assert.equal(lexical.isFile(), true, 'reviewer credential path must be a regular file');
+  assert.equal(lexical.nlink, 1, 'reviewer credential file must have exactly one hard link');
+  const canonical = fs.realpathSync.native(file);
+  insideRepo(canonical, '--reviewer-credential-file canonical target', { mustExist: true });
+  assert.equal(path.resolve(canonical), path.resolve(file), 'reviewer credential file path must be canonical');
   const ignored = spawnSync('git', ['check-ignore', '-q', '--', file], { cwd: ROOT, stdio: 'ignore' });
   assert.equal(ignored.status, 0, 'reviewer credential file must be gitignored');
   let payload;
   try { payload = JSON.parse(fs.readFileSync(file, 'utf8')); }
   catch (error) { fail(`reviewer credential file is not valid JSON: ${error.message}`); }
   return typeof payload.token === 'string' ? payload.token.trim() : '';
+}
+
+function trustedAutopilotOrigin(rawValue) {
+  const candidate = String(rawValue || DEFAULT_URL).replace(/\/$/, '');
+  const parsed = new URL(candidate);
+  assert.equal(parsed.protocol, 'https:', 'AUTOPILOT_URL must use HTTPS');
+  assert.equal(parsed.username, '', 'AUTOPILOT_URL must not contain credentials');
+  assert.equal(parsed.password, '', 'AUTOPILOT_URL must not contain credentials');
+  assert.equal(parsed.pathname, '/', 'AUTOPILOT_URL must be an origin without a path');
+  assert.equal(parsed.search, '', 'AUTOPILOT_URL must not contain a query string');
+  assert.equal(parsed.hash, '', 'AUTOPILOT_URL must not contain a fragment');
+  assert.equal(parsed.origin, DEFAULT_URL, `AUTOPILOT_URL must equal the pinned reviewer-token origin ${DEFAULT_URL}`);
+  return DEFAULT_URL;
+}
+
+async function installReviewerSessionOnPinnedTopFrame(page, baseUrl, reviewerToken) {
+  await page.goto(`${baseUrl}/`, { waitUntil: 'networkidle', timeout: 90_000 });
+  assert.equal(new URL(page.url()).origin, baseUrl, 'initial application navigation left the pinned reviewer-token origin');
+  // Deliberately use a top-frame evaluate after the final navigation instead of
+  // addInitScript. Init scripts also run in child frames and on redirected
+  // origins, which could place the reviewer bearer in an untrusted frame's own
+  // sessionStorage before its scripts execute.
+  await page.evaluate(({ expectedOrigin, token }) => {
+    if (location.origin !== expectedOrigin || window.top !== window) {
+      throw new Error('reviewer session may be installed only in the pinned top frame');
+    }
+    sessionStorage.setItem('archonReviewerToken', token);
+  }, { expectedOrigin: baseUrl, token: reviewerToken });
+  await page.reload({ waitUntil: 'networkidle', timeout: 90_000 });
+  assert.equal(new URL(page.url()).origin, baseUrl, 'authenticated application reload left the pinned reviewer-token origin');
 }
 
 function sha256(file) {
@@ -154,6 +196,48 @@ function exactSha(value, label) {
   const sha = String(value || '').trim().toLowerCase();
   if (!SHA_RE.test(sha)) fail(`${label} must be exactly one 40-character lowercase git SHA`);
   return sha;
+}
+
+function canonicalReleaseWorkflows(rawValue = process.env.REQUIRED_RELEASE_WORKFLOWS) {
+  const configured = String(rawValue || '').trim()
+    ? String(rawValue).split(',').map((name) => name.trim()).filter(Boolean)
+    : [...DEFAULT_WORKFLOWS];
+  const configuredSet = new Set(configured);
+  const exactCanonicalSet = configured.length === DEFAULT_WORKFLOWS.length
+    && configuredSet.size === DEFAULT_WORKFLOWS.length
+    && DEFAULT_WORKFLOWS.every((name) => configuredSet.has(name));
+  assert.equal(
+    exactCanonicalSet,
+    true,
+    `REQUIRED_RELEASE_WORKFLOWS must contain exactly: ${DEFAULT_WORKFLOWS.join(', ')}`,
+  );
+  return [...DEFAULT_WORKFLOWS];
+}
+
+function acceptedCanonicalWorkflowRun(runs, workflow, sha) {
+  const candidates = runs.filter((run) => run.name === workflow.name
+    && run.path === workflow.path
+    && run.head_sha === sha);
+  for (const candidate of candidates) {
+    assert.ok(
+      Number.isSafeInteger(Number(candidate.run_number)) && Number(candidate.run_number) > 0,
+      `canonical workflow run_number is invalid: ${workflow.name}`,
+    );
+    assert.ok(
+      Number.isSafeInteger(Number(candidate.run_attempt)) && Number(candidate.run_attempt) > 0,
+      `canonical workflow run_attempt is invalid: ${workflow.name}`,
+    );
+  }
+  candidates.sort((a, b) => Number(b.run_number) - Number(a.run_number)
+    || Number(b.run_attempt) - Number(a.run_attempt));
+  const latest = candidates[0];
+  assert.ok(
+    latest,
+    `required GitHub workflow has no exact-SHA run at canonical path: ${workflow.name} (${workflow.path})`,
+  );
+  assert.equal(latest.status, 'completed', `latest exact-SHA workflow run is not complete: ${workflow.name}`);
+  assert.equal(latest.conclusion, 'success', `latest exact-SHA workflow run is not successful: ${workflow.name}`);
+  return latest;
 }
 
 function secretSafeText(value, label, reviewerToken) {
@@ -273,15 +357,20 @@ async function githubReleaseGate(sha) {
     { headers, timeoutMs: 60_000 },
   );
   const runs = Array.isArray(runsResult.body.workflow_runs) ? runsResult.body.workflow_runs : [];
-  const required = String(process.env.REQUIRED_RELEASE_WORKFLOWS || DEFAULT_WORKFLOWS.join(','))
-    .split(',').map((name) => name.trim()).filter(Boolean);
+  const required = canonicalReleaseWorkflows();
   const accepted = [];
   for (const name of required) {
-    const candidates = runs.filter((run) => run.name === name && run.head_sha === sha)
-      .sort((a, b) => Number(b.run_attempt || 0) - Number(a.run_attempt || 0));
-    const successful = candidates.find((run) => run.status === 'completed' && run.conclusion === 'success');
-    assert.ok(successful, `required GitHub workflow is not green for exact SHA: ${name}`);
-    accepted.push({ name, runNumber: successful.run_number, url: successful.html_url });
+    const workflow = CANONICAL_RELEASE_WORKFLOWS.find((candidate) => candidate.name === name);
+    assert.ok(workflow, `canonical workflow metadata is missing: ${name}`);
+    const latest = acceptedCanonicalWorkflowRun(runs, workflow, sha);
+    accepted.push({
+      name,
+      path: workflow.path,
+      workflowBoundSha: sha,
+      runNumber: latest.run_number,
+      runAttempt: latest.run_attempt,
+      url: latest.html_url,
+    });
   }
   return { commitUrl: commit.body.html_url, workflows: accepted };
 }
@@ -557,7 +646,7 @@ async function cleanupAndVerifyCapturePending(baseUrl, reviewerToken, vendorPref
   return {
     rejected: before.matches.length,
     remaining: 0,
-    cleanupZero: true,
+    pendingCleanupZero: true,
     pagesScannedBefore: before.pages,
     pagesScannedAfter: after.pages,
   };
@@ -744,7 +833,8 @@ function buildReviewManifest({ release, baseUrl, proofEvidence, live, vision, no
     gates: {
       exactDeploymentEvidence: true,
       publicSourceHeadAtCapture: true,
-      githubWorkflowsGreen: true,
+      githubWorkflowsGreenForDeployedSha: true,
+      workflowBoundSha: release.expectedSha,
       publicHealthReady: true,
       authenticatedDeepEmbeddingProbe: true,
       unauthenticatedQueueDenied: true,
@@ -754,12 +844,12 @@ function buildReviewManifest({ release, baseUrl, proofEvidence, live, vision, no
       correctionBehaviorVerified: true,
       metadataStripped: true,
       transactionalPromotion: true,
-      cleanupZero: cleanup.cleanupZero,
+      pendingCleanupZero: cleanup.pendingCleanupZero,
     },
     cleanup: {
       rejectedPending: cleanup.rejected,
       matchingPendingAfter: cleanup.remaining,
-      cleanupZero: cleanup.cleanupZero,
+      pendingCleanupZero: cleanup.pendingCleanupZero,
       pagesScannedBefore: cleanup.pagesScannedBefore,
       pagesScannedAfter: cleanup.pagesScannedAfter,
     },
@@ -784,13 +874,79 @@ async function selfTest() {
   assert.throws(() => insideRepo(path.resolve(ROOT, '..', 'escape'), 'escape'), /inside this repository/);
   assert.equal(exactSha('a'.repeat(40), 'sha'), 'a'.repeat(40));
   assert.throws(() => exactSha('abc', 'sha'), /40-character/);
+  assert.deepEqual(canonicalReleaseWorkflows(undefined), DEFAULT_WORKFLOWS);
+  assert.deepEqual(canonicalReleaseWorkflows(DEFAULT_WORKFLOWS.join(',')), DEFAULT_WORKFLOWS);
+  assert.deepEqual(canonicalReleaseWorkflows([...DEFAULT_WORKFLOWS].reverse().join(',')), DEFAULT_WORKFLOWS);
+  assert.throws(() => canonicalReleaseWorkflows('CI'), /must contain exactly/);
+  assert.throws(
+    () => canonicalReleaseWorkflows('CI,CodeQL,CodeQL'),
+    /must contain exactly/,
+  );
+  assert.throws(
+    () => canonicalReleaseWorkflows('CI,CodeQL,Production Image Supply Chain,Unreviewed Gate'),
+    /must contain exactly/,
+  );
+  const workflowSha = 'b'.repeat(40);
+  const ciWorkflow = { name: 'CI', path: '.github/workflows/ci.yml' };
+  const canonicalAttemptOne = {
+    name: 'CI', path: ciWorkflow.path, head_sha: workflowSha, run_number: 42, run_attempt: 1,
+    status: 'completed', conclusion: 'success', updated_at: '2026-07-16T10:00:00Z',
+  };
+  const canonicalAttemptTwo = {
+    ...canonicalAttemptOne, run_attempt: 2, updated_at: '2026-07-16T10:05:00Z',
+  };
+  const spoofedSameName = {
+    ...canonicalAttemptTwo, path: '.github/workflows/spoof-ci.yml', run_number: 999,
+  };
+  const wrongShaCanonicalPath = {
+    ...canonicalAttemptTwo, head_sha: 'c'.repeat(40), run_number: 1_000,
+  };
+  assert.equal(
+    acceptedCanonicalWorkflowRun(
+      [spoofedSameName, wrongShaCanonicalPath, canonicalAttemptOne, canonicalAttemptTwo],
+      ciWorkflow,
+      workflowSha,
+    ),
+    canonicalAttemptTwo,
+    'a duplicate workflow name or wrong SHA must not outrank the canonical path latest attempt',
+  );
+  assert.throws(
+    () => acceptedCanonicalWorkflowRun([spoofedSameName], ciWorkflow, workflowSha),
+    /canonical path/,
+    'a same-name workflow at the wrong path must not satisfy the release gate',
+  );
+  assert.throws(
+    () => acceptedCanonicalWorkflowRun(
+      [canonicalAttemptOne, { ...canonicalAttemptTwo, conclusion: 'failure' }],
+      ciWorkflow,
+      workflowSha,
+    ),
+    /latest exact-SHA workflow run is not successful/,
+    'an earlier successful attempt must not hide a failed latest attempt',
+  );
   assert.throws(() => secretSafeText('Authorization: Bearer secret-token-value-123456', 'fixture', ''), /credential-like/);
+  assert.equal(trustedAutopilotOrigin(DEFAULT_URL), DEFAULT_URL);
+  assert.equal(trustedAutopilotOrigin(`${DEFAULT_URL}/`), DEFAULT_URL);
+  assert.throws(() => trustedAutopilotOrigin('https://attacker.example'), /pinned reviewer-token origin/);
+  assert.throws(() => trustedAutopilotOrigin(`${DEFAULT_URL}.attacker.example`), /pinned reviewer-token origin/);
   assert.deepEqual(FINAL_NAMES.length, 6);
   assert.deepEqual(Object.keys(GALLERY_MAP).length, 5);
   const fixtureRoot = insideRepo(path.join(ROOT, '.artifacts', 'media-pipeline-self-test'), 'self-test fixture root');
   fs.rmSync(fixtureRoot, { recursive: true, force: true });
   const fixtureDir = path.join(fixtureRoot, 'release');
   fs.mkdirSync(fixtureDir, { recursive: true });
+  const credentialPath = path.join(fixtureRoot, 'reviewer-credential.json');
+  fs.writeFileSync(credentialPath, `${JSON.stringify({ token: 'x'.repeat(40) })}\n`, { mode: 0o600 });
+  assert.equal(tokenFromExplicitCredentialFile(credentialPath), 'x'.repeat(40));
+  const credentialLink = path.join(fixtureRoot, 'reviewer-credential-link.json');
+  try {
+    fs.symlinkSync(credentialPath, credentialLink, 'file');
+    assert.throws(() => tokenFromExplicitCredentialFile(credentialLink), /must not be a symlink/);
+  } catch (error) {
+    if (os.platform() !== 'win32' || error?.code !== 'EPERM') throw error;
+    fs.linkSync(credentialPath, credentialLink);
+    assert.throws(() => tokenFromExplicitCredentialFile(credentialLink), /exactly one hard link/);
+  }
   const deployStatePath = path.join(ROOT, 'deploy', 'DEPLOY_STATE.md');
   const stateText = fs.readFileSync(deployStatePath, 'utf8');
   const deployedMatch = stateText.match(/[0-9a-f]{40}/);
@@ -856,10 +1012,10 @@ async function selfTest() {
     {
       rejected: cleaned.rejected,
       remaining: cleaned.remaining,
-      cleanupZero: cleaned.cleanupZero,
+      pendingCleanupZero: cleaned.pendingCleanupZero,
       pagesScannedBefore: cleaned.pagesScannedBefore,
     },
-    { rejected: 2, remaining: 0, cleanupZero: true, pagesScannedBefore: 2 },
+    { rejected: 2, remaining: 0, pendingCleanupZero: true, pagesScannedBefore: 2 },
   );
   assert.equal(queue.length, 499, 'cleanup must leave unrelated PENDING items untouched');
   assert.ok(queue.every((item) => item.id.startsWith('unrelated-')), 'cleanup removed or retained the wrong PENDING item');
@@ -930,7 +1086,7 @@ async function selfTest() {
   assert.equal(fs.readFileSync(recoveryDestination, 'utf8'), 'reviewed-old\n', 'interrupted transaction recovery must restore reviewed final');
   assert.equal(fs.existsSync(recoveryDir), false, 'recovered transaction scratch must be removed');
 
-  log('[self-test] source, cleanup-zero, rollback, and interrupted-transaction guards passed');
+  log('[self-test] source, PENDING-cleanup-zero, rollback, and interrupted-transaction guards passed');
 }
 
 async function main() {
@@ -945,14 +1101,7 @@ async function main() {
   const reviewerToken = String(process.env.AUTOPILOT_REVIEWER_TOKEN || fileToken || process.env.REVIEWER_TOKEN || dotenv.REVIEWER_TOKEN || '').trim();
   if (reviewerToken.length < 32) fail('Reviewer credential is missing or too short; load it from the project-local .env without printing it');
 
-  const baseUrl = String(process.env.AUTOPILOT_URL || DEFAULT_URL).replace(/\/$/, '');
-  const parsedUrl = new URL(baseUrl);
-  assert.equal(parsedUrl.protocol, 'https:', 'AUTOPILOT_URL must use HTTPS');
-  assert.equal(parsedUrl.username, '', 'AUTOPILOT_URL must not contain credentials');
-  assert.equal(parsedUrl.password, '', 'AUTOPILOT_URL must not contain credentials');
-  assert.equal(parsedUrl.pathname, '/', 'AUTOPILOT_URL must be an origin without a path');
-  assert.equal(parsedUrl.search, '', 'AUTOPILOT_URL must not contain a query string');
-  assert.equal(parsedUrl.hash, '', 'AUTOPILOT_URL must not contain a fragment');
+  const baseUrl = trustedAutopilotOrigin(process.env.AUTOPILOT_URL || DEFAULT_URL);
   const models = {
     decision: String(process.env.EXPECTED_DECISION_MODEL || dotenv.QWEN_MODEL || 'qwen-plus').trim(),
     embedding: String(process.env.EXPECTED_EMBEDDING_MODEL || dotenv.QWEN_EMBED_MODEL || 'text-embedding-v4').trim(),
@@ -1000,7 +1149,6 @@ async function main() {
   const context = await browser.newContext({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 1, colorScheme: 'dark' });
   const page = await context.newPage();
   page.setDefaultTimeout(240_000);
-  await page.addInitScript((token) => sessionStorage.setItem('archonReviewerToken', token), reviewerToken);
 
   let cleanup = null;
   let normalItem;
@@ -1008,7 +1156,7 @@ async function main() {
   let correctionVendor = '';
   let proofEvidence;
   try {
-    await page.goto(`${baseUrl}/`, { waitUntil: 'networkidle', timeout: 90_000 });
+    await installReviewerSessionOnPinnedTopFrame(page, baseUrl, reviewerToken);
     await page.keyboard.press('Escape').catch(() => {});
     await page.locator('#count').waitFor({ state: 'visible' });
     await page.locator('#reviewerToken').evaluate((input) => {
@@ -1168,7 +1316,7 @@ async function main() {
   }
 
   assert.ok(proofEvidence && normalItem && securityItem, 'capture evidence was incomplete before manifest creation');
-  assert.equal(cleanup?.cleanupZero, true, 'cleanupZero gate did not pass');
+  assert.equal(cleanup?.pendingCleanupZero, true, 'pendingCleanupZero gate did not pass');
   const manifest = buildReviewManifest({
     release, baseUrl, proofEvidence, live, vision, normalItem, securityItem, github, models, cleanup, files, galleryFiles,
   });
