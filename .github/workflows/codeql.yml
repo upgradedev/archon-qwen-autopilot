@@ -1,0 +1,87 @@
+name: CodeQL
+
+# GitHub-native SAST for the JavaScript/TypeScript application surface. The
+# security-and-quality suite is intentionally broader than the default suite.
+# The retained post-processed SARIF is parsed locally and the workflow fails on
+# security-severity >= 7.0 with no allowlist. A green dated run proves only that
+# this pinned analysis and gate completed; it is not a security certification.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "19 4 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: codeql-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: Analyze (javascript-typescript)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    # The release gate must analyze the complete submitted JavaScript/TypeScript
+    # source on PRs as well as main. CodeQL Action v3.37 otherwise enables
+    # diff-informed queries by default and can restrict alerts to changed ranges.
+    env:
+      CODEQL_ACTION_DIFF_INFORMED_QUERIES: "false"
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24.18.0"
+          cache: npm
+
+      - name: Initialize CodeQL (security-and-quality)
+        uses: github/codeql-action/init@02c5e83432fe5497fd85b873b6c9f16a8578e1d9 # v3.37.0
+        with:
+          languages: javascript-typescript
+          queries: security-and-quality
+
+      - name: Install the lockfile-exact dependency graph
+        run: npm ci --ignore-scripts
+
+      - name: Compile the analyzed TypeScript revision
+        run: npm run --ignore-scripts build
+
+      - name: Perform CodeQL analysis
+        id: analyze
+        uses: github/codeql-action/analyze@02c5e83432fe5497fd85b873b6c9f16a8578e1d9 # v3.37.0
+        with:
+          category: /language:javascript-typescript
+          output: .artifacts/codeql/raw
+          post-processed-sarif-path: .artifacts/codeql/post-processed
+          upload: always
+
+      - name: Gate CodeQL high and critical SARIF results
+        id: codeql_severity_gate
+        env:
+          CODEQL_RAW_SARIF: ${{ steps.analyze.outputs.sarif-output }}
+        run: |
+          test "$CODEQL_ACTION_DIFF_INFORMED_QUERIES" = "false"
+          test -n "$CODEQL_RAW_SARIF"
+          node dist/scripts/codeql-sarif-gate.js \
+            --input .artifacts/codeql/post-processed \
+            --summary .artifacts/codeql/codeql-gate-summary.json \
+            --threshold 7.0
+
+      - name: Retain raw and post-processed CodeQL SARIF evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: codeql-sarif-${{ github.sha }}
+          path: |
+            .artifacts/codeql/raw
+            .artifacts/codeql/post-processed
+            .artifacts/codeql/codeql-gate-summary.json
+          if-no-files-found: error
+          retention-days: 30

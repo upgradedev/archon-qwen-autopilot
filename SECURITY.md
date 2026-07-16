@@ -93,6 +93,29 @@ npm audit
 npm audit --omit=dev
 ```
 
+Hosted gates additionally run the CodeQL `security-and-quality` suite over the complete
+submitted JavaScript/TypeScript source on both pull requests and `main` (diff-informed query restriction
+is explicitly disabled), retain its
+raw/post-processed SARIF, and fail closed on numeric `security-severity >= 7.0`
+(**high/critical**) with no allowlist. Structurally incomplete SARIF, failed analyzer
+invocations, analyzer error notifications, and security-tagged results without a
+numeric security severity also fail
+closed without copying sensitive diagnostic text into the summary. The production
+image's 45 exact runtime archives are filename-closed and SHA-256 verified before a
+network-disabled local install. The resulting image config and default command are
+verified, and the image is exercised as its non-root identity with no network/read-only
+root, APK package-file/permission audit and a bounded frozen-PDF render, inventoried
+into retained SPDX/CycloneDX SBOMs, and scanned into Grype SARIF.
+Immutable step outputs bind the exercised image and both Grype invocations to the
+same retained Syft JSON. Scanner environment filtering is fail-closed and retained
+Grype JSON must report zero ignored matches.
+That image gate fails on every **high/critical** result with no current allowlist; its
+vulnerability intelligence is explicitly **as of 2026-07-15**. Each outcome applies
+to its dated workflow run and retained source commit; it is not permanently current
+and is **not a security certification**. Exact scanner/database pins, evidence formats,
+retention, and residual nondeterminism are recorded in
+[`docs/SUPPLY_CHAIN.md`](docs/SUPPLY_CHAIN.md).
+
 The final claim boundaries and exact implementation/test references are in
 [`docs/CLAIM_EVIDENCE_MATRIX.md`](docs/CLAIM_EVIDENCE_MATRIX.md). Deployment controls
 and the release proof procedure are in

@@ -1,0 +1,647 @@
+name: Production Image Supply Chain
+
+# Builds the submitted production Dockerfile, emits retained SPDX/CycloneDX
+# SBOMs, and scans that exact image inventory against a byte-pinned Grype DB.
+# Scanner executables and the advisory snapshot are independently SHA-256
+# verified before use. Matching is repeatable for the same image inventory; its
+# findings are explicitly "as of 2026-07-15", not a forever-current guarantee.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: supply-chain-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  image-sbom-vulnerability-gate:
+    name: Image SBOM + high/critical gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      IMAGE: archon-qwen-autopilot:supply-chain
+      EVIDENCE_DIR: .artifacts/supply-chain
+      TOOLS_DIR: .artifacts/tools
+      BASH_ENV: /dev/null
+      DOCKER_BUILDKIT: "1"
+      SYFT_VERSION: "1.46.0"
+      SYFT_SHA256: d654f678b709eb53c393d38519d5ed7d2e57205529404018614cfefa0fb2b5ca
+      EXPECTED_SYFT_BINARY_SHA256: 574df1a0862ff88ad933be214e81069e35b17618a13e019f8f1c84fe063222a2
+      GRYPE_VERSION: "0.115.0"
+      GRYPE_SHA256: 3fad92940650e514c0aa2dad83526942a055e210cec09a8a59d9c024adc2b90e
+      EXPECTED_GRYPE_BINARY_SHA256: 05ffd2c28a607e48fb2269d9aac5b3d53e8a51bbac501946644745eae2119907
+      GRYPE_DB_URL: https://grype.anchore.io/databases/v6/vulnerability-db_v6.1.8_2026-07-15T00:32:35Z_1784139280.tar.zst
+      GRYPE_DB_SHA256: 0d9ac9d49c93649ea6bf713c60960b46e33c939d49ac7de52df649453d29cf8e
+      GRYPE_DB_CACHE_DIR: .artifacts/supply-chain/grype-db
+      GRYPE_DB_AUTO_UPDATE: "false"
+      GRYPE_DB_VALIDATE_AGE: "false"
+      GRYPE_DB_REQUIRE_UPDATE_CHECK: "false"
+      GRYPE_CHECK_FOR_APP_UPDATE: "false"
+      GRYPE_EXTERNAL_SOURCES_ENABLE: "false"
+      SYFT_CHECK_FOR_APP_UPDATE: "false"
+      EXPECTED_SYFT_POLICY_SHA256: 426021b3be44dd47ae4ca10de945f7e3fe4fd520619d5825c48e1324f925a533
+      EXPECTED_GRYPE_POLICY_SHA256: 5c7e79f0d60429243c7e085a483997ec0be11d0303b413bafae716c8ffae68b5
+      EXPECTED_RUNTIME_PACKAGES_LOCK_SHA256: 1314f23bb0d8ff37a45494fdf5763ec944c6f11aa3358d0e20c45ccecfe45659
+      EXPECTED_RUNTIME_APK_INVENTORY_LOCK_SHA256: 43aaf8086d5bad54e1152cb8e2ae1a7c172aff1c21b72af2bd8dde91dac61786
+      EXPECTED_RUNTIME_APK_ARCHIVES_MANIFEST_SHA256: fa52b2f0cf44a64bc10c96f8989e48b2ca04d6fd20d2bd2eca420d0b52acd5da
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24.18.0"
+          cache: npm
+
+      - name: Anchor LF runtime package inputs before build
+        id: runtime_lock_anchors
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_DIR/input-locks"
+          INPUTS=(
+            runtime-packages.lock
+            runtime-apk-inventory.lock
+            runtime-apk-archives.sha256
+          )
+          for input in "${INPUTS[@]}"; do
+            test -s "$input"
+            if LC_ALL=C grep -q $'\r' "$input"; then
+              echo "$input must be LF-only" >&2
+              exit 1
+            fi
+            test "$(tail -c 1 "$input" | od -An -t x1 | tr -d '[:space:]')" = "0a"
+          done
+
+          grep -Ev '^(#|$)' runtime-packages.lock \
+            | sed 's/=/-/; s/$/.apk/' | LC_ALL=C sort > /tmp/expected-runtime-apk-archives
+          awk '{ print $2 }' runtime-apk-archives.sha256 \
+            | LC_ALL=C sort > /tmp/manifest-runtime-apk-archives
+          test "$(wc -l < /tmp/expected-runtime-apk-archives)" -eq 45
+          test "$(LC_ALL=C sort -u /tmp/expected-runtime-apk-archives | wc -l)" -eq 45
+          test "$(wc -l < runtime-apk-archives.sha256)" -eq 45
+          test "$(grep -Ec '^[0-9a-f]{64}  [a-z0-9][a-z0-9+._-]*-[0-9][a-zA-Z0-9+._:-]*-r[0-9]+\.apk$' runtime-apk-archives.sha256)" -eq 45
+          test "$(LC_ALL=C sort -u /tmp/manifest-runtime-apk-archives | wc -l)" -eq 45
+          diff -u /tmp/expected-runtime-apk-archives /tmp/manifest-runtime-apk-archives
+
+          RUNTIME_PACKAGES_LOCK_SHA256="$(sha256sum runtime-packages.lock | cut -d ' ' -f 1)"
+          RUNTIME_APK_INVENTORY_LOCK_SHA256="$(sha256sum runtime-apk-inventory.lock | cut -d ' ' -f 1)"
+          RUNTIME_APK_ARCHIVES_MANIFEST_SHA256="$(sha256sum runtime-apk-archives.sha256 | cut -d ' ' -f 1)"
+          test "$RUNTIME_PACKAGES_LOCK_SHA256" = "$EXPECTED_RUNTIME_PACKAGES_LOCK_SHA256"
+          test "$RUNTIME_APK_INVENTORY_LOCK_SHA256" = "$EXPECTED_RUNTIME_APK_INVENTORY_LOCK_SHA256"
+          test "$RUNTIME_APK_ARCHIVES_MANIFEST_SHA256" = "$EXPECTED_RUNTIME_APK_ARCHIVES_MANIFEST_SHA256"
+          for input in "${INPUTS[@]}"; do
+            cp -- "$input" "$EVIDENCE_DIR/input-locks/$input"
+            cmp -- "$input" "$EVIDENCE_DIR/input-locks/$input"
+          done
+          (
+            cd "$EVIDENCE_DIR"
+            sha256sum \
+              input-locks/runtime-packages.lock \
+              input-locks/runtime-apk-inventory.lock \
+              input-locks/runtime-apk-archives.sha256 \
+              > runtime-package-inputs.prebuild.sha256
+            sha256sum --check --strict runtime-package-inputs.prebuild.sha256
+          )
+          {
+            echo "RUNTIME_PACKAGES_LOCK_SHA256=$RUNTIME_PACKAGES_LOCK_SHA256"
+            echo "RUNTIME_APK_INVENTORY_LOCK_SHA256=$RUNTIME_APK_INVENTORY_LOCK_SHA256"
+            echo "RUNTIME_APK_ARCHIVES_MANIFEST_SHA256=$RUNTIME_APK_ARCHIVES_MANIFEST_SHA256"
+          } >> "$GITHUB_ENV"
+
+      - name: Build the exact production image
+        id: build_image
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(sha256sum runtime-packages.lock | cut -d ' ' -f 1)" = "$EXPECTED_RUNTIME_PACKAGES_LOCK_SHA256"
+          test "$(sha256sum runtime-apk-inventory.lock | cut -d ' ' -f 1)" = "$EXPECTED_RUNTIME_APK_INVENTORY_LOCK_SHA256"
+          test "$(sha256sum runtime-apk-archives.sha256 | cut -d ' ' -f 1)" = "$EXPECTED_RUNTIME_APK_ARCHIVES_MANIFEST_SHA256"
+          docker build --pull=false --platform linux/amd64 --target runtime --tag "$IMAGE" .
+          IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+          test -n "$IMAGE_ID"
+          echo "image_id=$IMAGE_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Exercise the constrained production runtime
+        env:
+          EXPECTED_IMAGE_ID: ${{ steps.build_image.outputs.image_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$EXPECTED_IMAGE_ID"
+          test "$(docker image inspect --format '{{.Id}}' "$IMAGE")" = "$EXPECTED_IMAGE_ID"
+          mkdir -p "$EVIDENCE_DIR"
+          docker image inspect --format '{{json .Config}}' "$IMAGE" \
+            > "$EVIDENCE_DIR/runtime-image-config.actual.json"
+          node --input-type=module <<'NODE'
+          import assert from "node:assert/strict";
+          import { readFileSync } from "node:fs";
+          const config = JSON.parse(
+            readFileSync(`${process.env.EVIDENCE_DIR}/runtime-image-config.actual.json`, "utf8"),
+          );
+          assert.equal(config.WorkingDir, "/app");
+          assert.equal(config.User, "1000:1000");
+          assert.deepEqual(config.Cmd, ["node", "dist/src/server.js"]);
+          assert.equal(config.Entrypoint, null);
+          assert.deepEqual(config.ExposedPorts, { "9000/tcp": {} });
+          for (const expected of ["NODE_ENV=production", "PORT=9000", "HOME=/tmp"]) {
+            assert.equal(config.Env.filter((entry) => entry === expected).length, 1);
+            assert.equal(
+              config.Env.filter((entry) => entry.startsWith(`${expected.split("=", 1)[0]}=`)).length,
+              1,
+            );
+          }
+          assert.deepEqual(config.Healthcheck?.Test, [
+            "CMD-SHELL",
+            "node -e \"fetch('http://127.0.0.1:9000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))\"",
+          ]);
+          assert.equal(config.Healthcheck?.Interval, 30_000_000_000);
+          assert.equal(config.Healthcheck?.Timeout, 5_000_000_000);
+          assert.equal(config.Healthcheck?.StartPeriod, 20_000_000_000);
+          assert.equal(config.Healthcheck?.Retries, 3);
+          NODE
+          FIXTURE="$GITHUB_WORKSPACE/eval/vision/assets/v03-table-gbp.pdf"
+          echo "8a4c0b511d63ccb085c8c9044e8a4f4918d5a0af1e2287aed8b87c0cb42e5bef  $FIXTURE" \
+            | sha256sum --check --strict
+          docker run --rm \
+            --network none \
+            --read-only \
+            --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --pids-limit 64 \
+            --memory 256m \
+            --cpus 1 \
+            --tmpfs /tmp:rw,noexec,nosuid,size=16m \
+            --mount "type=bind,src=$FIXTURE,dst=/fixture.pdf,readonly" \
+            --mount "type=bind,src=$GITHUB_WORKSPACE/runtime-apk-inventory.lock,dst=/expected-apk-inventory.lock,readonly" \
+            --entrypoint /bin/sh \
+            "$IMAGE" -euc '
+              test "$(node --version)" = "v24.18.0"
+              test "$(id -u)" = "1000"
+              test "$(id -g)" = "1000"
+              ! command -v npm >/dev/null
+              test -f "/usr/share/fonts/ubuntu/Ubuntu[wdth,wght].ttf"
+              test -f "/usr/share/fonts/ubuntu/Ubuntu-Italic[wdth,wght].ttf"
+              test "$(find /usr/share/fonts/ubuntu -mindepth 1 -maxdepth 1 -type f -name "*.ttf" | wc -l)" -eq 4
+              mkdir -p /tmp/render
+              timeout 20s pdftoppm -f 1 -l 1 -singlefile -png -scale-to 512 \
+                /fixture.pdf /tmp/render/page \
+                > /tmp/pdftoppm.stdout 2> /tmp/pdftoppm.stderr
+              test ! -s /tmp/pdftoppm.stdout
+              test ! -s /tmp/pdftoppm.stderr
+              test -s /tmp/render/page.png
+              test "$(wc -c < /tmp/render/page.png)" -le 4194304
+              echo "pdf-render-font-substitution-clean" >&2
+              grep -Ev "^(#|$)" /expected-apk-inventory.lock \
+                | sed "s/=/-/" | LC_ALL=C sort > /tmp/expected-apk-inventory
+              : > /tmp/empty-apk-repositories
+              apk --no-network --repositories-file /tmp/empty-apk-repositories info -v \
+                | LC_ALL=C sort > /tmp/actual-apk-inventory
+              diff -u /tmp/expected-apk-inventory /tmp/actual-apk-inventory
+              grep -Eq "^[^ ]+ /proc proc " /proc/mounts
+              grep -Eq "^[^ ]+ /sys sysfs " /proc/mounts
+              grep -Eq "^[^ ]+ /tmp tmpfs " /proc/mounts
+              AUDIT_STATUS=0
+              apk --no-network --repositories-file /tmp/empty-apk-repositories \
+                audit --system --check-permissions \
+                > /tmp/apk-audit.system 2> /tmp/apk-audit.stderr || AUDIT_STATUS=$?
+              test "$AUDIT_STATUS" -eq 0 -o "$AUDIT_STATUS" -eq 1
+              test ! -s /tmp/apk-audit.stderr
+              printf "%s\n" "m proc/" "m sys/" "m tmp/" > /tmp/apk-audit.expected-runtime-mounts
+              LC_ALL=C sort /tmp/apk-audit.system > /tmp/apk-audit.actual-runtime-mounts
+              diff -u /tmp/apk-audit.expected-runtime-mounts /tmp/apk-audit.actual-runtime-mounts
+              echo "apk-audit-system-clean-except-exact-runtime-mount-metadata" >&2
+              cat /tmp/actual-apk-inventory
+            ' | tee "$EVIDENCE_DIR/runtime-apk-inventory.actual"
+
+          APP_CANARY_ID="$(docker run --detach --rm \
+            --network none \
+            --read-only \
+            --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --pids-limit 64 \
+            --memory 256m \
+            --cpus 1 \
+            --tmpfs /tmp:rw,noexec,nosuid,size=16m \
+            --env REVIEWER_TOKEN=local-ci-canary-not-a-secret-local-ci-canary \
+            --env ALLOW_FAKE_QWEN=true \
+            --env ALLOW_IN_MEMORY_STORE=true \
+            "$IMAGE")"
+          test -n "$APP_CANARY_ID"
+          trap 'docker rm -f "$APP_CANARY_ID" >/dev/null 2>&1' EXIT
+          test "$(docker inspect --format '{{.Image}}' "$APP_CANARY_ID")" = "$EXPECTED_IMAGE_ID"
+          APP_HEALTHY=0
+          for attempt in $(seq 1 30); do
+            if docker exec "$APP_CANARY_ID" node -e \
+              "fetch('http://127.0.0.1:9000/health').then(async r=>{const b=await r.json();if(r.status!==200||b.status!=='ok')process.exit(1)}).catch(()=>process.exit(1))"; then
+              APP_HEALTHY=1
+              break
+            fi
+            if test "$(docker inspect --format '{{.State.Running}}' "$APP_CANARY_ID")" != "true"; then
+              break
+            fi
+            sleep 1
+          done
+          if test "$APP_HEALTHY" -ne 1; then
+            docker logs --tail 100 "$APP_CANARY_ID" >&2
+            exit 1
+          fi
+          test "$(docker exec "$APP_CANARY_ID" id -u)" = "1000"
+          test "$(docker exec "$APP_CANARY_ID" id -g)" = "1000"
+          docker rm -f "$APP_CANARY_ID" >/dev/null
+          trap - EXIT
+          echo "default-cmd-health-canary-passed" >&2
+
+      - name: Install pinned Syft and Grype archives
+        id: install_scanners
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$TOOLS_DIR/syft" "$TOOLS_DIR/grype" "$EVIDENCE_DIR"
+
+          SYFT_ARCHIVE="$TOOLS_DIR/syft/syft_${SYFT_VERSION}_linux_amd64.tar.gz"
+          GRYPE_ARCHIVE="$TOOLS_DIR/grype/grype_${GRYPE_VERSION}_linux_amd64.tar.gz"
+          curl --fail --silent --show-error --location \
+            --output "$SYFT_ARCHIVE" \
+            "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz"
+          curl --fail --silent --show-error --location \
+            --output "$GRYPE_ARCHIVE" \
+            "https://github.com/anchore/grype/releases/download/v${GRYPE_VERSION}/grype_${GRYPE_VERSION}_linux_amd64.tar.gz"
+
+          echo "$SYFT_SHA256  $SYFT_ARCHIVE" | sha256sum --check --strict
+          echo "$GRYPE_SHA256  $GRYPE_ARCHIVE" | sha256sum --check --strict
+          tar -xzf "$SYFT_ARCHIVE" -C "$TOOLS_DIR/syft" syft
+          tar -xzf "$GRYPE_ARCHIVE" -C "$TOOLS_DIR/grype" grype
+          chmod 0755 "$TOOLS_DIR/syft/syft" "$TOOLS_DIR/grype/grype"
+          SYFT_BINARY_SHA256="$(sha256sum "$TOOLS_DIR/syft/syft" | cut -d ' ' -f 1)"
+          GRYPE_BINARY_SHA256="$(sha256sum "$TOOLS_DIR/grype/grype" | cut -d ' ' -f 1)"
+          test "$SYFT_BINARY_SHA256" = "$EXPECTED_SYFT_BINARY_SHA256"
+          test "$GRYPE_BINARY_SHA256" = "$EXPECTED_GRYPE_BINARY_SHA256"
+
+      - name: Verify tool provenance
+        env:
+          EXPECTED_SYFT_BINARY_SHA256: ${{ env.EXPECTED_SYFT_BINARY_SHA256 }}
+          EXPECTED_GRYPE_BINARY_SHA256: ${{ env.EXPECTED_GRYPE_BINARY_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(sha256sum "$TOOLS_DIR/syft/syft" | cut -d ' ' -f 1)" = "$EXPECTED_SYFT_BINARY_SHA256"
+          test "$(sha256sum "$TOOLS_DIR/grype/grype" | cut -d ' ' -f 1)" = "$EXPECTED_GRYPE_BINARY_SHA256"
+          test "$(sha256sum .syft.yaml | cut -d ' ' -f 1)" = "$EXPECTED_SYFT_POLICY_SHA256"
+          test "$(sha256sum .grype.yaml | cut -d ' ' -f 1)" = "$EXPECTED_GRYPE_POLICY_SHA256"
+          cp -- .syft.yaml "$EVIDENCE_DIR/input-locks/syft-policy.yaml"
+          cp -- .grype.yaml "$EVIDENCE_DIR/input-locks/grype-policy.yaml"
+          cmp -- .syft.yaml "$EVIDENCE_DIR/input-locks/syft-policy.yaml"
+          cmp -- .grype.yaml "$EVIDENCE_DIR/input-locks/grype-policy.yaml"
+          test "$(sha256sum "$EVIDENCE_DIR/input-locks/syft-policy.yaml" | cut -d ' ' -f 1)" = "$EXPECTED_SYFT_POLICY_SHA256"
+          test "$(sha256sum "$EVIDENCE_DIR/input-locks/grype-policy.yaml" | cut -d ' ' -f 1)" = "$EXPECTED_GRYPE_POLICY_SHA256"
+          printf '%s\n' \
+            GRYPE_CHECK_FOR_APP_UPDATE \
+            GRYPE_DB_AUTO_UPDATE \
+            GRYPE_DB_CACHE_DIR \
+            GRYPE_DB_REQUIRE_UPDATE_CHECK \
+            GRYPE_DB_SHA256 \
+            GRYPE_DB_URL \
+            GRYPE_DB_VALIDATE_AGE \
+            GRYPE_EXTERNAL_SOURCES_ENABLE \
+            GRYPE_SHA256 \
+            GRYPE_VERSION \
+            SYFT_CHECK_FOR_APP_UPDATE \
+            SYFT_SHA256 \
+            SYFT_VERSION \
+            | LC_ALL=C sort > /tmp/expected-scanner-environment
+          env | cut -d= -f1 | grep -E '^(GRYPE|SYFT)_' \
+            | LC_ALL=C sort > /tmp/actual-scanner-environment
+          diff -u /tmp/expected-scanner-environment /tmp/actual-scanner-environment
+          "$TOOLS_DIR/syft/syft" --config "$EVIDENCE_DIR/input-locks/syft-policy.yaml" config --load \
+            > "$EVIDENCE_DIR/syft-config.effective.yaml"
+          "$TOOLS_DIR/grype/grype" --config "$EVIDENCE_DIR/input-locks/grype-policy.yaml" config --load \
+            > "$EVIDENCE_DIR/grype-config.effective.yaml"
+          "$TOOLS_DIR/syft/syft" --config "$EVIDENCE_DIR/input-locks/syft-policy.yaml" version \
+            | tee "$EVIDENCE_DIR/syft-version.txt"
+          "$TOOLS_DIR/grype/grype" --config "$EVIDENCE_DIR/input-locks/grype-policy.yaml" version \
+            | tee "$EVIDENCE_DIR/grype-version.txt"
+          docker version | tee "$EVIDENCE_DIR/docker-version.txt"
+          grep -F "Version:       $SYFT_VERSION" "$EVIDENCE_DIR/syft-version.txt"
+          grep -F "Version:             $GRYPE_VERSION" "$EVIDENCE_DIR/grype-version.txt"
+          grep -E '^check-for-app-update:[[:space:]]+false$' "$EVIDENCE_DIR/syft-config.effective.yaml"
+          grep -E "^scope:[[:space:]]+'?squashed'?$" "$EVIDENCE_DIR/syft-config.effective.yaml"
+          test "$(grep -Ec '^(default-catalogers|select-catalogers|exclude):[[:space:]]+\[\]$' "$EVIDENCE_DIR/syft-config.effective.yaml")" -eq 3
+          grep -E '^check-for-app-update:[[:space:]]+false$' "$EVIDENCE_DIR/grype-config.effective.yaml"
+          grep -E '^ignore:[[:space:]]+\[\]$' "$EVIDENCE_DIR/grype-config.effective.yaml"
+          test "$(grep -Ec '^  (enable|auto-update|validate-age|require-update-check):[[:space:]]+false$' "$EVIDENCE_DIR/grype-config.effective.yaml")" -eq 4
+
+      - name: Import the immutable vulnerability database snapshot
+        env:
+          EXPECTED_GRYPE_BINARY_SHA256: ${{ env.EXPECTED_GRYPE_BINARY_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(sha256sum "$TOOLS_DIR/grype/grype" | cut -d ' ' -f 1)" = "$EXPECTED_GRYPE_BINARY_SHA256"
+          test "$(sha256sum "$EVIDENCE_DIR/input-locks/grype-policy.yaml" | cut -d ' ' -f 1)" = "$EXPECTED_GRYPE_POLICY_SHA256"
+          mkdir -p "$GRYPE_DB_CACHE_DIR" "$EVIDENCE_DIR"
+          DB_ARCHIVE="$EVIDENCE_DIR/grype-db-v6.1.8.tar.zst"
+          curl --fail --silent --show-error --location \
+            --output "$DB_ARCHIVE" "$GRYPE_DB_URL"
+          echo "$GRYPE_DB_SHA256  $DB_ARCHIVE" | sha256sum --check --strict
+          "$TOOLS_DIR/grype/grype" --config "$EVIDENCE_DIR/input-locks/grype-policy.yaml" db import "$DB_ARCHIVE"
+          "$TOOLS_DIR/grype/grype" --config "$EVIDENCE_DIR/input-locks/grype-policy.yaml" db status \
+            | tee "$EVIDENCE_DIR/grype-db-status.txt"
+          grep -E '^Schema:[[:space:]]+v6\.1\.8$' "$EVIDENCE_DIR/grype-db-status.txt"
+          grep -E '^Built:[[:space:]]+2026-07-15T' "$EVIDENCE_DIR/grype-db-status.txt"
+
+      - name: Generate retained image SBOMs
+        env:
+          EXPECTED_IMAGE_ID: ${{ steps.build_image.outputs.image_id }}
+          EXPECTED_SYFT_BINARY_SHA256: ${{ env.EXPECTED_SYFT_BINARY_SHA256 }}
+          EXPECTED_GRYPE_BINARY_SHA256: ${{ env.EXPECTED_GRYPE_BINARY_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(sha256sum "$TOOLS_DIR/syft/syft" | cut -d ' ' -f 1)" = "$EXPECTED_SYFT_BINARY_SHA256"
+          test "$(sha256sum "$EVIDENCE_DIR/input-locks/syft-policy.yaml" | cut -d ' ' -f 1)" = "$EXPECTED_SYFT_POLICY_SHA256"
+          IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+          test -n "$EXPECTED_IMAGE_ID"
+          test "$IMAGE_ID" = "$EXPECTED_IMAGE_ID"
+          export IMAGE_ID
+          "$TOOLS_DIR/syft/syft" --config "$EVIDENCE_DIR/input-locks/syft-policy.yaml" scan "docker:$IMAGE" --scope squashed \
+            --output "syft-json=$EVIDENCE_DIR/autopilot.syft.json" \
+            --output "spdx-json=$EVIDENCE_DIR/autopilot.spdx.json" \
+            --output "cyclonedx-json=$EVIDENCE_DIR/autopilot.cyclonedx.json"
+          node --input-type=module <<'NODE'
+          import { writeFileSync } from "node:fs";
+          writeFileSync(
+            `${process.env.EVIDENCE_DIR}/image-provenance.json`,
+            `${JSON.stringify({
+              sourceCommit: process.env.GITHUB_SHA,
+              imageName: process.env.IMAGE,
+              imageId: process.env.IMAGE_ID,
+              dockerfile: "Dockerfile",
+              platform: "linux/amd64",
+              runtimePackageInputs: {
+                packageLockSha256: process.env.RUNTIME_PACKAGES_LOCK_SHA256,
+                finalInventoryLockSha256: process.env.RUNTIME_APK_INVENTORY_LOCK_SHA256,
+                archiveManifestSha256: process.env.RUNTIME_APK_ARCHIVES_MANIFEST_SHA256,
+              },
+              scanners: {
+                syft: {
+                  version: process.env.SYFT_VERSION,
+                  archiveSha256: process.env.SYFT_SHA256,
+                  binarySha256: process.env.EXPECTED_SYFT_BINARY_SHA256,
+                  policySha256: process.env.EXPECTED_SYFT_POLICY_SHA256,
+                  policyArtifact: "input-locks/syft-policy.yaml",
+                },
+                grype: {
+                  version: process.env.GRYPE_VERSION,
+                  archiveSha256: process.env.GRYPE_SHA256,
+                  binarySha256: process.env.EXPECTED_GRYPE_BINARY_SHA256,
+                  policySha256: process.env.EXPECTED_GRYPE_POLICY_SHA256,
+                  policyArtifact: "input-locks/grype-policy.yaml",
+                  databaseUrl: process.env.GRYPE_DB_URL,
+                  databaseSha256: process.env.GRYPE_DB_SHA256,
+                },
+              },
+            }, null, 2)}\n`,
+          );
+          NODE
+
+      - name: Validate and retain the pre-scan SBOM bundle
+        id: seal_sbom
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import assert from "node:assert/strict";
+          import { readFileSync } from "node:fs";
+          const read = (name) => JSON.parse(readFileSync(`${process.env.EVIDENCE_DIR}/${name}`, "utf8"));
+          const syft = read("autopilot.syft.json");
+          assert.ok(Array.isArray(syft.artifacts));
+          assert.ok(syft.artifacts.length >= 251, "Syft inventory is unexpectedly sparse");
+          const apkInventory = new Set(
+            syft.artifacts
+              .filter((item) => item?.type === "apk")
+              .map((item) => `${item.name}@${item.version}`),
+          );
+          const expectedApkInventory = readFileSync("runtime-apk-inventory.lock", "utf8")
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter((line) => line.length > 0 && !line.startsWith("#"))
+            .map((line) => {
+              const separator = line.indexOf("=");
+              assert.ok(separator > 0, `invalid runtime package lock entry: ${line}`);
+              return `${line.slice(0, separator)}@${line.slice(separator + 1)}`;
+            });
+          assert.equal(expectedApkInventory.length, 51);
+          for (const expected of expectedApkInventory) {
+            assert.ok(apkInventory.has(expected), `Syft omitted installed APK ${expected}`);
+          }
+          const packageLock = JSON.parse(readFileSync("package-lock.json", "utf8"));
+          assert.equal(packageLock.lockfileVersion, 3);
+          assert.ok(packageLock.packages && typeof packageLock.packages === "object");
+          const productionEntries = Object.entries(packageLock.packages).filter(
+            ([path, metadata]) => path.startsWith("node_modules/") && metadata?.dev !== true,
+          );
+          assert.equal(productionEntries.length, 207);
+          const expectedNpmInventory = new Set(
+            productionEntries.map(([path, metadata]) => {
+              assert.equal(typeof metadata.version, "string", `missing locked version for ${path}`);
+              const name = path.split("node_modules/").at(-1);
+              assert.ok(name, `invalid package-lock path ${path}`);
+              return `${name}@${metadata.version}`;
+            }),
+          );
+          assert.equal(expectedNpmInventory.size, 200);
+          const npmInventory = new Set(
+            syft.artifacts
+              .filter((item) => item?.type === "npm")
+              .map((item) => `${item.name}@${item.version}`),
+          );
+          for (const expected of expectedNpmInventory) {
+            assert.ok(npmInventory.has(expected), `Syft omitted production npm package ${expected}`);
+          }
+          assert.equal(read("autopilot.spdx.json").spdxVersion, "SPDX-2.3");
+          assert.equal(read("autopilot.cyclonedx.json").bomFormat, "CycloneDX");
+          NODE
+          SCANNED_SBOM_SHA256="$(sha256sum "$EVIDENCE_DIR/autopilot.syft.json" | cut -d ' ' -f 1)"
+          test -n "$SCANNED_SBOM_SHA256"
+          echo "syft_sha256=$SCANNED_SBOM_SHA256" >> "$GITHUB_OUTPUT"
+          printf '%s  %s\n' "$SCANNED_SBOM_SHA256" autopilot.syft.json \
+            > "$EVIDENCE_DIR/SCANNED-SBOM.sha256"
+          (
+            cd "$EVIDENCE_DIR"
+            sha256sum --check --strict SCANNED-SBOM.sha256
+            sha256sum \
+              autopilot.cyclonedx.json \
+              autopilot.spdx.json \
+              autopilot.syft.json \
+              SCANNED-SBOM.sha256 \
+              docker-version.txt \
+              grype-config.effective.yaml \
+              grype-db-status.txt \
+              grype-version.txt \
+              image-provenance.json \
+              runtime-package-inputs.prebuild.sha256 \
+              runtime-apk-inventory.actual \
+              runtime-image-config.actual.json \
+              syft-version.txt \
+              syft-config.effective.yaml \
+              input-locks/syft-policy.yaml \
+              input-locks/grype-policy.yaml \
+              input-locks/runtime-packages.lock \
+              input-locks/runtime-apk-inventory.lock \
+              input-locks/runtime-apk-archives.sha256 \
+              > SBOM-SHA256SUMS
+            sha256sum --check --strict SBOM-SHA256SUMS
+          )
+
+      - name: Retain SBOM evidence before vulnerability scanning
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: production-sbom-${{ github.sha }}
+          path: |
+            .artifacts/supply-chain/autopilot.cyclonedx.json
+            .artifacts/supply-chain/autopilot.spdx.json
+            .artifacts/supply-chain/autopilot.syft.json
+            .artifacts/supply-chain/SCANNED-SBOM.sha256
+            .artifacts/supply-chain/image-provenance.json
+            .artifacts/supply-chain/syft-version.txt
+            .artifacts/supply-chain/syft-config.effective.yaml
+            .artifacts/supply-chain/grype-version.txt
+            .artifacts/supply-chain/grype-config.effective.yaml
+            .artifacts/supply-chain/grype-db-status.txt
+            .artifacts/supply-chain/docker-version.txt
+            .artifacts/supply-chain/runtime-apk-inventory.actual
+            .artifacts/supply-chain/runtime-image-config.actual.json
+            .artifacts/supply-chain/runtime-package-inputs.prebuild.sha256
+            .artifacts/supply-chain/SBOM-SHA256SUMS
+            .artifacts/supply-chain/input-locks
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Produce JSON, SARIF, and human-readable vulnerability reports
+        id: grype_reports
+        env:
+          EXPECTED_SYFT_SHA256: ${{ steps.seal_sbom.outputs.syft_sha256 }}
+          EXPECTED_GRYPE_BINARY_SHA256: ${{ env.EXPECTED_GRYPE_BINARY_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(sha256sum "$TOOLS_DIR/grype/grype" | cut -d ' ' -f 1)" = "$EXPECTED_GRYPE_BINARY_SHA256"
+          test "$(sha256sum "$EVIDENCE_DIR/input-locks/grype-policy.yaml" | cut -d ' ' -f 1)" = "$EXPECTED_GRYPE_POLICY_SHA256"
+          test -n "$EXPECTED_SYFT_SHA256"
+          test "$(sha256sum "$EVIDENCE_DIR/autopilot.syft.json" | cut -d ' ' -f 1)" = "$EXPECTED_SYFT_SHA256"
+          (cd "$EVIDENCE_DIR" && sha256sum --check --strict SCANNED-SBOM.sha256)
+          "$TOOLS_DIR/grype/grype" --config "$EVIDENCE_DIR/input-locks/grype-policy.yaml" "sbom:$EVIDENCE_DIR/autopilot.syft.json" --by-cve \
+            --output "json=$EVIDENCE_DIR/grype-report.json" \
+            --output "sarif=$EVIDENCE_DIR/grype-report.sarif" \
+            --output "table=$EVIDENCE_DIR/grype-report.txt"
+
+      - name: Gate every high or critical finding (no current allowlist)
+        id: grype_high_critical_gate
+        env:
+          EXPECTED_SYFT_SHA256: ${{ steps.seal_sbom.outputs.syft_sha256 }}
+          EXPECTED_GRYPE_BINARY_SHA256: ${{ env.EXPECTED_GRYPE_BINARY_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(sha256sum "$TOOLS_DIR/grype/grype" | cut -d ' ' -f 1)" = "$EXPECTED_GRYPE_BINARY_SHA256"
+          test "$(sha256sum "$EVIDENCE_DIR/input-locks/grype-policy.yaml" | cut -d ' ' -f 1)" = "$EXPECTED_GRYPE_POLICY_SHA256"
+          test -n "$EXPECTED_SYFT_SHA256"
+          test "$(sha256sum "$EVIDENCE_DIR/autopilot.syft.json" | cut -d ' ' -f 1)" = "$EXPECTED_SYFT_SHA256"
+          (cd "$EVIDENCE_DIR" && sha256sum --check --strict SCANNED-SBOM.sha256)
+          "$TOOLS_DIR/grype/grype" --config "$EVIDENCE_DIR/input-locks/grype-policy.yaml" "sbom:$EVIDENCE_DIR/autopilot.syft.json" \
+            --by-cve --fail-on high --output table
+
+      - name: Validate evidence formats and hash the retained bundle
+        id: validate_supply_evidence
+        if: ${{ !cancelled() && steps.grype_reports.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import assert from "node:assert/strict";
+          import { readFileSync } from "node:fs";
+          const read = (name) => JSON.parse(readFileSync(`${process.env.EVIDENCE_DIR}/${name}`, "utf8"));
+          const grype = read("grype-report.json");
+          assert.ok(Array.isArray(grype.matches));
+          // Grype v0.115 omits ignoredMatches when there are no ignored results.
+          // A present value must still be an empty array; null, malformed, and
+          // non-empty values all fail closed.
+          const ignoredMatches = Object.hasOwn(grype, "ignoredMatches") ? grype.ignoredMatches : [];
+          assert.ok(Array.isArray(ignoredMatches));
+          assert.equal(ignoredMatches.length, 0);
+          assert.equal(read("grype-report.sarif").version, "2.1.0");
+          NODE
+          (
+            cd "$EVIDENCE_DIR"
+            sha256sum --check --strict SCANNED-SBOM.sha256
+            sha256sum --check --strict SBOM-SHA256SUMS
+            sha256sum \
+              autopilot.cyclonedx.json \
+              autopilot.spdx.json \
+              autopilot.syft.json \
+              SCANNED-SBOM.sha256 \
+              SBOM-SHA256SUMS \
+              docker-version.txt \
+              grype-config.effective.yaml \
+              grype-report.json \
+              grype-report.sarif \
+              grype-report.txt \
+              grype-db-status.txt \
+              grype-version.txt \
+              image-provenance.json \
+              runtime-package-inputs.prebuild.sha256 \
+              runtime-apk-inventory.actual \
+              runtime-image-config.actual.json \
+              syft-version.txt \
+              syft-config.effective.yaml \
+              input-locks/syft-policy.yaml \
+              input-locks/grype-policy.yaml \
+              input-locks/runtime-packages.lock \
+              input-locks/runtime-apk-inventory.lock \
+              input-locks/runtime-apk-archives.sha256 \
+              > SHA256SUMS
+            sha256sum --check --strict SHA256SUMS
+          )
+
+      - name: Upload Grype SARIF to GitHub code scanning
+        if: ${{ !cancelled() && steps.validate_supply_evidence.outcome == 'success' }}
+        uses: github/codeql-action/upload-sarif@02c5e83432fe5497fd85b873b6c9f16a8578e1d9 # v3.37.0
+        with:
+          sarif_file: .artifacts/supply-chain/grype-report.sarif
+          category: grype-production-image
+
+      - name: Retain SBOM, scan, database, and provenance evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: production-supply-chain-${{ github.sha }}
+          path: |
+            .artifacts/supply-chain/autopilot.cyclonedx.json
+            .artifacts/supply-chain/autopilot.spdx.json
+            .artifacts/supply-chain/autopilot.syft.json
+            .artifacts/supply-chain/SCANNED-SBOM.sha256
+            .artifacts/supply-chain/grype-report.json
+            .artifacts/supply-chain/grype-report.sarif
+            .artifacts/supply-chain/grype-report.txt
+            .artifacts/supply-chain/grype-db-status.txt
+            .artifacts/supply-chain/image-provenance.json
+            .artifacts/supply-chain/syft-version.txt
+            .artifacts/supply-chain/syft-config.effective.yaml
+            .artifacts/supply-chain/grype-version.txt
+            .artifacts/supply-chain/grype-config.effective.yaml
+            .artifacts/supply-chain/docker-version.txt
+            .artifacts/supply-chain/runtime-apk-inventory.actual
+            .artifacts/supply-chain/runtime-image-config.actual.json
+            .artifacts/supply-chain/runtime-package-inputs.prebuild.sha256
+            .artifacts/supply-chain/SBOM-SHA256SUMS
+            .artifacts/supply-chain/SHA256SUMS
+            .artifacts/supply-chain/input-locks
+          if-no-files-found: error
+          retention-days: 30

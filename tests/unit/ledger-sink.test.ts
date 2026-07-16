@@ -14,7 +14,19 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  fsyncSync,
+  ftruncateSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -167,11 +179,77 @@ test("committed marker deduplicates after the original row ages beyond the bound
     new JsonlLedgerSink({ transport: createJsonlTransport(path), logger: quietLogger }).post(SAMPLE);
     const filler = createJsonlTransport(path);
     for (let i = 0; i < 90; i++) filler.append(JSON.stringify({ ref: `FILL-${i}`, pad: "x".repeat(1024) }));
-    assert.ok(statSync(path).size > 64 * 1024, "fixture pushes the first row outside the bounded tail");
 
     new JsonlLedgerSink({ transport: createJsonlTransport(path), logger: quietLogger }).post(SAMPLE);
-    const rows = readFileSync(path, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { ref: string });
+    const contents = readFileSync(path, "utf8");
+    assert.ok(Buffer.byteLength(contents) > 64 * 1024, "fixture pushes the first row outside the bounded tail");
+    const rows = contents.trim().split("\n").map((line) => JSON.parse(line) as { ref: string });
     assert.equal(rows.filter((row) => row.ref === SAMPLE.ref).length, 1, "committed marker prevents an old-row duplicate without an unbounded scan");
+  } finally {
+    if (previous === undefined) delete process.env.LEDGER_DEDUPE_SCAN_BYTES;
+    else process.env.LEDGER_DEDUPE_SCAN_BYTES = previous;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("markerless legacy row beginning exactly at the bounded-tail start is retained and committed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "archon-ledger-tail-boundary-"));
+  const path = join(dir, "ledger.jsonl");
+  const marker = join(`${path}.refs`, createHash("sha256").update(SAMPLE.ref, "utf8").digest("hex"));
+  const previous = process.env.LEDGER_DEDUPE_SCAN_BYTES;
+  const scanBytes = 64 * 1024;
+  process.env.LEDGER_DEDUPE_SCAN_BYTES = String(scanBytes);
+  try {
+    const prefix = `${JSON.stringify({ ref: "PREFIX" })}\n`;
+    const target = `${JSON.stringify({ ref: SAMPLE.ref, legacy: true })}\n`;
+    const emptyFiller = `${JSON.stringify({ ref: "TAIL", pad: "" })}\n`;
+    const filler = `${JSON.stringify({
+      ref: "TAIL",
+      pad: "x".repeat(scanBytes - Buffer.byteLength(target) - Buffer.byteLength(emptyFiller)),
+    })}\n`;
+    const exactTail = target + filler;
+    assert.equal(Buffer.byteLength(exactTail), scanBytes, "target starts at the exact configured tail boundary");
+    writeFileSync(path, prefix + exactTail, "utf8");
+    const before = readFileSync(path);
+
+    const appended = createJsonlTransport(path).appendOnce!(SAMPLE.ref, JSON.stringify(SAMPLE));
+    assert.equal(appended, false, "the boundary row is recognized as the existing effect");
+    assert.deepEqual(readFileSync(path), before, "boundary recovery appends no duplicate row");
+    assert.deepEqual(
+      JSON.parse(readFileSync(marker, "utf8")),
+      { schemaVersion: 1, state: "committed", ref: SAMPLE.ref },
+      "the markerless row is re-durabilized before its committed marker is created",
+    );
+  } finally {
+    if (previous === undefined) delete process.env.LEDGER_DEDUPE_SCAN_BYTES;
+    else process.env.LEDGER_DEDUPE_SCAN_BYTES = previous;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a legacy row that crosses the bounded-tail start remains an excluded first fragment", () => {
+  const dir = mkdtempSync(join(tmpdir(), "archon-ledger-tail-fragment-"));
+  const path = join(dir, "ledger.jsonl");
+  const marker = join(`${path}.refs`, createHash("sha256").update(SAMPLE.ref, "utf8").digest("hex"));
+  const previous = process.env.LEDGER_DEDUPE_SCAN_BYTES;
+  const scanBytes = 64 * 1024;
+  process.env.LEDGER_DEDUPE_SCAN_BYTES = String(scanBytes);
+  try {
+    const crossingRow = `${JSON.stringify({ ref: SAMPLE.ref, pad: "x".repeat(scanBytes) })}\n`;
+    const completeTailRow = `${JSON.stringify({ ref: "TAIL" })}\n`;
+    writeFileSync(path, crossingRow + completeTailRow, "utf8");
+    const initialSize = readFileSync(path).length;
+    const tailStart = initialSize - scanBytes;
+    assert.ok(
+      tailStart > 0 && tailStart < Buffer.byteLength(crossingRow),
+      "configured tail starts strictly inside the oversized first row",
+    );
+
+    const appended = createJsonlTransport(path).appendOnce!(SAMPLE.ref, JSON.stringify(SAMPLE));
+    assert.equal(appended, true, "a row beginning outside the bounded evidence window is not treated as confirmation");
+    const rows = readFileSync(path, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { ref: string });
+    assert.equal(rows.filter((row) => row.ref === SAMPLE.ref).length, 2, "the excluded fragment did not cause false deduplication");
+    assert.equal(JSON.parse(readFileSync(marker, "utf8")).state, "committed", "the new complete append owns the marker");
   } finally {
     if (previous === undefined) delete process.env.LEDGER_DEDUPE_SCAN_BYTES;
     else process.env.LEDGER_DEDUPE_SCAN_BYTES = previous;
@@ -216,6 +294,261 @@ test("a crash after durable append but before promotion self-heals reserved → 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+for (const fault of [
+  {
+    name: "short",
+    write(fd: number, buffer: Buffer): number {
+      // Strong boundary case: the JSON object reaches disk, but its required JSONL
+      // newline does not. That unterminated row is not proof of a completed append.
+      return writeSync(fd, buffer.subarray(0, buffer.length - 1));
+    },
+  },
+  {
+    name: "zero",
+    write(): number {
+      return 0;
+    },
+  },
+] as const) {
+  test(`${fault.name} ledger write stays reserved and a restart retry remains fail-closed`, () => {
+    const dir = mkdtempSync(join(tmpdir(), `archon-ledger-${fault.name}-write-`));
+    const path = join(dir, "ledger.jsonl");
+    const marker = join(`${path}.refs`, createHash("sha256").update(SAMPLE.ref, "utf8").digest("hex"));
+    const serialized = JSON.stringify(SAMPLE);
+    try {
+      const faulted = createJsonlTransport(path, { writeSync: fault.write });
+      assert.throws(
+        () => faulted.appendOnce!(SAMPLE.ref, serialized),
+        /ledger append was incomplete; explicit reconciliation is required/,
+      );
+      assert.equal(JSON.parse(readFileSync(marker, "utf8")).state, "reserved", "failed write never promotes its marker");
+
+      const partialLedger = readFileSync(path);
+      assert.equal(
+        partialLedger.length,
+        fault.name === "short" ? Buffer.byteLength(serialized) : 0,
+        "fault injector produced the intended incomplete ledger state",
+      );
+
+      const restarted = createJsonlTransport(path);
+      assert.throws(
+        () => restarted.appendOnce!(SAMPLE.ref, serialized),
+        /reservation exists without a confirmed row/,
+        "an ambiguous write never reopens a duplicate append path",
+      );
+      assert.equal(JSON.parse(readFileSync(marker, "utf8")).state, "reserved", "retry cannot promote ambiguous evidence");
+      assert.deepEqual(readFileSync(path), partialLedger, "retry leaves the partial ledger untouched");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
+
+test("full write plus fsync failure is re-durabilized before reserved → committed recovery", () => {
+  const dir = mkdtempSync(join(tmpdir(), "archon-ledger-fsync-failure-"));
+  const path = join(dir, "ledger.jsonl");
+  const marker = join(`${path}.refs`, createHash("sha256").update(SAMPLE.ref, "utf8").digest("hex"));
+  const serialized = JSON.stringify(SAMPLE);
+  let injectedFsyncCalls = 0;
+  const injectedFailure = /injected ledger fsync failure/;
+  try {
+    const faulted = createJsonlTransport(path, {
+      fsyncSync() {
+        injectedFsyncCalls += 1;
+        throw new Error("injected ledger fsync failure");
+      },
+    });
+
+    assert.throws(() => faulted.appendOnce!(SAMPLE.ref, serialized), injectedFailure);
+    assert.equal(injectedFsyncCalls, 1, "the complete O_APPEND write reached its first durability barrier");
+    const completeRow = readFileSync(path);
+    assert.equal(completeRow.toString("utf8"), `${serialized}\n`, "the fault occurs after a full newline-complete write");
+    assert.equal(JSON.parse(readFileSync(marker, "utf8")).state, "reserved", "failed fsync cannot promote the marker");
+
+    assert.throws(
+      () => faulted.appendOnce!(SAMPLE.ref, serialized),
+      injectedFailure,
+      "recovery also requires a successful durability barrier before promotion",
+    );
+    assert.equal(injectedFsyncCalls, 2, "recovery fsyncs the already-open ledger descriptor");
+    assert.equal(JSON.parse(readFileSync(marker, "utf8")).state, "reserved", "failed recovery fsync remains fail-closed");
+    assert.deepEqual(readFileSync(path), completeRow, "failed recovery never appends a duplicate row");
+
+    const restarted = createJsonlTransport(path);
+    assert.equal(restarted.appendOnce!(SAMPLE.ref, serialized), false, "durable recovery recognizes the existing effect");
+    assert.equal(JSON.parse(readFileSync(marker, "utf8")).state, "committed", "promotion follows successful re-durabilization");
+    assert.deepEqual(readFileSync(path), completeRow, "successful recovery still appends no duplicate row");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("truncate during recovery fsync cannot promote a previously parsed ledger row", () => {
+  const dir = mkdtempSync(join(tmpdir(), "archon-ledger-recovery-truncate-"));
+  const path = join(dir, "ledger.jsonl");
+  const marker = join(`${path}.refs`, createHash("sha256").update(SAMPLE.ref, "utf8").digest("hex"));
+  const serialized = JSON.stringify(SAMPLE);
+  try {
+    const interrupted = createJsonlTransport(path, {
+      fsyncSync() {
+        throw new Error("injected initial fsync failure");
+      },
+    });
+    assert.throws(() => interrupted.appendOnce!(SAMPLE.ref, serialized), /injected initial fsync failure/);
+    assert.equal(JSON.parse(readFileSync(marker, "utf8")).state, "reserved");
+
+    const recovery = createJsonlTransport(path, {
+      fsyncSync(fd) {
+        ftruncateSync(fd, 0);
+        fsyncSync(fd);
+      },
+    });
+    assert.throws(
+      () => recovery.appendOnce!(SAMPLE.ref, serialized),
+      /ledger changed while checking its idempotency tail/,
+      "post-fsync same-descriptor revalidation catches the truncated evidence",
+    );
+    assert.equal(readFileSync(path).length, 0, "the injector removed the row after it was parsed");
+    assert.equal(JSON.parse(readFileSync(marker, "utf8")).state, "reserved", "ambiguous recovery cannot promote");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("same-size overwrite during recovery fsync cannot promote stale parsed bytes", () => {
+  const dir = mkdtempSync(join(tmpdir(), "archon-ledger-recovery-overwrite-"));
+  const path = join(dir, "ledger.jsonl");
+  const marker = join(`${path}.refs`, createHash("sha256").update(SAMPLE.ref, "utf8").digest("hex"));
+  const serialized = JSON.stringify(SAMPLE);
+  try {
+    const interrupted = createJsonlTransport(path, {
+      fsyncSync() {
+        throw new Error("injected initial fsync failure");
+      },
+    });
+    assert.throws(() => interrupted.appendOnce!(SAMPLE.ref, serialized), /injected initial fsync failure/);
+    const originalLength = readFileSync(path).length;
+
+    const recovery = createJsonlTransport(path, {
+      fsyncSync(fd) {
+        const replacement = Buffer.alloc(originalLength, 0x78);
+        assert.equal(writeSync(fd, replacement, 0, replacement.length, 0), replacement.length);
+        fsyncSync(fd);
+      },
+    });
+    assert.throws(
+      () => recovery.appendOnce!(SAMPLE.ref, serialized),
+      /ledger changed while checking its idempotency tail/,
+      "post-fsync byte revalidation catches an overwrite even when inode and size are unchanged",
+    );
+    assert.equal(readFileSync(path).length, originalLength, "the adversarial overwrite preserved the original file size");
+    assert.equal(JSON.parse(readFileSync(marker, "utf8")).state, "reserved", "stale parsed bytes cannot promote");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("unlink during recovery fsync cannot promote a row from an unreachable descriptor", () => {
+  const dir = mkdtempSync(join(tmpdir(), "archon-ledger-recovery-unlink-"));
+  const path = join(dir, "ledger.jsonl");
+  const marker = join(`${path}.refs`, createHash("sha256").update(SAMPLE.ref, "utf8").digest("hex"));
+  const serialized = JSON.stringify(SAMPLE);
+  try {
+    const interrupted = createJsonlTransport(path, {
+      fsyncSync() {
+        throw new Error("injected initial fsync failure");
+      },
+    });
+    assert.throws(() => interrupted.appendOnce!(SAMPLE.ref, serialized), /injected initial fsync failure/);
+
+    const recovery = createJsonlTransport(path, {
+      fsyncSync(fd) {
+        fsyncSync(fd);
+        unlinkSync(path);
+      },
+    });
+    assert.throws(
+      () => recovery.appendOnce!(SAMPLE.ref, serialized),
+      /ledger changed while checking its idempotency tail/,
+      "path resolution must still reach the parsed descriptor after the barrier",
+    );
+    assert.equal(existsSync(path), false, "the parsed descriptor was unlinked during recovery");
+    assert.equal(JSON.parse(readFileSync(marker, "utf8")).state, "reserved", "an unreachable ledger cannot promote");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a concurrent append during recovery fsync preserves valid dedupe evidence", () => {
+  const dir = mkdtempSync(join(tmpdir(), "archon-ledger-recovery-append-"));
+  const path = join(dir, "ledger.jsonl");
+  const marker = join(`${path}.refs`, createHash("sha256").update(SAMPLE.ref, "utf8").digest("hex"));
+  const serialized = JSON.stringify(SAMPLE);
+  const concurrentRow = `${JSON.stringify({ ref: "CONCURRENT" })}\n`;
+  try {
+    const interrupted = createJsonlTransport(path, {
+      fsyncSync() {
+        throw new Error("injected initial fsync failure");
+      },
+    });
+    assert.throws(() => interrupted.appendOnce!(SAMPLE.ref, serialized), /injected initial fsync failure/);
+
+    const recovery = createJsonlTransport(path, {
+      fsyncSync(fd) {
+        writeFileSync(path, concurrentRow, { encoding: "utf8", flag: "a" });
+        fsyncSync(fd);
+      },
+    });
+    assert.equal(recovery.appendOnce!(SAMPLE.ref, serialized), false, "growth does not invalidate unchanged evidence bytes");
+    assert.equal(JSON.parse(readFileSync(marker, "utf8")).state, "committed");
+    assert.equal(
+      readFileSync(path, "utf8"),
+      `${serialized}\n${concurrentRow}`,
+      "recovery preserves both the confirmed effect and the concurrent append",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test(
+  "path replacement during recovery fsync cannot promote a row from the detached ledger inode",
+  () => {
+    const dir = mkdtempSync(join(tmpdir(), "archon-ledger-recovery-replace-"));
+    const path = join(dir, "ledger.jsonl");
+    const detached = join(dir, "ledger.detached.jsonl");
+    const marker = join(`${path}.refs`, createHash("sha256").update(SAMPLE.ref, "utf8").digest("hex"));
+    const serialized = JSON.stringify(SAMPLE);
+    try {
+      const interrupted = createJsonlTransport(path, {
+        fsyncSync() {
+          throw new Error("injected initial fsync failure");
+        },
+      });
+      assert.throws(() => interrupted.appendOnce!(SAMPLE.ref, serialized), /injected initial fsync failure/);
+      const original = readFileSync(path);
+
+      const recovery = createJsonlTransport(path, {
+        fsyncSync(fd) {
+          fsyncSync(fd);
+          renameSync(path, detached);
+          writeFileSync(path, original);
+        },
+      });
+      assert.throws(
+        () => recovery.appendOnce!(SAMPLE.ref, serialized),
+        /ledger changed while checking its idempotency tail/,
+        "byte-identical replacement still fails the path-to-descriptor identity check",
+      );
+      assert.deepEqual(readFileSync(detached), original, "the parsed row remains on the now-detached inode");
+      assert.deepEqual(readFileSync(path), original, "the replacement deliberately carries identical bytes");
+      assert.equal(JSON.parse(readFileSync(marker, "utf8")).state, "reserved", "path swap cannot promote");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
 
 // ── The end-to-end HITL guarantee through the AGENT, using the real ledger sink ──────
 

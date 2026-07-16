@@ -13,7 +13,6 @@ import { test, expect } from "@playwright/test";
 import {
   installGuard,
   gotoReady,
-  dismissTour,
   processJson,
   pngFile,
   uniqueInvoice,

@@ -1,0 +1,14 @@
+# Reviewed deterministic release policy. The workflow imports one SHA-256-pinned database
+# snapshot and disables every implicit network update during matching.
+check-for-app-update: false
+db:
+  auto-update: false
+  validate-age: false
+  require-update-check: false
+external-sources:
+  enable: false
+
+# There are no suppressed findings. A future exception must name the exact
+# vulnerability and package, document reachability/mitigation, owner and expiry,
+# and be reviewed together with the supply-chain fitness functions.
+ignore: []

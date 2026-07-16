@@ -1113,18 +1113,19 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
 
   // Serve the committed demo document so the UI's "Use sample document" button can
   // upload a REAL invoice file through the exact vision path a judge would use.
-  // Read from disk once per request (small file); hidden from the OpenAPI spec.
-  app.get("/sample-document", { schema: { hide: true } }, async (_req, reply) => {
-    try {
-      const here = dirname(fileURLToPath(import.meta.url));
-      const png = await readFile(join(here, "..", "demo", "sample-invoice.png"));
-      return reply
-        .type("image/png")
-        .header("content-disposition", 'inline; filename="sample-invoice.png"')
-        .send(png);
-    } catch {
-      return reply.code(404).send({ error: "sample document not found" });
-    }
+  // Load this immutable asset once while constructing the server. The all-route
+  // per-IP/tier + global limiter above still protects the endpoint, while a request
+  // flood can no longer amplify filesystem work. A missing asset remains a bounded
+  // 404 instead of preventing health/readiness from starting.
+  const sampleDocument = await readFile(
+    join(dirname(fileURLToPath(import.meta.url)), "..", "demo", "sample-invoice.png")
+  ).catch(() => null);
+  app.get("/sample-document", { schema: { hide: true } }, (_req, reply) => {
+    if (!sampleDocument) return reply.code(404).send({ error: "sample document not found" });
+    return reply
+      .type("image/png")
+      .header("content-disposition", 'inline; filename="sample-invoice.png"')
+      .send(sampleDocument);
   });
 
   app.get<{ Querystring: { limit?: number | string; offset?: number | string } }>(
@@ -1676,10 +1677,29 @@ async function guard<T>(reply: import("fastify").FastifyReply, fn: () => Promise
   }
 }
 
+const MAX_AUTHORIZATION_HEADER_CHARS = 8 * 1024;
+
+function isHttpOptionalWhitespace(value: string, index: number): boolean {
+  const code = value.charCodeAt(index);
+  return code === 0x20 || code === 0x09; // RFC 9110 OWS: SP / HTAB only.
+}
+
 function bearerToken(value: string | undefined): string | null {
-  if (!value) return null;
-  const match = /^Bearer\s+(.+)$/i.exec(value.trim());
-  return match?.[1]?.trim() || null;
+  if (!value || value.length > MAX_AUTHORIZATION_HEADER_CHARS) return null;
+
+  // Parse in one bounded pass instead of applying overlapping `\s+` / `.+`
+  // repetitions to attacker-controlled header bytes. Leading/trailing OWS and
+  // case-insensitive Bearer remain compatible with normal HTTP field semantics.
+  let cursor = 0;
+  while (cursor < value.length && isHttpOptionalWhitespace(value, cursor)) cursor += 1;
+  if (value.slice(cursor, cursor + 6).toLowerCase() !== "bearer") return null;
+  cursor += 6;
+  if (cursor >= value.length || !isHttpOptionalWhitespace(value, cursor)) return null;
+  while (cursor < value.length && isHttpOptionalWhitespace(value, cursor)) cursor += 1;
+
+  let end = value.length;
+  while (end > cursor && isHttpOptionalWhitespace(value, end - 1)) end -= 1;
+  return end > cursor ? value.slice(cursor, end) : null;
 }
 
 function headerToken(value: string | string[] | undefined): string | null {

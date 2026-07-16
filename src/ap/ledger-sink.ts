@@ -1,8 +1,9 @@
 // JsonlLedgerSink — the SECOND real terminal-action sink.
 //
 // The first real sink is SmtpEmailSink (smtp-sink.ts): once a human approves a
-// `draft_vendor_reply`, a real email is delivered. This one is its ledger twin: once
-// a human approves a `draft_journal_entry`, the approved double-entry accrual is
+// `draft_vendor_reply`, the configured SMTP transport accepts the message (not proof
+// of recipient delivery). This one is its ledger twin: once a human approves a
+// `draft_journal_entry`, the approved double-entry accrual is
 // appended — durably, one JSON object per line — to a real JSONL ledger file on disk.
 // Nothing else about the human-in-the-loop gate changes: `post()` is only ever reached
 // from the `draft_journal_entry` tool's `execute()`, which only runs from
@@ -32,6 +33,7 @@
 
 import {
   closeSync,
+  fstatSync,
   fsyncSync,
   mkdirSync,
   openSync,
@@ -139,10 +141,18 @@ export class JsonlLedgerSink implements LedgerSink {
 // durable `reserved` marker is created before append and atomically promoted to
 // `committed` only after the ledger append is fsynced. Any append/promote failure
 // leaves an explicitly uncertain reservation rather than risking a duplicate retry.
-export function createJsonlTransport(path: string): LedgerTransport {
+export function createJsonlTransport(
+  path: string,
+  options: {
+    writeSync?: (fd: number, buffer: Buffer) => number;
+    fsyncSync?: (fd: number) => void;
+  } = {},
+): LedgerTransport {
   let ensuredDir = false;
   const markerDir = `${path}.refs`;
   const scanBytes = boundedEnvInt("LEDGER_DEDUPE_SCAN_BYTES", 8 * 1024 * 1024, 64 * 1024, 64 * 1024 * 1024);
+  const appendWriteSync = options.writeSync ?? writeSync;
+  const ledgerFsyncSync = options.fsyncSync ?? fsyncSync;
   const ensureDirs = () => {
     if (ensuredDir) return;
     durableMkdir(dirname(path));
@@ -152,7 +162,7 @@ export function createJsonlTransport(path: string): LedgerTransport {
   return {
     append(line: string): void {
       ensureDirs();
-      durableAppend(path, line);
+      durableAppend(path, line, appendWriteSync, ledgerFsyncSync);
     },
     appendOnce(ref: string, line: string): boolean {
       ensureDirs();
@@ -164,7 +174,7 @@ export function createJsonlTransport(path: string): LedgerTransport {
       const existing = readMarkerIfExists(marker, ref);
       if (existing === "committed") return false;
       if (existing) {
-        if (tailContainsRef(path, ref, scanBytes)) {
+        if (tailContainsDurableRef(path, ref, scanBytes, ledgerFsyncSync)) {
           writeCommittedMarker(marker, ref);
           return false;
         }
@@ -172,12 +182,12 @@ export function createJsonlTransport(path: string): LedgerTransport {
       }
 
       // Migration path for rows written before sidecar markers existed.
-      if (tailContainsRef(path, ref, scanBytes)) {
+      if (tailContainsDurableRef(path, ref, scanBytes, ledgerFsyncSync)) {
         try {
           createMarker(marker, ref, "committed");
         } catch (err) {
           if (!isAlreadyExists(err)) throw err;
-          return settleExistingMarker(marker, path, ref, scanBytes);
+          return settleExistingMarker(marker, path, ref, scanBytes, ledgerFsyncSync);
         }
         return false;
       }
@@ -186,14 +196,14 @@ export function createJsonlTransport(path: string): LedgerTransport {
         createMarker(marker, ref, "reserved");
       } catch (err) {
         if (isAlreadyExists(err)) {
-          return settleExistingMarker(marker, path, ref, scanBytes);
+          return settleExistingMarker(marker, path, ref, scanBytes, ledgerFsyncSync);
         }
         throw err;
       }
 
       // Once append starts, every failure is ambiguous (write may have reached the
       // file before fsync failed). Preserve `reserved`; never reopen a duplicate path.
-      durableAppend(path, line);
+      durableAppend(path, line, appendWriteSync, ledgerFsyncSync);
       writeCommittedMarker(marker, ref);
       return true;
     },
@@ -239,10 +249,16 @@ function readMarkerIfExists(path: string, ref: string): MarkerState | null {
   throw new Error(`ledger idempotency marker is invalid or bound to another ref`);
 }
 
-function settleExistingMarker(marker: string, ledger: string, ref: string, scanBytes: number): false {
+function settleExistingMarker(
+  marker: string,
+  ledger: string,
+  ref: string,
+  scanBytes: number,
+  ledgerFsyncSync: (fd: number) => void,
+): false {
   const state = readMarkerIfExists(marker, ref);
   if (state === "committed") return false;
-  if (state && tailContainsRef(ledger, ref, scanBytes)) {
+  if (state && tailContainsDurableRef(ledger, ref, scanBytes, ledgerFsyncSync)) {
     writeCommittedMarker(marker, ref);
     return false;
   }
@@ -268,46 +284,169 @@ function writeCommittedMarker(path: string, ref: string): void {
   }
 }
 
-function tailContainsRef(path: string, ref: string, maxBytes: number): boolean {
-  let size: number;
+function tailContainsDurableRef(
+  path: string,
+  ref: string,
+  maxBytes: number,
+  ledgerFsyncSync: (fd: number) => void,
+): boolean {
+  let fd: number;
   try {
-    size = statSync(path).size;
+    // Recovery needs a writable descriptor because fsync on a read-only descriptor
+    // is not portable (and fails on Windows). The same r+ descriptor is used for the
+    // bounded read and the durability barrier; it never writes or truncates bytes.
+    fd = openSync(path, "r+");
   } catch (err) {
     if ((err as NodeJS.ErrnoException)?.code === "ENOENT") return false;
     throw err;
   }
-  if (size === 0) return false;
-  const start = Math.max(0, size - maxBytes);
-  // Bounded read: old ledgers cannot turn a retry check into unbounded memory use.
-  const length = size - start;
-  const buffer = Buffer.alloc(length);
-  const fd = openSync(path, "r");
   try {
-    readSync(fd, buffer, 0, length, start);
+    // Size and content must come from the same opened file. A separate stat(path)
+    // followed by open(path) would let a concurrent rename/symlink swap make the
+    // bounded dedupe decision against a different ledger inode (TOCTOU).
+    const opened = fstatSync(fd, { bigint: true });
+    if (opened.size > BigInt(Number.MAX_SAFE_INTEGER)) {
+      throw new Error("ledger is too large for a safe bounded idempotency-tail offset");
+    }
+    const size = Number(opened.size);
+    if (size === 0) return false;
+    const start = Math.max(0, size - maxBytes);
+    // Bounded read plus one look-behind byte: old ledgers cannot turn a retry check
+    // into unbounded memory use, while start-1 tells us whether `start` is exactly a
+    // JSONL row boundary or falls inside a row that must be discarded.
+    const lookBehind = start > 0 ? 1 : 0;
+    const readStart = start - lookBehind;
+    const length = size - readStart;
+    const buffer = Buffer.alloc(length);
+    let bytesRead = 0;
+    while (bytesRead < length) {
+      const count = readSync(fd, buffer, bytesRead, length - bytesRead, readStart + bytesRead);
+      if (count === 0) break;
+      bytesRead += count;
+    }
+    // A concurrent truncation makes the dedupe state ambiguous. Never turn that
+    // ambiguity into a false negative that could authorize a duplicate append.
+    if (bytesRead !== length) {
+      throw new Error("ledger changed while checking its idempotency tail");
+    }
+
+    const startsAtRowBoundary = lookBehind === 0 || buffer[0] === 0x0a;
+    let text = buffer.subarray(lookBehind).toString("utf8");
+    if (!startsAtRowBoundary) {
+      const firstNewline = text.indexOf("\n");
+      text = firstNewline >= 0 ? text.slice(firstNewline + 1) : "";
+    }
+    // Only newline-terminated JSONL records prove a completed append. In particular,
+    // a short write that happens to contain the full JSON object but not its trailing
+    // newline must leave a reserved marker fail-closed for explicit reconciliation.
+    const lastNewline = text.lastIndexOf("\n");
+    if (lastNewline < 0) return false;
+    text = text.slice(0, lastNewline);
+    for (const raw of text.split("\n")) {
+      if (!raw) continue;
+      let parsed: { ref?: unknown };
+      try {
+        parsed = JSON.parse(raw) as { ref?: unknown };
+      } catch {
+        // A malformed historical row is not proof that this ref completed.
+        continue;
+      }
+      if (parsed.ref === ref) {
+        // A row left behind by a failed/crashed append is only evidence after its
+        // data and directory entry are durable again. Use this already-open fd so
+        // recovery cannot fsync a different file selected by a later path lookup.
+        // Durability failures deliberately propagate and keep the marker reserved.
+        ledgerFsyncSync(fd);
+        fsyncDirectory(dirname(path));
+        // The barrier is an externally observable scheduling point: another writer
+        // can truncate/overwrite this inode or replace `path` while fsync is in
+        // progress. Revalidate the exact bounded bytes through the same descriptor,
+        // then prove that the configured path still resolves to that descriptor's
+        // identity. Growth is allowed (another append is harmless); changes to the
+        // evidence range, truncation, unlink, or replacement remain fail-closed.
+        assertRecoverySnapshotStillCurrent(fd, path, opened, size, readStart, buffer);
+        return true;
+      }
+    }
+    return false;
   } finally {
     closeSync(fd);
   }
-  let text = buffer.toString("utf8");
-  if (start > 0) {
-    const firstNewline = text.indexOf("\n");
-    text = firstNewline >= 0 ? text.slice(firstNewline + 1) : "";
-  }
-  for (const raw of text.split("\n")) {
-    if (!raw) continue;
-    try {
-      if ((JSON.parse(raw) as { ref?: unknown }).ref === ref) return true;
-    } catch {
-      // A malformed historical row is not proof that this ref completed.
-    }
-  }
-  return false;
 }
 
-function durableAppend(path: string, line: string): void {
+type BigIntFileIdentity = { dev: bigint; ino: bigint };
+
+function assertRecoverySnapshotStillCurrent(
+  fd: number,
+  path: string,
+  opened: BigIntFileIdentity,
+  originalSize: number,
+  readStart: number,
+  expected: Buffer,
+): void {
+  const minimumSize = BigInt(originalSize);
+  const beforeRead = fstatSync(fd, { bigint: true });
+  if (!sameFileIdentity(opened, beforeRead) || beforeRead.size < minimumSize) {
+    throwLedgerChanged();
+  }
+
+  // Keep recovery memory bounded by the configured tail plus one small scratch
+  // buffer; do not allocate a second max-tail-sized snapshot for verification.
+  const scratch = Buffer.alloc(Math.min(expected.length, 64 * 1024));
+  let verified = 0;
+  while (verified < expected.length) {
+    const wanted = Math.min(scratch.length, expected.length - verified);
+    const count = readSync(fd, scratch, 0, wanted, readStart + verified);
+    if (
+      count !== wanted
+      || !scratch.subarray(0, count).equals(expected.subarray(verified, verified + count))
+    ) {
+      throwLedgerChanged();
+    }
+    verified += count;
+  }
+
+  const afterRead = fstatSync(fd, { bigint: true });
+  if (!sameFileIdentity(opened, afterRead) || afterRead.size < minimumSize) {
+    throwLedgerChanged();
+  }
+
+  let byPath: BigIntFileIdentity;
+  try {
+    byPath = statSync(path, { bigint: true });
+  } catch {
+    throwLedgerChanged();
+  }
+  if (!sameFileIdentity(opened, byPath)) {
+    throwLedgerChanged();
+  }
+}
+
+function sameFileIdentity(left: BigIntFileIdentity, right: BigIntFileIdentity): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function throwLedgerChanged(): never {
+  throw new Error("ledger changed while checking its idempotency tail");
+}
+
+function durableAppend(
+  path: string,
+  line: string,
+  appendWriteSync: (fd: number, buffer: Buffer) => number,
+  ledgerFsyncSync: (fd: number) => void,
+): void {
+  // Encode exactly once, then issue exactly one O_APPEND write. Retrying a short
+  // write could interleave JSONL fragments across processes, so any non-total result
+  // is ambiguous and must keep appendOnce's durable marker in `reserved` state.
+  const buffer = Buffer.from(`${line}\n`, "utf8");
   const fd = openSync(path, "a", 0o600);
   try {
-    writeSync(fd, line + "\n", undefined, "utf8");
-    fsyncSync(fd);
+    const bytesWritten = appendWriteSync(fd, buffer);
+    if (bytesWritten !== buffer.length) {
+      throw new Error("ledger append was incomplete; explicit reconciliation is required");
+    }
+    ledgerFsyncSync(fd);
   } finally {
     closeSync(fd);
   }
