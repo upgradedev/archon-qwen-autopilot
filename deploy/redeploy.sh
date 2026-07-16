@@ -87,6 +87,7 @@ BUILT_IMAGE_ID=""
 IID_FILE=""
 BUILD_CONTEXT=""
 DATABASE_ENV_FILE=""
+RUNTIME_SOURCE_ENV_FILE=""
 RUNTIME_BASE_ENV_FILE=""
 RUNTIME_OVERRIDE_ENV_FILE=""
 GATE_ENV_FILE=""
@@ -99,6 +100,17 @@ SMOKE_VENDOR=""
 SMOKE_ID=""
 SMOKE_CLEANUP_REQUIRED=0
 RUNTIME_BASE_KEYS=()
+RUNTIME_OVERRIDE_KEYS=(
+  DASHSCOPE_API_KEY
+  REVIEWER_TOKEN
+  DASHSCOPE_BASE_URL
+  DATABASE_URL
+  PORT
+  LEDGER_JSONL_PATH
+  TRUST_PROXY_HOPS
+  TRUST_PROXY_ADDRESSES
+  DEPLOYMENT_CONFIG_ATTESTATION
+)
 
 env_path_value() {
   local path="$1" name="$2"
@@ -107,6 +119,30 @@ env_path_value() {
 
 env_file_value() {
   env_path_value .env "$1"
+}
+
+runtime_override_key() {
+  local candidate="$1" runtime_key
+  for runtime_key in "${RUNTIME_OVERRIDE_KEYS[@]}"; do
+    [ "$candidate" = "$runtime_key" ] && return 0
+  done
+  return 1
+}
+
+materialize_runtime_base_env() {
+  local source="$1" destination="$2" line key
+  : >"$destination" || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      ''|'#'*) printf '%s\n' "$line" >>"$destination" || return 1 ;;
+      *)
+        [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)= ]] || return 1
+        key="${BASH_REMATCH[1]}"
+        runtime_override_key "$key" && continue
+        printf '%s\n' "$line" >>"$destination" || return 1
+        ;;
+    esac
+  done <"$source"
 }
 
 docker_with_timeout() {
@@ -294,11 +330,7 @@ verify_runtime_contract() {
   [ "$(container_env_value "$container_id" HOME || true)" = "/tmp" ] || return 1
   local runtime_key
   for runtime_key in "${RUNTIME_BASE_KEYS[@]}"; do
-    case "$runtime_key" in
-      DASHSCOPE_API_KEY|REVIEWER_TOKEN|DASHSCOPE_BASE_URL|DATABASE_URL|PORT|LEDGER_JSONL_PATH|TRUST_PROXY_HOPS|TRUST_PROXY_ADDRESSES|DEPLOYMENT_CONFIG_ATTESTATION)
-        continue
-        ;;
-    esac
+    runtime_override_key "$runtime_key" && continue
     [ "$(container_env_value "$container_id" "$runtime_key" || true)" = "$(env_path_value "$RUNTIME_BASE_ENV_FILE" "$runtime_key")" ] \
       || return 1
   done
@@ -412,6 +444,12 @@ cleanup_private_artifacts() {
       "$APP_DIR"/.git/autopilot-base-env.*) rm -f -- "$RUNTIME_BASE_ENV_FILE" >/dev/null 2>&1 || true ;;
     esac
     RUNTIME_BASE_ENV_FILE=""
+  fi
+  if [ -n "$RUNTIME_SOURCE_ENV_FILE" ]; then
+    case "$RUNTIME_SOURCE_ENV_FILE" in
+      "$APP_DIR"/.git/autopilot-source-env.*) rm -f -- "$RUNTIME_SOURCE_ENV_FILE" >/dev/null 2>&1 || true ;;
+    esac
+    RUNTIME_SOURCE_ENV_FILE=""
   fi
   if [ -n "$DATABASE_ENV_FILE" ]; then
     case "$DATABASE_ENV_FILE" in
@@ -894,21 +932,26 @@ done
 
 DATABASE_ENV_FILE="$(mktemp "$APP_DIR/.git/autopilot-database-env.XXXXXX")" \
   || die "could not create the private database env override."
+RUNTIME_SOURCE_ENV_FILE="$(mktemp "$APP_DIR/.git/autopilot-source-env.XXXXXX")" \
+  || die "could not create the private raw runtime env snapshot."
 RUNTIME_BASE_ENV_FILE="$(mktemp "$APP_DIR/.git/autopilot-base-env.XXXXXX")" \
-  || die "could not create the private runtime env snapshot."
+  || die "could not create the private filtered runtime base env."
 RUNTIME_OVERRIDE_ENV_FILE="$(mktemp "$APP_DIR/.git/autopilot-runtime-env.XXXXXX")" \
   || die "could not create the private runtime env override."
 ENDPOINT_ENV_FILE="$(mktemp "$APP_DIR/.git/autopilot-endpoint-env.XXXXXX")" \
   || die "could not create the private endpoint env override."
-chmod 0600 "$DATABASE_ENV_FILE" "$RUNTIME_BASE_ENV_FILE" "$RUNTIME_OVERRIDE_ENV_FILE" "$ENDPOINT_ENV_FILE" \
+chmod 0600 "$DATABASE_ENV_FILE" "$RUNTIME_SOURCE_ENV_FILE" "$RUNTIME_BASE_ENV_FILE" "$RUNTIME_OVERRIDE_ENV_FILE" "$ENDPOINT_ENV_FILE" \
   || die "could not restrict private env overrides."
+trap cleanup_private_artifacts EXIT
 ENV_SHA_BEFORE="$(sha256sum .env | awk '{print $1}')" || die "could not hash runtime .env before snapshot."
-cp -- .env "$RUNTIME_BASE_ENV_FILE" || die "could not snapshot runtime .env."
+cp -- .env "$RUNTIME_SOURCE_ENV_FILE" || die "could not snapshot raw runtime .env."
 ENV_SHA_AFTER="$(sha256sum .env | awk '{print $1}')" || die "could not hash runtime .env after snapshot."
-ENV_SNAPSHOT_SHA="$(sha256sum "$RUNTIME_BASE_ENV_FILE" | awk '{print $1}')" \
+ENV_SNAPSHOT_SHA="$(sha256sum "$RUNTIME_SOURCE_ENV_FILE" | awk '{print $1}')" \
   || die "could not attest runtime .env snapshot."
 [ "$ENV_SHA_BEFORE" = "$ENV_SHA_AFTER" ] && [ "$ENV_SHA_AFTER" = "$ENV_SNAPSHOT_SHA" ] \
   || die "runtime .env changed while the release snapshot was created."
+materialize_runtime_base_env "$RUNTIME_SOURCE_ENV_FILE" "$RUNTIME_BASE_ENV_FILE" \
+  || die "could not materialize the filtered runtime base env."
 RUNTIME_ATTESTATION="$(random_hex 32)" || die "could not generate runtime config attestation."
 printf 'DATABASE_URL=%s\n' "$DATABASE_URL" >"$DATABASE_ENV_FILE" \
   || die "could not write the private database env override."
@@ -926,7 +969,13 @@ printf '%s\n' \
   "DEPLOYMENT_CONFIG_ATTESTATION=$RUNTIME_ATTESTATION" \
   >"$RUNTIME_OVERRIDE_ENV_FILE" \
   || die "could not write the private runtime env override."
-trap cleanup_private_artifacts EXIT
+for runtime_key in "${RUNTIME_OVERRIDE_KEYS[@]}"; do
+  [ "$(grep -c "^${runtime_key}=" "$RUNTIME_BASE_ENV_FILE" || true)" = "0" ] \
+    || die "filtered runtime base env retained override-owned key $runtime_key."
+  [ "$(grep -c "^${runtime_key}=" "$RUNTIME_OVERRIDE_ENV_FILE" || true)" = "1" ] \
+    || die "runtime override must materialize key $runtime_key exactly once."
+done
+ok "raw runtime .env attested and override-owned keys materialized exactly once"
 ok "production Qwen + reviewer credentials are configured (values not printed)"
 ok "runtime/migration inputs and private argv-free overrides are mode 0600 and credential-separated (values not printed)"
 
