@@ -142,12 +142,20 @@ function tokenFromExplicitCredentialFile(rawPath) {
   // Windows does not expose O_NOFOLLOW, so the post-open lstat/fstat identity
   // comparison below is its fail-closed symlink/path-swap control.
   const noFollow = Number.isInteger(fs.constants.O_NOFOLLOW) ? fs.constants.O_NOFOLLOW : 0;
-  const descriptor = fs.openSync(file, fs.constants.O_RDONLY | noFollow);
+  // A hostile FIFO must not block the process before fstat can reject it.
+  // O_NONBLOCK has no effect on regular-file reads and is available on POSIX;
+  // Windows exposes neither this FIFO primitive nor the flag.
+  const nonBlock = Number.isInteger(fs.constants.O_NONBLOCK) ? fs.constants.O_NONBLOCK : 0;
+  const descriptor = fs.openSync(file, fs.constants.O_RDONLY | noFollow | nonBlock);
   try {
     const opened = fs.fstatSync(descriptor, { bigint: true });
     assert.equal(opened.isFile(), true, 'reviewer credential descriptor must reference a regular file');
     assert.equal(opened.nlink, 1n, 'reviewer credential descriptor must have exactly one hard link');
     assert.ok(opened.size > 0n && opened.size <= 16_384n, 'reviewer credential file must be between 1 byte and 16 KiB');
+    if (typeof process.getuid === 'function') {
+      assert.equal(opened.uid, BigInt(process.getuid()), 'reviewer credential file must be owned by the current user');
+      assert.equal(opened.mode & 0o077n, 0n, 'reviewer credential file must not be accessible by group or other users');
+    }
 
     const canonical = fs.realpathSync.native(file);
     insideRepo(canonical, '--reviewer-credential-file canonical target', { mustExist: true });
@@ -174,7 +182,9 @@ function tokenFromExplicitCredentialFile(rawPath) {
     assert.ok(afterRead.size > 0n && afterRead.size <= 16_384n, 'reviewer credential file left the 1 byte to 16 KiB bound while it was being read');
     let payload;
     try { payload = JSON.parse(text); }
-    catch (error) { fail(`reviewer credential file is not valid JSON: ${error.message}`); }
+    // V8 parse errors can quote source bytes. Never append parser diagnostics:
+    // malformed credential material must not reach CI or terminal output.
+    catch { fail('reviewer credential file is not valid JSON'); }
     return typeof payload.token === 'string' ? payload.token.trim() : '';
   } finally {
     fs.closeSync(descriptor);
@@ -983,6 +993,44 @@ async function selfTest() {
   fs.writeFileSync(credentialPath, `${JSON.stringify({ token: 'x'.repeat(40) })}\n`, { mode: 0o600 });
   assert.equal(tokenFromExplicitCredentialFile(credentialPath), 'x'.repeat(40));
 
+  const malformedSecret = 'SYNTHETIC_SECRET_MUST_NEVER_REACH_DIAGNOSTICS';
+  const malformedCredentialPath = path.join(fixtureRoot, 'reviewer-credential-malformed.json');
+  fs.writeFileSync(malformedCredentialPath, `{"token":${malformedSecret}}\n`, { mode: 0o600 });
+  let malformedError;
+  try { tokenFromExplicitCredentialFile(malformedCredentialPath); } catch (error) { malformedError = error; }
+  assert.ok(malformedError, 'malformed reviewer credential fixture must fail');
+  assert.equal(malformedError.message, 'reviewer credential file is not valid JSON');
+  assert.equal(malformedError.message.includes(malformedSecret), false, 'credential bytes must never appear in parser diagnostics');
+
+  if (typeof process.getuid === 'function') {
+    const permissiveCredentialPath = path.join(fixtureRoot, 'reviewer-credential-permissive.json');
+    fs.writeFileSync(permissiveCredentialPath, `${JSON.stringify({ token: 'p'.repeat(40) })}\n`, { mode: 0o644 });
+    fs.chmodSync(permissiveCredentialPath, 0o644);
+    assert.throws(
+      () => tokenFromExplicitCredentialFile(permissiveCredentialPath),
+      /must not be accessible by group or other users/,
+    );
+  }
+
+  if (os.platform() !== 'win32' && Number.isInteger(fs.constants.O_NONBLOCK)) {
+    const fifoPath = path.join(fixtureRoot, 'reviewer-credential-fifo.json');
+    const mkfifo = spawnSync('mkfifo', ['--', fifoPath], { cwd: ROOT, encoding: 'utf8' });
+    if (mkfifo.status === 0) {
+      const fifoStartedAt = Date.now();
+      assert.throws(
+        () => tokenFromExplicitCredentialFile(fifoPath),
+        /descriptor must reference a regular file/,
+      );
+      assert.ok(Date.now() - fifoStartedAt < 1_000, 'FIFO credential rejection must not block');
+    } else {
+      assert.match(
+        `${mkfifo.stderr || ''}${mkfifo.error?.message || ''}`,
+        /operation not supported|not supported/i,
+        'mkfifo must succeed unless the mounted filesystem explicitly lacks FIFO support',
+      );
+    }
+  }
+
   const pathSwapAfterOpenPath = path.join(fixtureRoot, 'reviewer-credential-path-swap-after-open.json');
   const pathSwapOriginalPath = path.join(fixtureRoot, 'reviewer-credential-path-swap-original.json');
   const pathSwapReplacementPath = path.join(fixtureRoot, 'reviewer-credential-path-swap-replacement.json');
@@ -1058,7 +1106,10 @@ async function selfTest() {
   const credentialLink = path.join(fixtureRoot, 'reviewer-credential-link.json');
   try {
     fs.symlinkSync(credentialPath, credentialLink, 'file');
-    assert.throws(() => tokenFromExplicitCredentialFile(credentialLink), /must not be a symlink/);
+    assert.throws(
+      () => tokenFromExplicitCredentialFile(credentialLink),
+      /ELOOP|too many symbolic links|must remain non-symlinked|path must be canonical/,
+    );
   } catch (error) {
     if (os.platform() !== 'win32' || error?.code !== 'EPERM') throw error;
     fs.linkSync(credentialPath, credentialLink);
