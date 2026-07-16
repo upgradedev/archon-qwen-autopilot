@@ -136,26 +136,17 @@ function credentialFileFingerprint(stats) {
 function tokenFromExplicitCredentialFile(rawPath) {
   if (!rawPath) return '';
   const file = insideRepo(rawPath, '--reviewer-credential-file');
-  const lexical = fs.lstatSync(file, { bigint: true });
-  assert.equal(lexical.isSymbolicLink(), false, 'reviewer credential file must not be a symlink');
-  assert.equal(lexical.isFile(), true, 'reviewer credential path must be a regular file');
-  assert.equal(lexical.nlink, 1n, 'reviewer credential file must have exactly one hard link');
-  assert.ok(lexical.size > 0n && lexical.size <= 16_384n, 'reviewer credential file must be between 1 byte and 16 KiB');
 
-  // POSIX rejects a final-component symlink in the open itself. Node does not
-  // expose O_NOFOLLOW on Windows, so the descriptor-vs-lstat identity check below
-  // is the cross-platform fail-closed control for a pathname swap.
+  // Open first: every security decision and the eventual read are bound to this
+  // one descriptor. POSIX also rejects a final-component symlink atomically.
+  // Windows does not expose O_NOFOLLOW, so the post-open lstat/fstat identity
+  // comparison below is its fail-closed symlink/path-swap control.
   const noFollow = Number.isInteger(fs.constants.O_NOFOLLOW) ? fs.constants.O_NOFOLLOW : 0;
   const descriptor = fs.openSync(file, fs.constants.O_RDONLY | noFollow);
   try {
     const opened = fs.fstatSync(descriptor, { bigint: true });
     assert.equal(opened.isFile(), true, 'reviewer credential descriptor must reference a regular file');
     assert.equal(opened.nlink, 1n, 'reviewer credential descriptor must have exactly one hard link');
-    assert.deepEqual(
-      credentialFileFingerprint(opened),
-      credentialFileFingerprint(lexical),
-      'reviewer credential file changed between validation and open',
-    );
     assert.ok(opened.size > 0n && opened.size <= 16_384n, 'reviewer credential file must be between 1 byte and 16 KiB');
 
     const canonical = fs.realpathSync.native(file);
@@ -163,6 +154,7 @@ function tokenFromExplicitCredentialFile(rawPath) {
     assert.equal(path.resolve(canonical), path.resolve(file), 'reviewer credential file path must be canonical');
     const current = fs.lstatSync(file, { bigint: true });
     assert.equal(current.isSymbolicLink(), false, 'reviewer credential file must remain non-symlinked');
+    assert.equal(current.isFile(), true, 'reviewer credential path must remain a regular file');
     assert.deepEqual(
       credentialFileFingerprint(current),
       credentialFileFingerprint(opened),
@@ -991,53 +983,32 @@ async function selfTest() {
   fs.writeFileSync(credentialPath, `${JSON.stringify({ token: 'x'.repeat(40) })}\n`, { mode: 0o600 });
   assert.equal(tokenFromExplicitCredentialFile(credentialPath), 'x'.repeat(40));
 
-  const raceCredentialPath = path.join(fixtureRoot, 'reviewer-credential-race.json');
-  const raceOriginalPath = path.join(fixtureRoot, 'reviewer-credential-race-original.json');
-  const raceReplacementPath = path.join(fixtureRoot, 'reviewer-credential-race-replacement.json');
-  fs.writeFileSync(raceCredentialPath, `${JSON.stringify({ token: 'o'.repeat(40) })}\n`, { mode: 0o600 });
-  fs.writeFileSync(raceReplacementPath, `${JSON.stringify({ token: 'a'.repeat(40) })}\n`, { mode: 0o600 });
-  const realOpenSync = fs.openSync;
-  let credentialRaceTriggered = false;
-  fs.openSync = function swapCredentialImmediatelyBeforeOpen(candidate, flags, ...rest) {
-    if (!credentialRaceTriggered && path.resolve(candidate) === path.resolve(raceCredentialPath)) {
-      credentialRaceTriggered = true;
-      fs.renameSync(raceCredentialPath, raceOriginalPath);
-      fs.renameSync(raceReplacementPath, raceCredentialPath);
+  const pathSwapAfterOpenPath = path.join(fixtureRoot, 'reviewer-credential-path-swap-after-open.json');
+  const pathSwapOriginalPath = path.join(fixtureRoot, 'reviewer-credential-path-swap-original.json');
+  const pathSwapReplacementPath = path.join(fixtureRoot, 'reviewer-credential-path-swap-replacement.json');
+  fs.writeFileSync(pathSwapAfterOpenPath, `${JSON.stringify({ token: 'o'.repeat(40) })}\n`, { mode: 0o600 });
+  fs.writeFileSync(pathSwapReplacementPath, `${JSON.stringify({ token: 'a'.repeat(48) })}\n`, { mode: 0o600 });
+  const realFstatSync = fs.fstatSync;
+  let pathSwapAfterOpenTriggered = false;
+  fs.fstatSync = function swapCredentialPathAfterOpen(descriptor, ...rest) {
+    const stats = realFstatSync.call(fs, descriptor, ...rest);
+    if (!pathSwapAfterOpenTriggered) {
+      pathSwapAfterOpenTriggered = true;
+      fs.renameSync(pathSwapAfterOpenPath, pathSwapOriginalPath);
+      fs.renameSync(pathSwapReplacementPath, pathSwapAfterOpenPath);
     }
-    return realOpenSync.call(fs, candidate, flags, ...rest);
+    return stats;
   };
   try {
     assert.throws(
-      () => tokenFromExplicitCredentialFile(raceCredentialPath),
-      /changed between validation and open/,
-      'a pathname replacement between lstat and open must never supply reviewer credentials',
+      () => tokenFromExplicitCredentialFile(pathSwapAfterOpenPath),
+      /pathname or contents changed after open/,
+      'a pathname replacement after descriptor open must never supply reviewer credentials',
     );
   } finally {
-    fs.openSync = realOpenSync;
+    fs.fstatSync = realFstatSync;
   }
-  assert.equal(credentialRaceTriggered, true, 'credential pathname race fixture did not execute');
-
-  const rewriteBeforeOpenPath = path.join(fixtureRoot, 'reviewer-credential-rewrite-before-open.json');
-  fs.writeFileSync(rewriteBeforeOpenPath, `${JSON.stringify({ token: 'b'.repeat(40) })}\n`, { mode: 0o600 });
-  let rewriteBeforeOpenTriggered = false;
-  fs.openSync = function rewriteCredentialImmediatelyBeforeOpen(candidate, flags, ...rest) {
-    if (!rewriteBeforeOpenTriggered && path.resolve(candidate) === path.resolve(rewriteBeforeOpenPath)) {
-      rewriteBeforeOpenTriggered = true;
-      const writer = realOpenSync.call(fs, candidate, 'w');
-      try { fs.writeSync(writer, `${JSON.stringify({ token: 'mutated-before-open'.repeat(4) })}\n`); }
-      finally { fs.closeSync(writer); }
-    }
-    return realOpenSync.call(fs, candidate, flags, ...rest);
-  };
-  try {
-    let rejection;
-    try { tokenFromExplicitCredentialFile(rewriteBeforeOpenPath); } catch (error) { rejection = error; }
-    assert.ok(rejection, 'a same-inode rewrite between lstat and open must never supply reviewer credentials');
-    assert.match(rejection.message, /changed between validation and open/);
-  } finally {
-    fs.openSync = realOpenSync;
-  }
-  assert.equal(rewriteBeforeOpenTriggered, true, 'credential same-inode pre-open rewrite fixture did not execute');
+  assert.equal(pathSwapAfterOpenTriggered, true, 'credential post-open pathname race fixture did not execute');
 
   const rewriteBeforeReadPath = path.join(fixtureRoot, 'reviewer-credential-rewrite-before-read.json');
   fs.writeFileSync(rewriteBeforeReadPath, `${JSON.stringify({ token: 'c'.repeat(40) })}\n`, { mode: 0o600 });
@@ -1046,7 +1017,7 @@ async function selfTest() {
   fs.readFileSync = function rewriteCredentialImmediatelyBeforeDescriptorRead(candidate, ...rest) {
     if (!rewriteBeforeReadTriggered && typeof candidate === 'number') {
       rewriteBeforeReadTriggered = true;
-      const writer = realOpenSync.call(fs, rewriteBeforeReadPath, 'w');
+      const writer = fs.openSync(rewriteBeforeReadPath, 'w');
       try { fs.writeSync(writer, `${JSON.stringify({ token: 'mutated-before-read'.repeat(4) })}\n`); }
       finally { fs.closeSync(writer); }
     }
