@@ -14,8 +14,9 @@ The repository-local analysis plan was frozen before these derived files were ge
 - Denominator: 12 paired authored cases; no exclusions or imputation
 - Labels: developer-authored AP policy labels; not expert ground truth
 - Assisted replay: offline / FakeQwenChatClient / Node.js 24.18.0
-- Frozen source identity: commit 67af1fbc5e88bcc3c35c67d04dc5be517081a036 / tree ee5d507efcbeb7810c55ec8d7b3ad1d0f1beaf8e; canonical replay-source closure unchanged and clean
+- Frozen source identity: commit 52cfd8a45b1218876433a378c50b67159f47c3fe / tree 4a56361739b834678c3ba349dd780512d7b0fa16; canonical replay-source closure unchanged and clean
 - Raw replay validation: 12/12 cases re-executed through eval/lib.ts runScenario and matched every frozen action/trace field
+- Input hashing: SHA-256 over LF-canonical UTF-8 text; CRLF and LF checkouts bind identically, while a lone carriage return fails closed
 - Endpoints: modeled active-review seconds, modeled human touches, and developer-policy-label mismatches
 - Analysis: descriptive paired summaries only; no inferential statistics
 
@@ -92,4 +93,4 @@ After any replay source or protocol change, first commit the complete clean sour
 
 Review and commit only the refreshed raw/results as the evidence-only descendant commit B. The refresh command refuses a dirty or uncommitted commit A.
 
-The check revalidates the fixed denominator, exact projection from eval/dataset.ts, task catalogs, raw replay shape, policy boundaries, input hashes, and byte-for-byte generated outputs.
+The check revalidates the fixed denominator, exact projection from eval/dataset.ts, task catalogs, raw replay shape, policy boundaries, LF-canonical input hashes, and byte-for-byte generated outputs.

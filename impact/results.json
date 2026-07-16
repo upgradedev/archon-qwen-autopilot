@@ -8,15 +8,15 @@
     "notClaimed": "This is not an external, prospective, outcome-blind preregistration."
   },
   "sourceReplay": {
-    "sourceCommit": "67af1fbc5e88bcc3c35c67d04dc5be517081a036",
+    "sourceCommit": "52cfd8a45b1218876433a378c50b67159f47c3fe",
     "runtime": "Node.js 24.18.0",
     "agentRunner": "eval/lib.ts runScenario",
     "mode": "offline",
     "modelSeam": "FakeQwenChatClient",
     "networkUsed": false,
     "sourceIdentity": {
-      "gitCommit": "67af1fbc5e88bcc3c35c67d04dc5be517081a036",
-      "gitTree": "ee5d507efcbeb7810c55ec8d7b3ad1d0f1beaf8e",
+      "gitCommit": "52cfd8a45b1218876433a378c50b67159f47c3fe",
+      "gitTree": "4a56361739b834678c3ba349dd780512d7b0fa16",
       "replaySourcePaths": [
         "src",
         "eval/lib.ts",
@@ -58,17 +58,17 @@
   "inputSha256": {
     "protocolJson": "878d2e744891c85f6d1fd154e29d8d9db2097b2629e3405be61d827d3b2352a3",
     "casesJson": "aea7709a56541169b0f4f96b0e69dac690d3f2ec6ec2cbd2dfbde69ab7427388",
-    "rawObservationsJson": "809b2bb4b713b4c2906165d217ec0a3818e3021d6afbe05cf658e57eddde8e0d",
-    "analysisScript": "cc1b32d79b00a0f982d9fb9be58e1325479d297c11914f488cc2ffe394f658e0",
-    "provenanceScript": "99f04786d25c058d01df6e5027d18208f6b47e8cafa18115aa0c94be7e6b0045",
-    "evalDataset": "f09277878dcbbc8c35ddb5089ab18035f961265b9516aafe570a2f7b9711f6af",
-    "evalLib": "97c5ce1eae4e1718b8931e695c3f1c155213ed78fb51ab08dfe4792ac2137950",
-    "evalArtifactSafety": "7b73888efa1404ea9b89b18f10923ea80b8fb36b308421b78d805c113021df5a",
-    "evalPromotionEnvironment": "15f55fbd8843efac38c1c4d8eddeabc3c1bbd7794a9374ef520c45ca0a5aeefb",
-    "evalProtocolProvenance": "a57229a22aaa6121ef6a8bb71dd7e767190bdd12a0f055972b041aa7c4a194ef",
-    "packageJson": "5d3824996444e404ea0c57bd0931a0c8bcb5a8d19a54c96cc124fdb24c89aeb5",
-    "packageLock": "74cb8071ae14361b414daf8e9516d13d7a923759b007469aa9fc04d427cfd27b",
-    "tsconfig": "9b29b3fe4e38d17e57646f763b6954eafecc2ceeb23738577ff282003fca70f6"
+    "rawObservationsJson": "e60fa3e71017c8589d0815d3bf8d1afb3d73e3c08edca4ea0fa72c84805d945b",
+    "analysisScript": "064e05226246aaf6d6f6c723dbc81169de597657a2d5fd9c90874ff4d1dd293d",
+    "provenanceScript": "105c0c582c0b5823930e14e6217178c813d97eb03ba2d7375405e10126614439",
+    "evalDataset": "0c5b8b5db653078e6f1a2333164ec523166f7a236da24f67d148acc54df2a472",
+    "evalLib": "a4fed850c745cd6f12bd267e815d23dfe68c96effcbf3ae2fc46f66b4df7cf32",
+    "evalArtifactSafety": "2652a17e6ab53c2ab2e697f297c387a66905c9e7198eceef352ff52877654ccc",
+    "evalPromotionEnvironment": "a666248b0a1266b6467827a4ceb844126207c266709229c2f2e18a587d6b61a0",
+    "evalProtocolProvenance": "d0b52ea8d8824ae848dea7d0af8ce043b1e1f1753c2c41452554acbea68739f9",
+    "packageJson": "883a16dc8fb17f5d6b4bbf16b52c88b4191c9f401bd409ab58251ded9d792319",
+    "packageLock": "853318d63737bdadaba52dc2152b7c9e17f52f5142a72d7d98e776fe93d930bf",
+    "tsconfig": "9245016c06e7b4409e9cec91187e306122cbf0ed0a59979aea97bbe0f9fd5d69"
   },
   "denominator": 12,
   "labelAuthority": "developer-authored AP policy labels; not expert ground truth",
