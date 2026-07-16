@@ -22,6 +22,8 @@ export interface VerifiedReplaySourceIdentity {
 }
 
 export function assertLockedImpactRuntime(actualVersion?: string): void;
+export function canonicalImpactText(text: string, label?: string): string;
+export function canonicalImpactTextSha256(text: string, label?: string): string;
 export function assertCommittedReplayEvidenceInputs(options?: { repoRoot?: string }): void;
 export function captureReplaySourceIdentityAtCleanHead(
   options?: { repoRoot?: string },

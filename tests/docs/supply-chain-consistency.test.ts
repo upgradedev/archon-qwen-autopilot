@@ -757,7 +757,7 @@ test("SUPPLY 1 — every workflow Action is an approved full-SHA release pin", (
 
 test("SUPPLY 1B — ancestry-dependent test jobs always fetch complete Git history", () => {
   const workflow = parseWorkflow("ci.yml");
-  for (const jobId of ["build-test", "coverage"]) {
+  for (const jobId of ["build-test", "docs-consistency", "readiness", "coverage"]) {
     const label = `ci.yml.jobs.${jobId}`;
     const checkout = stepByUses(workflowJob(workflow, jobId), CHECKOUT, label);
     exactKeys(checkout, ["uses", "with"], `${label}.checkout`);
@@ -766,6 +766,31 @@ test("SUPPLY 1B — ancestry-dependent test jobs always fetch complete Git histo
       { "fetch-depth": 0 },
       `${label} must retain full history for evidence-ledger ancestry verification`,
     );
+  }
+});
+
+test("SUPPLY 1C — impact replay inputs are LF-pinned across Windows and Linux", () => {
+  const attributes = new Set(
+    readText(".gitattributes")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith("#")),
+  );
+  for (const rule of [
+    "src/** text eol=lf",
+    "eval/lib.ts text eol=lf",
+    "eval/dataset.ts text eol=lf",
+    "eval/artifact-safety.ts text eol=lf",
+    "eval/promotion-environment.ts text eol=lf",
+    "eval/protocol-provenance.ts text eol=lf",
+    "impact/*.mjs text eol=lf",
+    "impact/*.json text eol=lf",
+    "impact/*.md text eol=lf",
+    "package.json text eol=lf",
+    "package-lock.json text eol=lf",
+    "tsconfig.json text eol=lf",
+  ]) {
+    assert.ok(attributes.has(rule), `.gitattributes must retain ${rule}`);
   }
 });
 

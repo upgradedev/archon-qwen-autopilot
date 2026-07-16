@@ -86,6 +86,12 @@ The canonical generated report is
 [`impact/RESULTS.md`](../impact/RESULTS.md), with machine-readable rows and
 input hashes in [`impact/results.json`](../impact/results.json).
 
+Every textual input hash is SHA-256 over its LF-canonical UTF-8 form. CRLF and
+LF checkouts therefore bind to the same evidence identity, while any lone
+carriage return is rejected as ambiguous. `.gitattributes` also pins the full
+replay source and evidence-input closure to LF so Windows and Linux checkouts
+exercise the same bytes before analysis.
+
 | Fixed 12-case endpoint | Manual model | Assisted model | Manual − assisted |
 |---|---:|---:|---:|
 | Base modeled active-review seconds, total | 2,292 | 836 | 1,456 |
@@ -141,7 +147,7 @@ For the focused agent-to-raw replay check:
 npm run impact:check-raw
 ```
 
-The full command replays the agent, validates inputs and hashes, recomputes
+The full command replays the agent, validates inputs and LF-canonical hashes, recomputes
 every row, and requires
 `impact/results.json` and `impact/RESULTS.md` to be byte-identical to fresh
 output. `impact:write` can regenerate only those two derived outputs after the

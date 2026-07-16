@@ -8,6 +8,8 @@ import test from "node:test";
 import {
   assertCommittedReplayEvidenceInputs,
   assertLockedImpactRuntime,
+  canonicalImpactText,
+  canonicalImpactTextSha256,
   captureReplaySourceIdentityAtCleanHead,
   LOCKED_NODE_VERSION,
   REPLAY_EVIDENCE_INPUT_PATHS,
@@ -78,6 +80,20 @@ test("impact runtime identity rejects every non-canonical Node release", () => {
   assert.throws(
     () => assertLockedImpactRuntime("v20.20.2"),
     /requires exact Node\.js 24\.18\.0; current runtime is v20\.20\.2/,
+  );
+});
+
+test("impact input hashes are cross-platform deterministic and reject ambiguous carriage returns", () => {
+  const lf = "first line\nsecond line\nτεκμήριο\n";
+  const crlf = lf.replaceAll("\n", "\r\n");
+  assert.equal(canonicalImpactText(crlf, "CRLF fixture"), lf);
+  assert.equal(
+    canonicalImpactTextSha256(crlf, "CRLF fixture"),
+    canonicalImpactTextSha256(lf, "LF fixture"),
+  );
+  assert.throws(
+    () => canonicalImpactText("first line\rsecond line\n", "lone-CR fixture"),
+    /lone-CR fixture contains an unsupported lone carriage return/,
   );
 });
 

@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -104,6 +105,19 @@ export function assertLockedImpactRuntime(actualVersion = process.version) {
   if (actualVersion !== LOCKED_NODE_VERSION) {
     fail(`impact replay requires exact ${LOCKED_NODE_LABEL}; current runtime is ${actualVersion}`);
   }
+}
+
+export function canonicalImpactText(text, label = "impact text input") {
+  if (typeof text !== "string") fail(`${label} must be a UTF-8 text string`);
+  const canonical = text.replace(/\r\n/g, "\n");
+  if (canonical.includes("\r")) fail(`${label} contains an unsupported lone carriage return`);
+  return canonical;
+}
+
+export function canonicalImpactTextSha256(text, label) {
+  return createHash("sha256")
+    .update(canonicalImpactText(text, label), "utf8")
+    .digest("hex");
 }
 
 export function assertCommittedReplayEvidenceInputs(options = {}) {

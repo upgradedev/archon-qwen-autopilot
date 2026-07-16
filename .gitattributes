@@ -23,3 +23,19 @@ runtime-apk-archives.sha256 text eol=lf
 eval/promotion-poppler.lock.json text eol=lf
 eval/results/evidence-ledger.json text eol=lf
 eval/results/*-attempt-*.json text eol=lf
+
+# Impact evidence hashes the LF-canonical UTF-8 text form and the replay inputs
+# are pinned LF in every checkout. This makes the source/evidence binding stable
+# across Windows and Linux without weakening lone-CR rejection in the analyzer.
+src/** text eol=lf
+eval/lib.ts text eol=lf
+eval/dataset.ts text eol=lf
+eval/artifact-safety.ts text eol=lf
+eval/promotion-environment.ts text eol=lf
+eval/protocol-provenance.ts text eol=lf
+impact/*.mjs text eol=lf
+impact/*.json text eol=lf
+impact/*.md text eol=lf
+package.json text eol=lf
+package-lock.json text eol=lf
+tsconfig.json text eol=lf

@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -6,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import {
   assertCommittedReplayEvidenceInputs,
   assertLockedImpactRuntime,
+  canonicalImpactTextSha256,
   captureReplaySourceIdentityAtCleanHead,
   LOCKED_NODE_LABEL,
   verifyReplaySourceIdentity,
@@ -82,10 +82,6 @@ function readJson(path) {
   } catch (error) {
     fail("invalid JSON in " + path + ": " + String(error));
   }
-}
-
-function sha256(text) {
-  return createHash("sha256").update(text).digest("hex");
 }
 
 function round1(value) {
@@ -370,19 +366,19 @@ function analyze(protocol, casesFile, raw, texts, replayValidation, sourceIdenti
     },
     rawReplayValidation: replayValidation,
     inputSha256: {
-      protocolJson: sha256(texts.protocol),
-      casesJson: sha256(texts.cases),
-      rawObservationsJson: sha256(texts.raw),
-      analysisScript: sha256(texts.analysis),
-      provenanceScript: sha256(texts.provenance),
-      evalDataset: sha256(texts.evalDataset),
-      evalLib: sha256(texts.evalLib),
-      evalArtifactSafety: sha256(texts.evalArtifactSafety),
-      evalPromotionEnvironment: sha256(texts.evalPromotionEnvironment),
-      evalProtocolProvenance: sha256(texts.evalProtocolProvenance),
-      packageJson: sha256(texts.packageJson),
-      packageLock: sha256(texts.packageLock),
-      tsconfig: sha256(texts.tsconfig),
+      protocolJson: canonicalImpactTextSha256(texts.protocol, "impact/protocol.json"),
+      casesJson: canonicalImpactTextSha256(texts.cases, "impact/cases.json"),
+      rawObservationsJson: canonicalImpactTextSha256(texts.raw, "impact/raw-observations.json"),
+      analysisScript: canonicalImpactTextSha256(texts.analysis, "impact/analyze.mjs"),
+      provenanceScript: canonicalImpactTextSha256(texts.provenance, "impact/provenance.mjs"),
+      evalDataset: canonicalImpactTextSha256(texts.evalDataset, "eval/dataset.ts"),
+      evalLib: canonicalImpactTextSha256(texts.evalLib, "eval/lib.ts"),
+      evalArtifactSafety: canonicalImpactTextSha256(texts.evalArtifactSafety, "eval/artifact-safety.ts"),
+      evalPromotionEnvironment: canonicalImpactTextSha256(texts.evalPromotionEnvironment, "eval/promotion-environment.ts"),
+      evalProtocolProvenance: canonicalImpactTextSha256(texts.evalProtocolProvenance, "eval/protocol-provenance.ts"),
+      packageJson: canonicalImpactTextSha256(texts.packageJson, "package.json"),
+      packageLock: canonicalImpactTextSha256(texts.packageLock, "package-lock.json"),
+      tsconfig: canonicalImpactTextSha256(texts.tsconfig, "tsconfig.json"),
     },
     denominator: rows.length,
     labelAuthority: casesFile.source.labelAuthority,
@@ -477,6 +473,7 @@ function renderMarkdown(result, protocol) {
     "- Assisted replay: " + result.sourceReplay.mode + " / " + result.sourceReplay.modelSeam + " / " + result.sourceReplay.runtime,
     "- Frozen source identity: commit " + result.sourceReplay.sourceIdentity.gitCommit + " / tree " + result.sourceReplay.sourceIdentity.gitTree + "; canonical replay-source closure unchanged and clean",
     "- Raw replay validation: " + result.rawReplayValidation.casesMatchingFrozenRaw + "/" + result.rawReplayValidation.casesReplayed + " cases re-executed through eval/lib.ts runScenario and matched every frozen action/trace field",
+    "- Input hashing: SHA-256 over LF-canonical UTF-8 text; CRLF and LF checkouts bind identically, while a lone carriage return fails closed",
     "- Endpoints: modeled active-review seconds, modeled human touches, and developer-policy-label mismatches",
     "- Analysis: descriptive paired summaries only; no inferential statistics",
     "",
@@ -550,7 +547,7 @@ function renderMarkdown(result, protocol) {
     "",
     "Review and commit only the refreshed raw/results as the evidence-only descendant commit B. The refresh command refuses a dirty or uncommitted commit A.",
     "",
-    "The check revalidates the fixed denominator, exact projection from eval/dataset.ts, task catalogs, raw replay shape, policy boundaries, input hashes, and byte-for-byte generated outputs.",
+    "The check revalidates the fixed denominator, exact projection from eval/dataset.ts, task catalogs, raw replay shape, policy boundaries, LF-canonical input hashes, and byte-for-byte generated outputs.",
     "",
   );
   return lines.join("\n");
