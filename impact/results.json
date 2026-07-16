@@ -8,16 +8,17 @@
     "notClaimed": "This is not an external, prospective, outcome-blind preregistration."
   },
   "sourceReplay": {
-    "sourceCommit": "52cfd8a45b1218876433a378c50b67159f47c3fe",
+    "sourceCommit": "4107731bd1ef215bdc1109e56d173cbb60b693f2",
     "runtime": "Node.js 24.18.0",
     "agentRunner": "eval/lib.ts runScenario",
     "mode": "offline",
     "modelSeam": "FakeQwenChatClient",
     "networkUsed": false,
     "sourceIdentity": {
-      "gitCommit": "52cfd8a45b1218876433a378c50b67159f47c3fe",
-      "gitTree": "4a56361739b834678c3ba349dd780512d7b0fa16",
+      "gitCommit": "4107731bd1ef215bdc1109e56d173cbb60b693f2",
+      "gitTree": "e56a51c9643adfacd4d86a36e37c9dde1c3a2f92",
       "replaySourcePaths": [
+        ".gitattributes",
         "src",
         "eval/lib.ts",
         "eval/dataset.ts",
@@ -58,9 +59,9 @@
   "inputSha256": {
     "protocolJson": "878d2e744891c85f6d1fd154e29d8d9db2097b2629e3405be61d827d3b2352a3",
     "casesJson": "aea7709a56541169b0f4f96b0e69dac690d3f2ec6ec2cbd2dfbde69ab7427388",
-    "rawObservationsJson": "e60fa3e71017c8589d0815d3bf8d1afb3d73e3c08edca4ea0fa72c84805d945b",
+    "rawObservationsJson": "9dc0677673a1bbe26c6aef6ff91df5f2d93051b011a4b6ccbc6e98a69065eb0b",
     "analysisScript": "064e05226246aaf6d6f6c723dbc81169de597657a2d5fd9c90874ff4d1dd293d",
-    "provenanceScript": "105c0c582c0b5823930e14e6217178c813d97eb03ba2d7375405e10126614439",
+    "provenanceScript": "c8a23dddc2b6ca222c893def8b54a252a76adef20745c7993843e886ab6d9334",
     "evalDataset": "0c5b8b5db653078e6f1a2333164ec523166f7a236da24f67d148acc54df2a472",
     "evalLib": "a4fed850c745cd6f12bd267e815d23dfe68c96effcbf3ae2fc46f66b4df7cf32",
     "evalArtifactSafety": "2652a17e6ab53c2ab2e697f297c387a66905c9e7198eceef352ff52877654ccc",
