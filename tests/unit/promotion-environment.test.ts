@@ -24,8 +24,6 @@ import {
 import { evaluateVisionSafeReview } from "../../eval/vision/safe-review.js";
 import { POPPLER_TIMEOUT_MS, popplerSubprocessEnvironment } from "../../src/qwen/vision.js";
 
-const ROOT = resolve(".");
-
 test("Poppler subprocess environment excludes provider, database, and cloud credentials", () => {
   const environment = popplerSubprocessEnvironment({
     PATH: "safe-path",

@@ -47,26 +47,41 @@ archon-autopilot (container :9000, read-only root)
 Prerequisites on the ECS host:
 
 - the shared pgvector service plus private data and egress networks;
-- `<autopilot-checkout>/.env` (gitignored, mode `0600`) containing only runtime
+- `<autopilot-checkout>/.env` (gitignored, regular/non-symlink, exact mode `0600`) containing only runtime
   settings: dedicated `DATABASE_URL`, DashScope key and reviewer token;
-- `<autopilot-checkout>/.env.migration` (gitignored, mode `0600`) containing the
+- `<autopilot-checkout>/.env.migration` (gitignored, regular/non-symlink, exact mode `0600`) containing the
   bootstrap-only admin DSN and `AUTOPILOT_APP_DB_PASSWORD`; this file is passed only
   to the one-shot bootstrap container, never the application runtime;
+- the trusted 40-character commit SHA of the final merged `main`, obtained from the
+  release/CI record rather than recomputed from an arbitrary host checkout;
 - TLS reverse proxy routing the Autopilot hostname to `127.0.0.1:9100`.
 
 Release:
 
 ```bash
 cd <autopilot-checkout>
-git pull --ff-only
-bash deploy/redeploy.sh
+git fetch origin main
+git switch main
+git merge --ff-only origin/main
+EXPECTED_RELEASE=<trusted-40-character-final-main-sha> bash deploy/redeploy.sh
 ```
 
-The script creates/rotates the dedicated role, migrates as bootstrap admin, applies
+The script first proves `HEAD == origin/main == EXPECTED_RELEASE`, rejects tracked or non-ignored
+untracked changes plus hidden assume-unchanged/skip-worktree index flags, and validates
+both env-file types and exact permissions. It then creates/rotates the
+dedicated role, migrates as bootstrap admin, applies
 least-privilege grants, proves cross-database denial, then builds/replaces the runtime.
 It attaches both networks, mounts the durable ledger, runs `/health`, network-free
 `/ready` and authenticated/metered `/ready/deep`, and
 performs an authenticated intake→pending smoke with cleanup.
+Before those probes it reads the started container's OCI revision label back from
+Docker and requires the same exact expected release.
+
+The old container is stopped and renamed, not deleted, while the candidate is tested.
+Any ordinary failure, hangup, interrupt, or termination removes the candidate, restores the
+old name, restarts the previous container, and polls its `/health`. Only a candidate
+that passes every configured gate causes the stopped backup to be removed. A stale
+rollback container always fails closed for explicit operator inspection.
 
 Post-release external checks:
 

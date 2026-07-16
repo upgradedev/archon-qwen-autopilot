@@ -24,7 +24,7 @@
 # RUN IT — on the box, in the repository:
 #     ssh -i <key.pem> <deployer>@<ecs-host>
 #     cd <autopilot-checkout> && git pull --ff-only
-#     bash deploy/redeploy.sh
+#     EXPECTED_RELEASE=<exact-40-character-final-main-sha> bash deploy/redeploy.sh
 #
 # Production requires a .env with DASHSCOPE_API_KEY and REVIEWER_TOKEN next to
 # the repository. Missing real-Qwen or reviewer credentials fail closed.
@@ -34,6 +34,7 @@
 #   -h|--help    show this help.
 #
 # CONFIG (env-overridable):
+#   EXPECTED_RELEASE (required exact 40-character lowercase Git commit)
 #   APP_DIR (repository root) · IMAGE (archon-qwen-autopilot:latest)
 #   CONTAINER (archon-autopilot) · HOST_PORT (9100) · CONTAINER_PORT (9000)
 #   DATA_NETWORK / EDGE_NETWORK (auto-detected MemoryAgent compose networks)
@@ -57,6 +58,10 @@ SMOKE_VENDOR="${SMOKE_VENDOR:-__smoke__}"
 LEDGER_HOST_DIR="${LEDGER_HOST_DIR:-/var/lib/archon-autopilot/ledger}"
 LEDGER_CONTAINER_PATH="${LEDGER_CONTAINER_PATH:-/var/lib/archon-ledger/ledger.jsonl}"
 DO_SMOKE=1
+BACKUP_CONTAINER="${CONTAINER}-rollback"
+HAD_PREVIOUS_CONTAINER=0
+REPLACEMENT_ACTIVE=0
+RELEASE_COMPLETE=0
 
 env_file_value() {
   local name="$1"
@@ -78,13 +83,81 @@ ok()   { printf '    \033[32m✓ %s\033[0m\n' "$*"; }
 warn() { printf '    \033[33m! %s\033[0m\n' "$*"; }
 die()  { printf '\n\033[31mABORT: %s\033[0m\n' "$*" >&2; exit 1; }
 
+rollback_release() {
+  local exit_code=$?
+  local restored=0
+  trap - EXIT HUP INT TERM
+
+  if [ "$exit_code" -eq 0 ] || [ "$REPLACEMENT_ACTIVE" -ne 1 ] || [ "$RELEASE_COMPLETE" -eq 1 ]; then
+    exit "$exit_code"
+  fi
+
+  warn "candidate release failed; restoring the pre-release container"
+  if [ "$HAD_PREVIOUS_CONTAINER" -eq 1 ]; then
+    # If the backup exists, the original name is either the failed candidate or
+    # an incomplete `docker run`. Remove only that name, then restore the stopped
+    # pre-release container. If rename never completed, the old container still
+    # owns the original name and must never be removed.
+    if docker container inspect "$BACKUP_CONTAINER" >/dev/null 2>&1; then
+      docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+      if docker rename "$BACKUP_CONTAINER" "$CONTAINER" >/dev/null 2>&1; then
+        restored=1
+      fi
+    else
+      restored=1
+    fi
+
+    if [ "$restored" -eq 1 ] && docker start "$CONTAINER" >/dev/null 2>&1; then
+      for _ in $(seq 1 15); do
+        if curl -fsS "$BASE_URL/health" >/dev/null 2>&1; then
+          ok "pre-release container restored and healthy"
+          exit "$exit_code"
+        fi
+        sleep 2
+      done
+      warn "pre-release container restarted but /health did not recover; manual inspection required"
+    else
+      warn "automatic restore failed; start '$BACKUP_CONTAINER' (or '$CONTAINER') manually"
+    fi
+  else
+    # A first deployment has no old service to restore, but must not leave a
+    # partially created candidate behind.
+    docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+    warn "candidate container removed; there was no pre-release container to restore"
+  fi
+
+  exit "$exit_code"
+}
+
 # ── Preflight ─────────────────────────────────────────────────────────────────
 log "Preflight"
 command -v docker >/dev/null 2>&1 || die "docker not found."
 command -v curl   >/dev/null 2>&1 || die "curl not found (needed for health/smoke)."
+command -v git    >/dev/null 2>&1 || die "git not found (needed for exact-release verification)."
 cd "$APP_DIR" 2>/dev/null || die "app dir '$APP_DIR' not found. Sync code there first (see header)."
 [ -f Dockerfile ] || die "no Dockerfile in $APP_DIR — is this the autopilot repo?"
 ok "app dir: $APP_DIR"
+
+[[ "${EXPECTED_RELEASE:-}" =~ ^[0-9a-f]{40}$ ]] \
+  || die "EXPECTED_RELEASE must be the exact 40-character lowercase final-main Git commit."
+HEAD_RELEASE="$(git rev-parse --verify 'HEAD^{commit}' 2>/dev/null || true)"
+[ "$HEAD_RELEASE" = "$EXPECTED_RELEASE" ] \
+  || die "checked-out HEAD does not match EXPECTED_RELEASE; refusing to deploy an ambiguous revision."
+ORIGIN_MAIN_RELEASE="$(git rev-parse --verify 'refs/remotes/origin/main^{commit}' 2>/dev/null || true)"
+[ "$ORIGIN_MAIN_RELEASE" = "$EXPECTED_RELEASE" ] \
+  || die "fetched origin/main does not match EXPECTED_RELEASE; fetch final main before deployment."
+# Lowercase `git ls-files -v` markers hide assume-unchanged files; `S` hides
+# skip-worktree files. Reject both so index flags cannot conceal a modified build
+# input, then refresh and include all non-ignored untracked files because the
+# Docker allowlist admits complete source directories, not only known filenames.
+if git ls-files -v | grep -E '^[a-zS] ' >/dev/null; then
+  die "Git assume-unchanged/skip-worktree flags are forbidden on a release checkout."
+fi
+git update-index -q --really-refresh >/dev/null 2>&1 \
+  || die "tracked working tree is dirty; commit or restore tracked changes before deployment."
+[ -z "$(git status --porcelain=v1 --untracked-files=normal 2>/dev/null)" ] \
+  || die "non-ignored working tree is dirty; remove untracked build inputs and restore tracked changes."
+ok "exact expected release and clean non-ignored working tree verified (value not printed)"
 
 # MemoryAgent intentionally separates DB traffic from internet egress.  Picking
 # one arbitrary `*memoryagent*` network is unsafe: `edge` cannot resolve `db`,
@@ -111,15 +184,15 @@ ok "reusing MemoryAgent edge/egress network: $EDGE_NETWORK"
 
 # Load DASHSCOPE_API_KEY (+ DASHSCOPE_BASE_URL) from a .env next to compose, if present.
 ENV_ARGS=()
-if [ -f .env ]; then
-  ENV_ARGS+=(--env-file .env)
-  ok ".env found — real Qwen credentials will be passed through"
-  REVIEWER_TOKEN="${REVIEWER_TOKEN:-$(env_file_value REVIEWER_TOKEN)}"
-  DASHSCOPE_API_KEY="${DASHSCOPE_API_KEY:-$(env_file_value DASHSCOPE_API_KEY)}"
-  DASHSCOPE_BASE_URL="${DASHSCOPE_BASE_URL:-$(env_file_value DASHSCOPE_BASE_URL)}"
-else
-  die "no .env — production refuses silent Fake Qwen/in-memory operation"
-fi
+[ -f .env ] || die "no .env — production refuses silent Fake Qwen/in-memory operation"
+[ ! -L .env ] || die ".env must be a regular non-symlink file with exact mode 0600."
+[ "$(stat -c '%a' -- .env 2>/dev/null || true)" = "600" ] \
+  || die ".env must be a regular non-symlink file with exact mode 0600."
+ENV_ARGS+=(--env-file .env)
+ok ".env found — real Qwen credentials will be passed through"
+REVIEWER_TOKEN="${REVIEWER_TOKEN:-$(env_file_value REVIEWER_TOKEN)}"
+DASHSCOPE_API_KEY="${DASHSCOPE_API_KEY:-$(env_file_value DASHSCOPE_API_KEY)}"
+DASHSCOPE_BASE_URL="${DASHSCOPE_BASE_URL:-$(env_file_value DASHSCOPE_BASE_URL)}"
 DATABASE_URL="${DATABASE_URL:-$(env_file_value DATABASE_URL)}"
 DASHSCOPE_BASE_URL="${DASHSCOPE_BASE_URL:-https://dashscope-intl.aliyuncs.com/compatible-mode/v1}"
 [ -n "${DASHSCOPE_API_KEY:-}" ] || die "DASHSCOPE_API_KEY is empty; production authenticity is fail-closed."
@@ -127,15 +200,14 @@ DASHSCOPE_BASE_URL="${DASHSCOPE_BASE_URL:-https://dashscope-intl.aliyuncs.com/co
 [ "${#SMOKE_VENDOR}" -le 48 ] && [[ "$SMOKE_VENDOR" =~ ^[A-Za-z0-9_-]+$ ]] \
   || die "SMOKE_VENDOR must contain 1–48 ASCII letters, digits, underscores, or hyphens."
 [ -n "$DATABASE_URL" ] || die "DATABASE_URL must be the dedicated autopilot_app runtime DSN in .env."
-[ -f "$MIGRATION_ENV_FILE" ] || die "missing $MIGRATION_ENV_FILE — copy .env.migration.example and set bootstrap/admin credentials."
+[ -f "$MIGRATION_ENV_FILE" ] && [ ! -L "$MIGRATION_ENV_FILE" ] \
+  || die "missing or symlinked $MIGRATION_ENV_FILE — create a regular file from .env.migration.example."
 [ -z "$(env_file_value MIGRATION_DATABASE_URL)" ] \
   || die "MIGRATION_DATABASE_URL must not be stored in runtime .env; keep it only in $MIGRATION_ENV_FILE."
-case "$(stat -c '%a' "$MIGRATION_ENV_FILE" 2>/dev/null || true)" in
-  600|400) ;;
-  *) die "$MIGRATION_ENV_FILE must have mode 0600 or 0400." ;;
-esac
+[ "$(stat -c '%a' -- "$MIGRATION_ENV_FILE" 2>/dev/null || true)" = "600" ] \
+  || die "$MIGRATION_ENV_FILE must have exact mode 0600."
 ok "production Qwen + reviewer credentials are configured (values not printed)"
-ok "dedicated runtime and migration credentials are separated (values not printed)"
+ok "runtime and migration env files are regular, mode 0600, and credential-separated (values not printed)"
 
 # The real JSONL journal sink must survive container replacement.  The runtime
 # image uses uid/gid 1000 (`node`), so provision a private host directory and
@@ -172,12 +244,35 @@ ok "dedicated role + schema + cross-database isolation verified"
 
 # ── (Re)deploy the backend on host port $HOST_PORT ────────────────────────────
 log "(Re)deploy backend on host port $HOST_PORT"
-docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+if docker container inspect "$BACKUP_CONTAINER" >/dev/null 2>&1; then
+  die "stale rollback container '$BACKUP_CONTAINER' exists; inspect/recover it before another deployment."
+fi
+if docker container inspect "$CONTAINER" >/dev/null 2>&1; then
+  HAD_PREVIOUS_CONTAINER=1
+fi
+
+# Arm rollback before the first serving-container mutation. The previous
+# container is stopped and renamed, never deleted, until every live probe and
+# smoke succeeds. Any normal error, INT, or TERM restores it under the original
+# name and verifies its network-free health endpoint.
+REPLACEMENT_ACTIVE=1
+trap rollback_release EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+if [ "$HAD_PREVIOUS_CONTAINER" -eq 1 ]; then
+  docker stop --time 30 "$CONTAINER" >/dev/null \
+    || die "could not stop the pre-release container; candidate was not started."
+  docker rename "$CONTAINER" "$BACKUP_CONTAINER" >/dev/null \
+    || die "could not preserve the pre-release container under its rollback name."
+  ok "pre-release container preserved for automatic rollback"
+fi
 # --env-file FIRST so the explicit -e DATABASE_URL (isolated autopilot DB) + -e PORT
 # always win over any DATABASE_URL/PORT a `.env` copied from .env.example may carry.
 # Two bounded document renders can each retain up to 48 MiB of Poppler output;
 # 128 MiB keeps that explicit process-wide cap inside the 512 MiB container.
 docker run -d --name "$CONTAINER" --restart unless-stopped \
+  --label "org.opencontainers.image.revision=$EXPECTED_RELEASE" \
   --network "$DATA_NETWORK" \
   -p "127.0.0.1:${HOST_PORT}:${CONTAINER_PORT}" \
   --read-only \
@@ -198,7 +293,11 @@ docker run -d --name "$CONTAINER" --restart unless-stopped \
   "$IMAGE" >/dev/null \
   || die "docker run failed."
 docker network connect --gw-priority 1 "$EDGE_NETWORK" "$CONTAINER" \
-  || { docker rm -f "$CONTAINER" >/dev/null 2>&1 || true; die "could not attach runtime to edge/egress network '$EDGE_NETWORK'."; }
+  || die "could not attach runtime to edge/egress network '$EDGE_NETWORK'."
+CANDIDATE_RELEASE="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$CONTAINER" 2>/dev/null || true)"
+[ "$CANDIDATE_RELEASE" = "$EXPECTED_RELEASE" ] \
+  || die "running candidate revision label does not match EXPECTED_RELEASE."
+ok "running candidate revision label verified (value not printed)"
 ok "backend container '$CONTAINER' up (data + edge networks, edge gw-priority=1, localhost port ${HOST_PORT}->${CONTAINER_PORT})"
 
 # ── Health probe (poll until 200) ─────────────────────────────────────────────
@@ -249,6 +348,18 @@ if [ "$DO_SMOKE" -eq 1 ]; then
       'import pg from "pg"; const c=new pg.Client({connectionString:process.env.DATABASE_URL}); await c.connect(); await c.query("DELETE FROM ap_workitems WHERE item->\x27invoice\x27->>\x27vendor\x27 = $1",[process.env.SMOKE_VENDOR]); await c.query("DELETE FROM agent_memory WHERE vendor = $1",[process.env.SMOKE_VENDOR]); await c.end();' >/dev/null 2>&1 \
     && ok "smoke rows removed (queue restored)" \
     || warn "could not auto-remove smoke rows; remove vendor $SMOKE_VENDOR manually"
+fi
+
+# The candidate is authoritative only after all configured checks pass. Disarm
+# rollback first, then delete the stopped backup. If backup cleanup itself fails,
+# retain the healthy candidate and fail for explicit operator cleanup rather than
+# destroying a release that already passed its gates.
+RELEASE_COMPLETE=1
+trap - EXIT HUP INT TERM
+if [ "$HAD_PREVIOUS_CONTAINER" -eq 1 ]; then
+  docker rm -f "$BACKUP_CONTAINER" >/dev/null \
+    || die "release passed, but the stopped rollback container could not be removed; clean it up before the next deploy."
+  ok "passed candidate committed; pre-release container removed"
 fi
 
 log "DONE — dedicated autopilot DB role migrated/isolated, backend ready, authenticated intake/pending verified."

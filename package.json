@@ -36,7 +36,8 @@
     "test:pentest": "node --import tsx --test tests/pentest/excessive-agency.test.ts tests/pentest/prompt-injection.test.ts tests/pentest/authz-hitl.test.ts tests/pentest/sensitive-data-exposure.test.ts tests/pentest/sink-injection.test.ts",
     "test:e2e": "playwright test",
     "load": "k6 run load/workflow-load.js",
-    "test:docs": "node --import tsx --test tests/docs/docs-consistency.test.ts tests/docs/supply-chain-consistency.test.ts",
+    "test:deploy": "bash tests/deploy/redeploy-release-safety.test.sh",
+    "test:docs": "node --import tsx --test tests/docs/docs-consistency.test.ts tests/docs/supply-chain-consistency.test.ts && npm run test:deploy",
     "coverage": "c8 --check-coverage --statements=80 --branches=80 --functions=80 --lines=80 node --import tsx --test --test-concurrency=1 tests/unit/eval-artifact-safety.test.ts tests/unit/embeddings.test.ts tests/unit/memory.test.ts tests/unit/normalize.test.ts tests/unit/validate.test.ts tests/unit/tools.test.ts tests/unit/smtp-sink.test.ts tests/unit/ledger-sink.test.ts tests/unit/deps.test.ts tests/unit/analysis-tools.test.ts tests/unit/loop.test.ts tests/unit/workflow.test.ts tests/unit/rate-limit.test.ts tests/unit/vision.test.ts tests/unit/server.test.ts tests/unit/skills.test.ts tests/unit/mcp.test.ts tests/security/upload-guard.test.ts tests/security/codeql-sarif-gate.test.ts tests/pentest/excessive-agency.test.ts tests/pentest/prompt-injection.test.ts tests/pentest/authz-hitl.test.ts tests/pentest/sensitive-data-exposure.test.ts tests/pentest/sink-injection.test.ts tests/integration/workflow-http.test.ts tests/integration/pgvector-store.test.ts tests/integration/mcp-transport.test.ts tests/integration/learning-from-corrections.test.ts tests/integration/readiness.e2e.test.ts"
   },
   "dependencies": {

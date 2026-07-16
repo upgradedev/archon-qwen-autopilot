@@ -26,7 +26,6 @@ import {
   PROMOTION_PROGRESS_ROOT_STATUS,
   promotionGate,
   PROMOTION_MODELS,
-  promotionReleaseSnapshot,
   scheduledExperimentComplete,
   stabilityFingerprint,
   summarizeDecision,

@@ -4,7 +4,7 @@
 // an earlier attempt and no model is silently substituted.
 
 import { mkdir } from "node:fs/promises";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { dirname, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { EVAL_SET } from "./dataset.js";
 import { assertFrozenDataset } from "./hash.js";

@@ -71,33 +71,49 @@ Run on the ECS host from the final repository checkout:
 
 ```bash
 cd <autopilot-checkout>
-git pull --ff-only
-bash deploy/redeploy.sh
+git fetch origin main
+git switch main
+git merge --ff-only origin/main
+EXPECTED_RELEASE=<trusted-40-character-final-main-sha> bash deploy/redeploy.sh
 ```
+
+`EXPECTED_RELEASE` is mandatory, lowercase, and exactly 40 hexadecimal characters.
+Copy it from the final merged-main release/CI record; do not derive it from whatever
+revision happens to be checked out on the host. The script independently requires
+both `HEAD` and the fetched `refs/remotes/origin/main` to match it, rejects
+assume-unchanged/skip-worktree index flags, and requires
+the non-ignored working tree (including untracked Docker build inputs) to be clean.
 
 Optional `--no-smoke` skips only the intake/pending round-trip; it still runs health
 and readiness probes. A normal release should not skip the smoke.
 
 `deploy/redeploy.sh` performs, in order:
 
-1. Verify Docker/curl, repository path, both networks, production Qwen/reviewer
-   settings, dedicated runtime DSN, and mode-0600 migration env separation.
+1. Verify Docker/curl/git, exact expected release, clean non-ignored checkout, both
+   networks, production Qwen/reviewer settings, dedicated runtime DSN, and regular
+   non-symlink runtime/migration env files with exact mode `0600`.
 2. Provision `/var/lib/archon-autopilot/ledger` as a private persistent directory for
    the image's uid/gid 1000.
 3. Build the final backend image.
 4. In a one-shot container, create/rotate `autopilot_app`, create `autopilot` if
    absent, migrate as admin, grant least privilege, and prove the runtime role cannot
    connect to `memoryagent`.
-5. Replace `archon-autopilot` with:
+5. Refuse any stale rollback container, stop and preserve the current runtime under
+   a rollback name, then start the candidate `archon-autopilot` with:
    - `--network <memoryagent>_data`, then connect `<memoryagent>_edge`;
    - `-p 127.0.0.1:9100:9000`;
    - read-only root, `/tmp` tmpfs, all Linux capabilities dropped, and
      `no-new-privileges`;
    - durable ledger host bind mount;
    - explicit `DATABASE_URL`, `PORT`, and `LEDGER_JSONL_PATH` overrides after `.env`.
-6. Poll `/health`, network-free `/ready`, and authenticated/metered `/ready/deep`.
+6. Read the running candidate's OCI revision label back from Docker, require it to
+   equal `EXPECTED_RELEASE`, then poll `/health`, network-free `/ready`, and
+   authenticated/metered `/ready/deep`.
 7. Submit a dedicated authenticated smoke invoice, read `/pending` with the private Bearer token,
    then delete only the smoke vendor's work-item/memory rows.
+8. Only after every gate passes, disarm rollback and remove the stopped backup. Any
+   earlier normal error, `HUP`, `INT`, or `TERM` removes the candidate, restores the previous
+   container/name, restarts it, and polls its network-free `/health` endpoint.
 
 Useful overrides are documented in the script header: `APP_DIR`, `IMAGE`, `CONTAINER`,
 `HOST_PORT`, `DATA_NETWORK`, `EDGE_NETWORK`, `MIGRATION_ENV_FILE`, `BASE_URL`, `PUBLIC_BASE_URL`,
@@ -112,8 +128,13 @@ curl -fsS http://127.0.0.1:9100/health
 curl -fsS http://127.0.0.1:9100/ready
 docker inspect archon-autopilot --format '{{json .NetworkSettings.Networks}}'
 docker inspect archon-autopilot --format '{{json .HostConfig.PortBindings}}'
+docker inspect archon-autopilot --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
 test -d /var/lib/archon-autopilot/ledger
 ```
+
+The revision label must equal the same trusted `EXPECTED_RELEASE` supplied to the
+deploy command. Never publish raw `docker inspect` output containing infrastructure
+identifiers; retain it only as private release evidence and expose a redacted proof.
 
 From outside the host:
 

@@ -357,14 +357,22 @@ is idempotent, schema-first, fail-closed, and runs a health + intake/pending smo
 
 ```bash
 ssh -i <key.pem> <deployer>@<ecs-host>
-cd <autopilot-checkout> && git pull --ff-only
-bash deploy/redeploy.sh
+cd <autopilot-checkout>
+git fetch origin main && git switch main && git merge --ff-only origin/main
+EXPECTED_RELEASE=<trusted-40-character-final-main-sha> bash deploy/redeploy.sh
 ```
 
 It attaches to private data and egress networks, uses database `autopilot` with a
 dedicated least-privilege `autopilot_app` runtime role,
 mounts the durable JSONL ledger from the host, builds +
 serves the backend (`9000` → loopback `9100` → HTTPS proxy), and proves the round-trip.
+The release fails before build unless the trusted expected SHA exactly matches both
+the checked-out `HEAD` and the freshly fetched `origin/main`, on a clean
+non-ignored checkout (including no hidden Git index flags or untracked build inputs)
+and both non-symlink credential files have mode `0600`. During the
+live swap, the stopped pre-release container remains available under a rollback name;
+the candidate's revision label is re-read before probes, and any failed
+start/readiness/smoke restores and health-checks the old container before exit.
 Port 9100 must **not** be public. The authoritative runbook is
 [`deploy/DEPLOY_STATE.md`](deploy/DEPLOY_STATE.md).
 
