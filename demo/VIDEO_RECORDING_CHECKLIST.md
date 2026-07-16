@@ -39,17 +39,19 @@ not add a tenth idea.
    boundary.
 2. **Architecture:** public PREVIEW differs from reviewer PENDING; Qwen proposes and
    the authenticated human decides.
-3. **Live document → PENDING:** show actual vision ID, streamed recall/validate/
-   duplicate/variance observations, concise rationale, exact proposal, no execution.
+3. **Live document → PENDING:** show actual vision ID, streamed recall/validate plus
+   duplicate/variance/context observations when relevant, concise rationale, exact
+   proposal, no execution.
 4. **Exact human control:** amend typed arguments, approve, then show proposed→approved
    diff and the configured JSONL outcome. State atomic claim and explicit uncertain
    recovery.
 5. **Correction signal:** €3,000 baseline → human-corrected €5,000 overbill → €5,000
    re-bill review, with €3,000 negative control still a payment proposal.
 6. **Evidence:** `22/22` tuned developer-labelled deterministic regression, average
-   `2.4` autonomous evidence steps (53/22, rounded), separate hash-bound live
-   protocols, 16 original
-   synthetic vision fixtures. Do not call any of these held-out or expert ground truth.
+   `2.4` autonomous evidence steps (53/22, rounded), a fixed 12-case synthetic
+   workflow model, and 16 original synthetic vision fixtures. No candidate model was
+   promoted. Do not call any of these held-out, expert ground truth, labor savings,
+   or live-model accuracy.
 7. **Structural safety:** recognized warning, item still PENDING, model and four-tool
    MCP catalogs without approve/amend/reject/recover/pay/execute capability.
 8. **Alibaba/Qwen proof:** exact application SHA, green CI, sanitized Alibaba context,
@@ -94,30 +96,38 @@ reviewed final with a raw capture.
 
 ## Render and mechanical acceptance
 
-From the exact submission checkout, use verified final labels:
+From the exact public submission checkout, run the canonical rights-safe real-motion
+pipeline:
 
 ```powershell
-$env:PUBLIC_APP_URL='https://autopilot.43.106.13.19.sslip.io'
-$env:VIDEO_MODEL_LABEL='qwen-plus · qwen-vl-max · text-embedding-v4'
-$env:CAPTION_ONLY='true' # rights-safe: no TTS, no third-party music, local silence
-# Required only if the label contains qwen3.7:
-# $env:VIDEO_PROMOTION_EVIDENCE='eval/results/<same-release-promotion-pass>.json'
-python scripts/build_video.py
+node demo/media-tools/record-live-motion.cjs `
+  --expected-sha 203f159df25f825a0b994a2f8a4d2c0892b45390 `
+  --capture-review demo/gallery/CAPTURE_REVIEW.json `
+  --replace
+
+python demo/media-tools/build-real-motion-submission.py `
+  --expected-sha 203f159df25f825a0b994a2f8a4d2c0892b45390 `
+  --replace
+
+python demo/media-tools/compose_real_motion_video.py --verify-only
 ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 demo/final-media/autopilot-demo.mp4
 ```
 
-For narrated mode, remove `CAPTION_ONLY`, set `VOICE_RIGHTS_ATTESTED=true` only after
-confirming public-use rights, and run the same command. Caption-only mode must finish
-at exactly 168 seconds/30 fps and create `autopilot-demo.en.srt` plus
-`autopilot-demo.caption-only.json` beside the MP4.
+The one-command builder creates the fixed 168-second/30-fps caption-only base
+internally, then overlays genuine public-preview motion while preserving generated
+digital silence. It must create `autopilot-demo.en.srt`,
+`autopilot-demo.real-motion.json`, and `autopilot-demo.qa.json` beside the MP4.
 
 - [ ] Renderer reports exactly `9 beats`; final is 1920×1080 H.264/AAC and `<175s`.
 - [ ] Watch once with headphones and once muted with captions/overlays. Caption-only
   mode must contain intentional digital silence and no unexpected sound; narrated
   mode must contain no clipped word, silent ending, or drift. Neither mode may have
   a blank lead-in, unreadable crop/caption, or stale label.
-- [ ] Caption-only manifest reports no TTS, no third-party music, nine cues, 30 fps,
-  1920×1080, and a strict duration below 175 seconds; its MP4/SRT hashes match.
+- [ ] Real-motion manifest + QA report no captured speech, no TTS, no third-party
+  music, nine cues, 30 fps, 1920×1080, genuine frame diversity, and a strict
+  duration below 175 seconds; MP4/SRT/thumbnail/evidence hashes match. They must also
+  attest that the ≤9-second action-aware highlight ends at the final raw browser frame
+  and was consumed in full by the 00:19–00:28 overlay.
 - [ ] Scrub frame-by-frame around token entry, terminal/API proof, browser transitions,
   and end card. No secret or private identifier flashes for a single frame.
 - [ ] Test the MP4 on a second device, then upload to YouTube, Vimeo, or Youku as

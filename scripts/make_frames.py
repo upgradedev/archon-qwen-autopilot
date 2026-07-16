@@ -610,8 +610,8 @@ def build_beats(assets) -> list[Beat]:
     # 3 · Original synthetic invoice to PENDING on the live deployment
     add("03-live-pending",
         "On the final Alibaba deployment, an original synthetic invoice document enters the reviewer flow. Qwen "
-        "extracts the document, recalls vendor evidence, validates arithmetic, checks "
-        "duplicates and computes variance. The live trace shows tool calls and observations, "
+        "extracts the document, recalls vendor evidence, validates arithmetic, and selects "
+        "the relevant duplicate, variance, or context checks. The live trace shows tool calls and observations, "
         "then stops at one durable pending proposal. Nothing has executed.",
         lambda: scene_image(media["pending"], "Synthetic invoice → durable PENDING",
             "Original demo data · Qwen evidence loop · nothing executed"))
@@ -639,10 +639,11 @@ def build_beats(assets) -> list[Beat]:
     add("06-evidence",
         "The deterministic workflow matches all twenty-two developer-labelled regression "
         "cases, with an average two-point-four autonomous evidence steps before a proposal. "
-        "That is not live-model accuracy. Separate same-attempt, hash-bound Qwen decision "
-        "and vision protocols retain raw outcomes, errors, stability, latency and promotion gates.",
+        "That is not live-model accuracy or a labor-savings result. A fixed twelve-case "
+        "synthetic workflow comparison reports only modeled review seconds and checkpoints, "
+        "and sixteen original vision fixtures retain raw outcomes. No candidate model was promoted.",
         lambda: scene_eval(
-            "22/22 tuned offline regression · separate hash-bound Qwen A/B evidence"))
+            "22/22 tuned offline · 12-case modeled workflow · 16 vision fixtures"))
 
     # 7 · Structural safety
     add("07-safety",

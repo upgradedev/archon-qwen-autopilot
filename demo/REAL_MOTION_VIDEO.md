@@ -1,10 +1,12 @@
 # Final real-motion submission video
 
 This is the publication candidate path. It keeps the existing nine claim-locked,
-caption-led beats and places **genuine live browser interaction** in the 00:13–00:28
-product-boundary beat. The footage shows the real isolated public preview: Qwen
-streams the four evidence tools, the proposal is explicitly non-durable, and no
-approve/amend/reject control exists. Nothing is uploaded or published here.
+caption-led beats, preserves the architecture for the first six seconds of the
+00:13–00:28 product-boundary beat, and then places **genuine live browser
+interaction** at 00:19–00:28. The footage shows the real isolated public preview:
+Qwen streams the relevant side-effect-free evidence steps, the proposal is explicitly
+non-durable, and no approve/amend/reject control exists. Nothing is uploaded or
+published here.
 
 Production capture is intentionally blocked until the exact deployment and
 `demo/gallery/CAPTURE_REVIEW.json` both pass. The recorder never reads a reviewer
@@ -28,11 +30,10 @@ digital silence, SRT bounds, evidence hashes and independent post-build re-verif
 
 ## Final production run
 
-After the final exact deploy and canonical media capture, substitute the exact
-Autopilot runtime SHA:
+The exact deployed Autopilot runtime is already locked:
 
 ```powershell
-$sha = '<FINAL_AUTOPILOT_RUNTIME_SHA>'
+$sha = '203f159df25f825a0b994a2f8a4d2c0892b45390'
 
 node demo/media-tools/record-live-motion.cjs `
   --expected-sha $sha `
@@ -46,11 +47,18 @@ python demo/media-tools/compose_real_motion_video.py --verify-only
 ```
 
 The recorder binds the exact `CAPTURE_REVIEW` bytes and requires its decision canary
-to report `qwen-plus` plus the exact ordered tool set
-`recall_vendor_history → validate_invoice → check_duplicate →
-compute_variance_vs_history`. All four labels must also be visible in the recorded
-process view together with “isolated preview—nothing persisted” and the explicit
-absence of approve/amend/reject controls. No durable reviewer item is created.
+to report `qwen-plus`, start with `recall_vendor_history`, include
+`validate_invoice`, and contain only the five side-effect-free read/analyze tools.
+It records the exact relevant subset chosen in that run and independently applies
+the same policy to the visible public preview. The process view must also show
+“isolated preview—nothing persisted” and the explicit absence of
+approve/amend/reject controls. No durable reviewer item is created.
+It builds an action-aware highlight no longer than the canonical nine-second overlay:
+an action-centered segment (one-second pre-roll through 1.25-second post-click) retains
+the synthetic entry/click, while the final four raw seconds retain the completed proposal
+and human-boundary hold. The compositor refuses
+any highlight longer than its 00:19–00:28 window and records that the entire live input
+was consumed; diversity alone cannot satisfy this boundary gate.
 
 Final judge-facing artifacts:
 

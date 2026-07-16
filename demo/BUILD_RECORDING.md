@@ -16,12 +16,15 @@ project, a chat attachment, or a desktop scratch file as the only copy.
   attempt 23 completed with terminal `Success`, exit code `0`, the application marker,
   and the aggregate success marker.
 - [x] The exact final application SHA was fetched, clean, built, deployed, and
-  exercised through every gate below before media capture.
-- Project-contained redacted evidence records exact checkout, immutable post-merge
-  CI, production build, singleton runtime-env proof, schema/bootstrap, least privilege,
-  cross-database denial, health/readiness/deep readiness, a live
-  `qwen-vl-max` extraction, a real `qwen-plus` multi-step intake→PENDING smoke with
-  authenticated rejection and targeted cleanup, and public TLS canaries for that SHA.
+  exercised through every exact-deploy gate before media capture.
+- Project-contained redacted deploy evidence records exact checkout, production
+  build, singleton runtime-env proof, schema/bootstrap,
+  least privilege, cross-database denial, health/readiness/deep readiness, a real
+  `qwen-plus` multi-step JSON intake→PENDING smoke with authenticated rejection and
+  targeted cleanup, and public TLS canaries for that SHA. The separate final-media
+  gate independently verifies immutable exact-SHA CI, CodeQL and image-SBOM runs,
+  then freshly exercises `qwen-vl-max` document extraction and binds its
+  response-reported model id before publication.
 - A later documentation/media-only submission commit may legitimately differ from
   the deployed application SHA. Record both identities and describe them accurately.
 - Any later change to runtime code, dependencies, Docker context, deployment scripts,

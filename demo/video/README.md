@@ -14,9 +14,13 @@ or `.artifacts/`, and place the reviewed sanitized render at:
 demo/final-media/autopilot-demo.mp4
 ```
 
-Build locally only after the five sanitized live captures named in the final-media
-checklist exist. The current renderer has exactly nine judge-first beats, requires
-the final HTTPS URL and verified model IDs, and refuses every stale fallback. Use
+This legacy command builds only the **intermediate caption base**; it is not the
+publication candidate. The canonical final must be built through
+[`../REAL_MOTION_VIDEO.md`](../REAL_MOTION_VIDEO.md), which records genuine public
+interaction and produces the final real-motion manifest/QA. Build the base locally
+only after the five sanitized live captures named in the final-media checklist
+exist. The renderer has exactly nine judge-first beats, requires the final HTTPS URL
+and verified model IDs, and refuses every stale fallback. Use
 Python 3.11, ffmpeg, and the reviewed hash-locked Python dependency graph. The
 rights-safe path invokes Pillow/FFmpeg only; installing the lock does not authorize
 or invoke edge-tts:
@@ -30,10 +34,10 @@ CAPTION_ONLY=true \
 python scripts/build_video.py
 ```
 
-That path is fixed at 168 seconds/30 fps, uses burned captions and a measured English
-SRT, and generates a silent stereo soundtrack locally. It makes no TTS/network call,
-uses no third-party music, verifies 1920×1080 H.264/AAC, and exclusively publishes
-the MP4/SRT/rights manifest only after all gates pass. Narrated mode remains the
+That intermediate path is fixed at 168 seconds/30 fps, uses burned captions and a
+measured English SRT, and generates a silent stereo soundtrack locally. It makes no
+TTS/network call, uses no third-party music, and verifies 1920×1080 H.264/AAC. It
+must then be consumed by the canonical real-motion builder. Narrated mode remains the
 unchanged default when `CAPTION_ONLY` is unset and still requires
 `VOICE_RIGHTS_ATTESTED=true`. The manual `Generate Demo Video` workflow exposes the
 same choice through its `caption_only` boolean; that branch does not receive the

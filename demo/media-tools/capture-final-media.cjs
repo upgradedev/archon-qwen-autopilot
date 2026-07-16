@@ -10,7 +10,7 @@
  * The reviewer token is read only into memory; it is never logged, serialized, put
  * in a URL, browser trace, screenshot, or tracked file.
  *
- * Raw candidates stay below ignored `demo/.private-captures/`. The five renderer
+ * Raw candidates stay below ignored `demo/.private-captures/`. The six renderer
  * inputs, gallery variants, and the tracked review manifest are transactionally
  * promoted only after every source, model, readiness, CI, workflow, cleanup, and
  * pixel-sanitization gate. A failed promotion restores the previous reviewed set.
@@ -30,6 +30,7 @@ const RELEASE_DIR = path.join(PRIVATE_ROOT, 'release');
 const FINAL_DIR = path.join(ROOT, 'demo', 'final-media');
 const GALLERY_DIR = path.join(ROOT, 'demo', 'gallery');
 const REVIEW_MANIFEST_PATH = path.join(GALLERY_DIR, 'CAPTURE_REVIEW.json');
+const ALIBABA_REDACTION_PROFILE_PATH = path.join(__dirname, 'alibaba-proof-redaction.json');
 const FIXED_REPOSITORY = 'upgradedev/archon-qwen-autopilot';
 const FIXED_PROJECT = 'archon-qwen-autopilot';
 const FIXED_REGION = 'ap-southeast-1';
@@ -68,12 +69,15 @@ const CANONICAL_OUTPUT_PATHS = new Set([
   ...Object.keys(GALLERY_MAP).map((name) => path.join(GALLERY_DIR, name)),
   REVIEW_MANIFEST_PATH,
 ]);
-const REQUIRED_TRACE_TOOLS = Object.freeze([
+const ALLOWED_TRACE_TOOLS = Object.freeze([
   'recall_vendor_history',
   'validate_invoice',
   'check_duplicate',
   'compute_variance_vs_history',
+  'request_more_context',
 ]);
+const REQUIRED_CORE_TRACE_TOOLS = Object.freeze(['recall_vendor_history', 'validate_invoice']);
+const GET_TRANSPORT_RETRY_DELAYS_MS = Object.freeze([250, 500, 1_000, 2_000]);
 const SHA_RE = /^[0-9a-f]{40}$/;
 
 function fail(message) {
@@ -221,8 +225,138 @@ async function installReviewerSessionOnPinnedTopFrame(page, baseUrl, reviewerTok
   assert.equal(new URL(page.url()).origin, baseUrl, 'authenticated application reload left the pinned reviewer-token origin');
 }
 
+function sha256Bytes(bytes) {
+  return crypto.createHash('sha256').update(bytes).digest('hex');
+}
+
 function sha256(file) {
-  return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+  return sha256Bytes(fs.readFileSync(file));
+}
+
+function rectanglesOverlap(left, right) {
+  return left.x < right.x + right.width
+    && left.x + left.width > right.x
+    && left.y < right.y + right.height
+    && left.y + left.height > right.y;
+}
+
+function positiveInteger(value, label) {
+  assert.ok(Number.isInteger(value) && value > 0, `${label} must be a positive integer`);
+  return value;
+}
+
+function canonicalPathIdentity(value) {
+  const resolved = path.resolve(value);
+  return os.platform() === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+function immutableRegularFile(file, label, { minBytes = 1, maxBytes = Number.MAX_SAFE_INTEGER } = {}) {
+  const noFollow = Number.isInteger(fs.constants.O_NOFOLLOW) ? fs.constants.O_NOFOLLOW : 0;
+  const descriptor = fs.openSync(file, fs.constants.O_RDONLY | noFollow);
+  try {
+    const before = fs.fstatSync(descriptor, { bigint: true });
+    assert.equal(before.isFile(), true, `${label} must be a regular file`);
+    assert.equal(before.nlink, 1n, `${label} must have exactly one hard link`);
+    assert.ok(before.size >= BigInt(minBytes) && before.size <= BigInt(maxBytes),
+      `${label} must be between ${minBytes} and ${maxBytes} bytes`);
+    const bytes = fs.readFileSync(descriptor);
+    const after = fs.fstatSync(descriptor, { bigint: true });
+    const fingerprint = (stats) => [stats.dev, stats.ino, stats.nlink, stats.size, stats.mtimeNs, stats.ctimeNs];
+    assert.deepEqual(fingerprint(after), fingerprint(before), `${label} changed while it was being read`);
+    assert.equal(BigInt(bytes.length), before.size, `${label} descriptor returned a partial read`);
+    return { bytes, stats: before };
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+function parseAlibabaRedactionProfile(profileBytes) {
+  let profile;
+  try { profile = JSON.parse(profileBytes.toString('utf8')); }
+  catch (_) { fail('Alibaba redaction profile is not valid JSON'); }
+  assert.equal(profile.schemaVersion, 1, 'unsupported Alibaba redaction profile schema');
+  const source = profile.expectedSourceDimensions || {};
+  const crop = profile.crop || {};
+  for (const [label, rectangle] of [['expectedSourceDimensions', source], ['crop', crop]]) {
+    positiveInteger(rectangle.width, `${label}.width`);
+    positiveInteger(rectangle.height, `${label}.height`);
+  }
+  assert.ok(Number.isInteger(crop.x) && crop.x >= 0, 'crop.x must be a non-negative integer');
+  assert.ok(Number.isInteger(crop.y) && crop.y >= 0, 'crop.y must be a non-negative integer');
+  assert.ok(crop.x + crop.width <= source.width && crop.y + crop.height <= source.height,
+    'Alibaba publishable crop must stay inside the expected source dimensions');
+  const excluded = Array.isArray(profile.excludedSensitiveRegions) ? profile.excludedSensitiveRegions : [];
+  assert.ok(excluded.length >= 2, 'Alibaba redaction profile must declare the sensitive regions excluded by the crop');
+  for (const [index, region] of excluded.entries()) {
+    assert.ok(typeof region.name === 'string' && region.name.trim(), `excludedSensitiveRegions[${index}].name is required`);
+    assert.ok(Number.isInteger(region.x) && region.x >= 0, `excludedSensitiveRegions[${index}].x must be non-negative`);
+    assert.ok(Number.isInteger(region.y) && region.y >= 0, `excludedSensitiveRegions[${index}].y must be non-negative`);
+    positiveInteger(region.width, `excludedSensitiveRegions[${index}].width`);
+    positiveInteger(region.height, `excludedSensitiveRegions[${index}].height`);
+    assert.ok(region.x + region.width <= source.width && region.y + region.height <= source.height,
+      `excludedSensitiveRegions[${index}] must stay inside the expected source dimensions`);
+    assert.equal(rectanglesOverlap(crop, region), false,
+      `publishable crop overlaps sensitive region: ${region.name}`);
+  }
+  return {
+    sourceDimensions: { width: source.width, height: source.height },
+    crop: { x: crop.x, y: crop.y, width: crop.width, height: crop.height },
+    excludedSensitiveRegions: excluded.map(({ name }) => name),
+  };
+}
+
+function loadAlibabaProofSource(rawValue, profileValue = ALIBABA_REDACTION_PROFILE_PATH) {
+  const rawPath = insideRepo(rawValue, '--alibaba-raw', { mustExist: true });
+  const privateCanonical = fs.realpathSync.native(PRIVATE_ROOT);
+  const rawCanonical = fs.realpathSync.native(rawPath);
+  assert.equal(canonicalPathIdentity(rawPath), canonicalPathIdentity(rawCanonical),
+    'Alibaba raw capture path and every ancestor must be canonical and non-symlinked');
+  const privateRelative = path.relative(privateCanonical, rawCanonical);
+  assert.ok(privateRelative && privateRelative !== '..' && !privateRelative.startsWith(`..${path.sep}`) && !path.isAbsolute(privateRelative),
+    'Alibaba raw capture must stay below demo/.private-captures');
+  const raw = immutableRegularFile(rawCanonical, 'Alibaba raw capture', {
+    minBytes: 30_000,
+    maxBytes: 25 * 1024 * 1024,
+  });
+  assert.deepEqual([...raw.bytes.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10],
+    'Alibaba raw capture must be a PNG');
+  const ignored = spawnSync('git', ['check-ignore', '-q', '--', rawCanonical], { cwd: ROOT, stdio: 'ignore' });
+  assert.equal(ignored.status, 0, 'Alibaba raw capture must stay under a gitignored project-local path');
+
+  const profilePath = insideRepo(profileValue, '--alibaba-redaction-profile', { mustExist: true });
+  const expectedProfileCanonical = fs.realpathSync.native(ALIBABA_REDACTION_PROFILE_PATH);
+  const profileCanonical = fs.realpathSync.native(profilePath);
+  assert.equal(canonicalPathIdentity(profilePath), canonicalPathIdentity(ALIBABA_REDACTION_PROFILE_PATH),
+    'Alibaba redaction profile must be the exact tracked canonical profile');
+  assert.equal(canonicalPathIdentity(profilePath), canonicalPathIdentity(profileCanonical),
+    'Alibaba redaction profile path and every ancestor must be canonical and non-symlinked');
+  assert.equal(canonicalPathIdentity(profileCanonical), canonicalPathIdentity(expectedProfileCanonical),
+    'Alibaba redaction profile must not resolve through a symlink or alternate file');
+  const profilePathStats = fs.lstatSync(profilePath);
+  assert.ok(profilePathStats.isFile() && !profilePathStats.isSymbolicLink(),
+    'Alibaba redaction profile must be a regular non-symlink file');
+  const trackedProfile = spawnSync('git', ['ls-files', '--error-unmatch', '--', profileCanonical], {
+    cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+  });
+  assert.equal(trackedProfile.status, 0, 'Alibaba redaction profile must be tracked by Git');
+  const profile = immutableRegularFile(profileCanonical, 'Alibaba redaction profile', { maxBytes: 64 * 1024 });
+  const reviewed = parseAlibabaRedactionProfile(profile.bytes);
+
+  const maxAgeHours = Number(process.env.MAX_ALIBABA_CAPTURE_AGE_HOURS || 168);
+  assert.ok(Number.isFinite(maxAgeHours) && maxAgeHours > 0 && maxAgeHours <= 168,
+    'MAX_ALIBABA_CAPTURE_AGE_HOURS must be in (0,168]');
+  const rawMtimeMs = Number(raw.stats.mtimeMs);
+  const ageMs = Date.now() - rawMtimeMs;
+  assert.ok(ageMs >= -5 * 60_000, 'Alibaba raw capture timestamp is implausibly in the future');
+  assert.ok(ageMs <= maxAgeHours * 3_600_000, `Alibaba raw capture is older than ${maxAgeHours} hours`);
+  return {
+    rawBytes: raw.bytes,
+    profilePath: profileCanonical,
+    rawSha256: sha256Bytes(raw.bytes),
+    profileSha256: sha256Bytes(profile.bytes),
+    ...reviewed,
+    capturedSourceMtime: new Date(rawMtimeMs).toISOString().replace(/\.\d{3}Z$/, 'Z'),
+  };
 }
 
 function directoryBytes(root, ceiling) {
@@ -391,20 +525,47 @@ function parseReleaseEvidence({
 }
 
 async function fetchJson(url, options = {}, expectedStatuses = [200]) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), Number(options.timeoutMs || 180_000));
-  try {
-    const response = await fetch(url, { ...options, signal: controller.signal });
-    const text = await response.text();
+  const {
+    timeoutMs = 180_000,
+    transportFetch = fetch,
+    transportSleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+    transportRetryDelaysMs = GET_TRANSPORT_RETRY_DELAYS_MS,
+    ...requestOptions
+  } = options;
+  const method = String(requestOptions.method || 'GET').toUpperCase();
+  const bodyFreeGet = method === 'GET' && requestOptions.body === undefined;
+  const retryDelays = bodyFreeGet ? [...transportRetryDelaysMs] : [];
+  let retryIndex = 0;
+  while (true) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), Number(timeoutMs));
+    let response;
+    let text;
+    try {
+      response = await transportFetch(url, { ...requestOptions, signal: controller.signal });
+      text = await response.text();
+    } catch (_) {
+      if (retryIndex >= retryDelays.length) {
+        const attempts = retryIndex + 1;
+        const suffix = attempts > 1 ? ` after ${attempts} transport attempts` : '';
+        fail(`${method} ${new URL(url).pathname} was unreachable${suffix}`);
+      }
+      await transportSleep(retryDelays[retryIndex]);
+      retryIndex += 1;
+      continue;
+    } finally {
+      clearTimeout(timeout);
+    }
     let body = {};
-    try { body = text ? JSON.parse(text) : {}; } catch (_) { /* handled below */ }
+    if (text) {
+      try { body = JSON.parse(text); }
+      catch (_) { fail(`${method} ${new URL(url).pathname} did not return JSON`); }
+    }
     if (!expectedStatuses.includes(response.status)) {
       const safeMessage = typeof body.error === 'string' ? body.error.slice(0, 220) : 'non-JSON response';
-      fail(`${options.method || 'GET'} ${new URL(url).pathname} returned HTTP ${response.status}: ${safeMessage}`);
+      fail(`${method} ${new URL(url).pathname} returned HTTP ${response.status}: ${safeMessage}`);
     }
     return { status: response.status, headers: response.headers, body };
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
@@ -512,8 +673,13 @@ function assertDecisionCanary(item, expectedDecisionModel, label) {
   assert.equal(item.durable, undefined, `${label} queue response should be the durable server record`);
   assert.equal(item.proposed?.modelId, expectedDecisionModel, `${label} decision model mismatch`);
   assert.ok(!item.execution, `${label} executed before the human gate`);
-  const tools = new Set((item.trace || []).map((step) => step.tool));
-  for (const required of REQUIRED_TRACE_TOOLS) assert.ok(tools.has(required), `${label} is missing trace step ${required}`);
+  const trace = Array.isArray(item.trace) ? item.trace : [];
+  const tools = trace.map((step) => step && step.tool);
+  assert.ok(tools.length >= 2, `${label} must contain at least two read/analyze steps`);
+  assert.equal(tools[0], 'recall_vendor_history', `${label} must establish vendor history first`);
+  for (const tool of tools) assert.ok(ALLOWED_TRACE_TOOLS.includes(tool), `${label} contains a non-read/analyze trace step`);
+  for (const required of REQUIRED_CORE_TRACE_TOOLS) assert.ok(tools.includes(required), `${label} is missing core trace step ${required}`);
+  return tools;
 }
 
 function safeRunId() {
@@ -627,19 +793,23 @@ async function renderUiComposite(context, sourcePage, { file, title, subtitle, l
   await page.close();
 }
 
-async function renderProof(context, file, evidence) {
+async function renderProof(context, file, evidence, alibaba) {
   const rows = evidence.workflows.map((workflow) => `<div class="ci-row"><span class="ok">✓</span><b>${escapeHtml(workflow.name)}</b><span>run #${escapeHtml(workflow.runNumber)}</span><code>success</code></div>`).join('');
   const ready = evidence.ready;
+  const sourcePng = alibaba.rawBytes.toString('base64');
+  const sourceWidthPercent = (alibaba.sourceDimensions.width / alibaba.crop.width) * 100;
+  const sourceLeftPercent = -(alibaba.crop.x / alibaba.crop.width) * 100;
+  const sourceTopPercent = -(alibaba.crop.y / alibaba.crop.height) * 100;
   const html = `<!doctype html><html><head><meta charset="utf-8"><style>
     *{box-sizing:border-box} html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:#070b12;color:#edf4fb;font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif}
     #proof{width:1920px;height:1080px;padding:66px 86px 70px;background:radial-gradient(circle at 94% 0,rgba(52,211,153,.17),transparent 34%),radial-gradient(circle at 0 100%,rgba(88,166,255,.14),transparent 30%),#0b1018}
     .head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:30px}.eyebrow{color:#58a6ff;font:700 16px ui-monospace,monospace;letter-spacing:.14em;text-transform:uppercase}.title{font-size:48px;line-height:1.06;margin:8px 0 0;letter-spacing:-.025em}.badge{padding:13px 18px;border:1px solid #27795b;background:#0d2a20;border-radius:999px;color:#6ee7b7;font:700 15px ui-monospace,monospace}
-    .grid{display:grid;grid-template-columns:1fr 1fr;gap:22px}.card{border:1px solid #2b3644;border-radius:18px;background:rgba(17,25,37,.96);padding:25px 27px;min-height:225px}.card h2{margin:0 0 17px;font-size:23px;color:#dce7f2}.label{color:#8392a5;font:700 13px ui-monospace,monospace;letter-spacing:.1em;text-transform:uppercase;margin-top:13px}.value{font-size:20px;margin-top:6px}.value code,.sha{font:700 17px ui-monospace,monospace;color:#a7f3d0;word-break:break-all}.ci-row{display:grid;grid-template-columns:26px 1fr 125px 78px;gap:9px;align-items:center;border-top:1px solid #263140;padding:11px 0;font-size:16px}.ci-row:first-of-type{border-top:0}.ok{color:#34d399;font-size:21px}.ci-row code{color:#a7f3d0}.checks{display:grid;grid-template-columns:1fr 1fr;gap:11px}.check{background:#0b121c;border:1px solid #263140;border-radius:11px;padding:12px 14px}.check b{display:block;color:#6ee7b7;font-size:15px}.check span{display:block;color:#aab7c5;font:14px ui-monospace,monospace;margin-top:5px}.foot{margin-top:20px;display:flex;justify-content:space-between;color:#7f8d9c;font:13px ui-monospace,monospace}.redacted{color:#fbbf24}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:22px}.card{border:1px solid #2b3644;border-radius:18px;background:rgba(17,25,37,.96);padding:25px 27px;min-height:225px}.card h2{margin:0 0 17px;font-size:23px;color:#dce7f2}.label{color:#8392a5;font:700 13px ui-monospace,monospace;letter-spacing:.1em;text-transform:uppercase;margin-top:13px}.value{font-size:20px;margin-top:6px}.value code,.sha{font:700 17px ui-monospace,monospace;color:#a7f3d0;word-break:break-all}.ci-row{display:grid;grid-template-columns:26px 1fr 125px 78px;gap:9px;align-items:center;border-top:1px solid #263140;padding:11px 0;font-size:16px}.ci-row:first-of-type{border-top:0}.ok{color:#34d399;font-size:21px}.ci-row code{color:#a7f3d0}.checks{display:grid;grid-template-columns:1fr 1fr;gap:11px}.check{background:#0b121c;border:1px solid #263140;border-radius:11px;padding:12px 14px}.check b{display:block;color:#6ee7b7;font-size:15px}.check span{display:block;color:#aab7c5;font:14px ui-monospace,monospace;margin-top:5px}.foot{margin-top:20px;display:flex;justify-content:space-between;color:#7f8d9c;font:13px ui-monospace,monospace}.redacted{color:#fbbf24}.console-crop{position:relative;width:100%;aspect-ratio:${alibaba.crop.width}/${alibaba.crop.height};overflow:hidden;border:1px solid #344256;border-radius:10px;background:#fff}.console-crop img{position:absolute;width:${sourceWidthPercent}%;height:auto;left:${sourceLeftPercent}%;top:${sourceTopPercent}%;max-width:none}.console-proof{margin-top:9px;color:#9fb0c2;font:12px/1.35 ui-monospace,monospace}.console-proof b{color:#a7f3d0}
   </style></head><body><main id="proof"><header class="head"><div><div class="eyebrow">Release provenance · exercised runtime · sanitized</div><h1 class="title">Alibaba Cloud + Qwen — exact release proof</h1></div><div class="badge">ALL GATES VERIFIED</div></header>
   <section class="grid">
     <article class="card"><h2>1 · Exact source and deployment identity</h2><div class="label">Deploy-controller application SHA</div><div class="value sha">${evidence.deployedSha}</div><div class="label">Public source HEAD at capture</div><div class="value sha">${evidence.head}</div><div class="label">Binding</div><div class="value">Exact checkout + exact deploy + terminal success markers; evidence hashes retained privately.</div></article>
     <article class="card"><h2>2 · Immutable GitHub gates</h2>${rows}</article>
-    <article class="card"><h2>3 · Alibaba ECS context</h2><div class="label">Provider / region / service</div><div class="value">Alibaba Cloud ECS · ${FIXED_REGION} · Archon Autopilot</div><div class="label">Public application edge</div><div class="value">HTTPS reverse proxy → loopback-only backend</div><div class="label">Sensitive cloud identity</div><div class="value redacted">Instance, resource and administrative principal identifiers intentionally redacted</div></article>
+    <article class="card"><h2>3 · Genuine Alibaba ECS console + exact app binding</h2><div class="console-crop"><img id="console-source" src="data:image/png;base64,${sourcePng}" alt="Sanitized crop of the genuine Alibaba Cloud ECS overview console"></div><div class="console-proof"><b>RAW ${escapeHtml(alibaba.rawSha256.slice(0, 12))}…</b> · PROFILE ${escapeHtml(alibaba.profileSha256.slice(0, 12))}… · Alibaba ECS ${FIXED_REGION}<br>Account, instance, address and resource identifiers excluded by the hash-bound crop. Autopilot identity is bound by the exact deploy SHA and terminal markers in card 1.</div></article>
     <article class="card"><h2>4 · Fresh live runtime canaries</h2><div class="checks">
       <div class="check"><b>✓ /health</b><span>ok · pgvector</span></div><div class="check"><b>✓ /ready</b><span>DB + auth + Qwen</span></div>
       <div class="check"><b>✓ /ready/deep</b><span>${escapeHtml(evidence.embeddingModel)} · ${escapeHtml(evidence.deepDimensions)} dims</span></div><div class="check"><b>✓ unauth queue</b><span>401 fail-closed</span></div>
@@ -648,6 +818,16 @@ async function renderProof(context, file, evidence) {
   </section><footer class="foot"><span>${escapeHtml(evidence.publicUrl)} · captured ${escapeHtml(evidence.capturedAt)}</span><span>Credentials and resource identifiers are not present in this artifact.</span></footer></main></body></html>`;
   const page = await context.newPage();
   await page.setContent(html, { waitUntil: 'load' });
+  const decodedDimensions = await page.locator('#console-source').evaluate((image) => ({
+    width: image.naturalWidth,
+    height: image.naturalHeight,
+    complete: image.complete,
+  }));
+  assert.deepEqual(decodedDimensions, {
+    width: alibaba.sourceDimensions.width,
+    height: alibaba.sourceDimensions.height,
+    complete: true,
+  }, 'Alibaba raw capture dimensions do not match the reviewed redaction profile');
   await page.locator('#proof').screenshot({ path: file, animations: 'disabled' });
   await page.close();
 }
@@ -873,7 +1053,7 @@ function pngArtifactRecord(file, destination, dimensions, extra = {}) {
   };
 }
 
-function buildReviewManifest({ release, baseUrl, proofEvidence, live, vision, normalItem, securityItem, github, models, cleanup, files, galleryFiles }) {
+function buildReviewManifest({ release, baseUrl, proofEvidence, live, vision, normalItem, securityItem, github, models, cleanup, files, galleryFiles, alibaba }) {
   const finalMedia = Object.fromEntries(FINAL_NAMES.map((name) => [
     name,
     pngArtifactRecord(files[name], path.join(FINAL_DIR, name), FINAL_DIMENSIONS[name]),
@@ -895,6 +1075,17 @@ function buildReviewManifest({ release, baseUrl, proofEvidence, live, vision, no
       outputSha256: release.outputSha256,
       attempt: release.statusAttempt,
     },
+    alibabaConsoleEvidence: {
+      rawSourceSha256: alibaba.rawSha256,
+      rawSourceStoredInTrackedArtifacts: false,
+      rawSourceCapturedAt: alibaba.capturedSourceMtime,
+      redactionProfile: path.relative(ROOT, alibaba.profilePath).replaceAll('\\', '/'),
+      redactionProfileSha256: alibaba.profileSha256,
+      sourceDimensions: alibaba.sourceDimensions,
+      publishableCrop: alibaba.crop,
+      excludedSensitiveRegions: alibaba.excludedSensitiveRegions,
+      sanitizedComposite: 'demo/final-media/autopilot-alibaba-proof.png',
+    },
     models,
     gates: {
       exactDeploymentEvidence: true,
@@ -911,6 +1102,8 @@ function buildReviewManifest({ release, baseUrl, proofEvidence, live, vision, no
       metadataStripped: true,
       transactionalPromotion: true,
       pendingCleanupZero: cleanup.pendingCleanupZero,
+      genuineAlibabaConsoleCaptureBound: true,
+      alibabaSensitiveAreasExcludedByCrop: true,
     },
     cleanup: {
       rejectedPending: cleanup.rejected,
@@ -923,7 +1116,12 @@ function buildReviewManifest({ release, baseUrl, proofEvidence, live, vision, no
       health: { status: live.health.status, store: live.health.store },
       ready: { status: live.ready.status, database: live.ready.checks.database.mode, incompatibleRows: live.ready.checks.memoryEmbeddingModel.incompatibleRows },
       deep: { status: live.deep.status, model: live.deep.qwen.model, dimensions: live.deep.qwen.dimensions },
-      decision: { model: normalItem.proposed.modelId, status: normalItem.status, traceTools: normalItem.trace.map((step) => step.tool) },
+      decision: {
+        model: normalItem.proposed.modelId,
+        status: normalItem.status,
+        tracePolicy: 'relevant-side-effect-free-subset',
+        traceTools: normalItem.trace.map((step) => step.tool),
+      },
       vision: { model: vision.model, pages: vision.pages, sourceType: vision.sourceType },
       security: { model: securityItem.proposed.modelId, status: securityItem.status, warningVisible: true },
       correction: { rebill: 'flag_for_review', control: 'draft_payment', stored: true },
@@ -940,6 +1138,52 @@ async function selfTest() {
   assert.throws(() => insideRepo(path.resolve(ROOT, '..', 'escape'), 'escape'), /inside this repository/);
   assert.equal(exactSha('a'.repeat(40), 'sha'), 'a'.repeat(40));
   assert.throws(() => exactSha('abc', 'sha'), /40-character/);
+  const response = (status, value) => ({ status, headers: new Headers(), text: async () => JSON.stringify(value) });
+  let safeGetCalls = 0;
+  const safeGetSleeps = [];
+  const safeGet = await fetchJson('https://self.test/health', {
+    transportFetch: async () => {
+      safeGetCalls += 1;
+      if (safeGetCalls === 1) throw new TypeError('synthetic TCP failure containing secret-shaped detail');
+      return response(200, { status: 'ok' });
+    },
+    transportSleep: async (delay) => safeGetSleeps.push(delay),
+    transportRetryDelaysMs: [7],
+  });
+  assert.equal(safeGet.body.status, 'ok');
+  assert.equal(safeGetCalls, 2, 'body-free GET must retry one transport failure');
+  assert.deepEqual(safeGetSleeps, [7]);
+  let mutationCalls = 0;
+  await assert.rejects(
+    fetchJson('https://self.test/intake', {
+      method: 'POST', body: '{}', transportRetryDelaysMs: [0, 0],
+      transportFetch: async () => { mutationCalls += 1; throw new TypeError('secret mutation diagnostic'); },
+    }),
+    (error) => error.message === 'POST /intake was unreachable',
+  );
+  assert.equal(mutationCalls, 1, 'mutations must never be transport-retried');
+  let httpCalls = 0;
+  await assert.rejects(
+    fetchJson('https://self.test/ready', {
+      transportRetryDelaysMs: [0, 0],
+      transportFetch: async () => { httpCalls += 1; return response(503, { error: 'not ready' }); },
+    }),
+    /GET \/ready returned HTTP 503/,
+  );
+  assert.equal(httpCalls, 1, 'authoritative HTTP responses must never be retried');
+  const minimalCanary = {
+    status: 'pending',
+    proposed: { modelId: 'qwen-plus' },
+    trace: [{ tool: 'recall_vendor_history' }, { tool: 'validate_invoice' }, { tool: 'check_duplicate' }],
+  };
+  assert.deepEqual(
+    assertDecisionCanary(minimalCanary, 'qwen-plus', 'self-test canary'),
+    ['recall_vendor_history', 'validate_invoice', 'check_duplicate'],
+  );
+  assert.throws(
+    () => assertDecisionCanary({ ...minimalCanary, trace: [{ tool: 'recall_vendor_history' }, { tool: 'draft_payment' }] }, 'qwen-plus', 'unsafe canary'),
+    /non-read\/analyze trace step/,
+  );
   assert.deepEqual(canonicalReleaseWorkflows(undefined), DEFAULT_WORKFLOWS);
   assert.deepEqual(canonicalReleaseWorkflows(DEFAULT_WORKFLOWS.join(',')), DEFAULT_WORKFLOWS);
   assert.deepEqual(canonicalReleaseWorkflows([...DEFAULT_WORKFLOWS].reverse().join(',')), DEFAULT_WORKFLOWS);
@@ -995,12 +1239,64 @@ async function selfTest() {
   assert.equal(trustedAutopilotOrigin(`${DEFAULT_URL}/`), DEFAULT_URL);
   assert.throws(() => trustedAutopilotOrigin('https://attacker.example'), /pinned reviewer-token origin/);
   assert.throws(() => trustedAutopilotOrigin(`${DEFAULT_URL}.attacker.example`), /pinned reviewer-token origin/);
+  assert.equal(rectanglesOverlap(
+    { x: 0, y: 0, width: 100, height: 100 },
+    { x: 100, y: 0, width: 20, height: 20 },
+  ), false, 'touching crop boundaries must not count as overlap');
+  assert.equal(rectanglesOverlap(
+    { x: 0, y: 0, width: 100, height: 100 },
+    { x: 99, y: 99, width: 20, height: 20 },
+  ), true, 'one-pixel sensitive overlap must fail');
   assert.deepEqual(FINAL_NAMES.length, 6);
   assert.deepEqual(Object.keys(GALLERY_MAP).length, 5);
   const fixtureRoot = insideRepo(path.join(ROOT, '.artifacts', 'media-pipeline-self-test'), 'self-test fixture root');
   fs.rmSync(fixtureRoot, { recursive: true, force: true });
   const fixtureDir = path.join(fixtureRoot, 'release');
   fs.mkdirSync(fixtureDir, { recursive: true });
+  const alibabaFixtureRoot = insideRepo(path.join(PRIVATE_ROOT, 'self-test-alibaba-source'), 'Alibaba self-test root');
+  fs.rmSync(alibabaFixtureRoot, { recursive: true, force: true });
+  fs.mkdirSync(alibabaFixtureRoot, { recursive: true });
+  const alibabaRawFixture = path.join(alibabaFixtureRoot, 'alibaba-raw.png');
+  const alibabaProfileFixture = path.join(fixtureRoot, 'alibaba-profile.json');
+  const fakePng = Buffer.alloc(30_001);
+  Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(fakePng);
+  fs.writeFileSync(alibabaRawFixture, fakePng);
+  fs.writeFileSync(alibabaProfileFixture, `${JSON.stringify({
+    schemaVersion: 1,
+    expectedSourceDimensions: { width: 1600, height: 840 },
+    crop: { x: 0, y: 0, width: 1180, height: 300 },
+    excludedSensitiveRegions: [
+      { name: 'principal', x: 1360, y: 0, width: 240, height: 70 },
+      { name: 'instance details', x: 210, y: 300, width: 930, height: 220 },
+    ],
+  }, null, 2)}\n`);
+  const alibabaFixture = loadAlibabaProofSource(alibabaRawFixture, ALIBABA_REDACTION_PROFILE_PATH);
+  assert.equal(alibabaFixture.rawSha256, sha256(alibabaRawFixture));
+  assert.deepEqual(alibabaFixture.crop, { x: 0, y: 0, width: 1180, height: 300 });
+  const loadedRawHash = alibabaFixture.rawSha256;
+  const replacementPng = Buffer.from(fakePng);
+  replacementPng[replacementPng.length - 1] = 1;
+  fs.writeFileSync(alibabaRawFixture, replacementPng);
+  assert.equal(sha256Bytes(alibabaFixture.rawBytes), loadedRawHash,
+    'Alibaba rendered bytes must remain bound to the single immutable read');
+  assert.notEqual(sha256(alibabaRawFixture), loadedRawHash,
+    'same-size pathname replacement fixture did not change the on-disk source');
+  assert.throws(
+    () => loadAlibabaProofSource(alibabaRawFixture, alibabaProfileFixture),
+    /exact tracked canonical profile/,
+  );
+  const overlappingProfile = JSON.parse(fs.readFileSync(alibabaProfileFixture, 'utf8'));
+  overlappingProfile.crop.height = 301;
+  assert.throws(
+    () => parseAlibabaRedactionProfile(Buffer.from(`${JSON.stringify(overlappingProfile, null, 2)}\n`)),
+    /overlaps sensitive region: instance details/,
+  );
+  const outOfBoundsProfile = JSON.parse(fs.readFileSync(alibabaProfileFixture, 'utf8'));
+  outOfBoundsProfile.excludedSensitiveRegions[0].x = 1500;
+  assert.throws(
+    () => parseAlibabaRedactionProfile(Buffer.from(`${JSON.stringify(outOfBoundsProfile, null, 2)}\n`)),
+    /must stay inside the expected source dimensions/,
+  );
   const credentialPath = path.join(fixtureRoot, 'reviewer-credential.json');
   fs.writeFileSync(credentialPath, `${JSON.stringify({ token: 'x'.repeat(40) })}\n`, { mode: 0o600 });
   assert.equal(tokenFromExplicitCredentialFile(credentialPath), 'x'.repeat(40));
@@ -1266,6 +1562,7 @@ async function selfTest() {
   assert.equal(fs.readFileSync(recoveryDestination, 'utf8'), 'reviewed-old\n', 'interrupted transaction recovery must restore reviewed final');
   assert.equal(fs.existsSync(recoveryDir), false, 'recovered transaction scratch must be removed');
 
+  fs.rmSync(alibabaFixtureRoot, { recursive: true, force: true });
   log('[self-test] source, PENDING-cleanup-zero, rollback, and interrupted-transaction guards passed');
 }
 
@@ -1288,6 +1585,15 @@ async function main() {
     vision: String(process.env.EXPECTED_VISION_MODEL || dotenv.VISION_MODEL || 'qwen-vl-max').trim(),
   };
   for (const [role, value] of Object.entries(models)) assert.match(value, /^qwen|^text-embedding-/i, `${role} model ID is implausible`);
+
+  const alibabaRawPath = argumentValue('--alibaba-raw')
+    || process.env.ALIBABA_RAW_CAPTURE
+    || path.join(PRIVATE_ROOT, 'alibaba', 'alibaba-ecs-overview-raw.png');
+  const alibabaProfilePath = argumentValue('--alibaba-redaction-profile')
+    || process.env.ALIBABA_REDACTION_PROFILE
+    || ALIBABA_REDACTION_PROFILE_PATH;
+  const alibaba = loadAlibabaProofSource(alibabaRawPath, alibabaProfilePath);
+  log(`[gate] genuine Alibaba ECS capture locked: raw ${alibaba.rawSha256.slice(0, 12)}… + profile ${alibaba.profileSha256.slice(0, 12)}…`);
 
   const statusPath = insideRepo(process.env.RELEASE_STATUS_FILE || path.join(RELEASE_DIR, 'exact-deploy-status.json'), 'RELEASE_STATUS_FILE');
   const outputPath = insideRepo(process.env.RELEASE_OUTPUT_FILE || path.join(RELEASE_DIR, 'exact-deploy-output.txt'), 'RELEASE_OUTPUT_FILE');
@@ -1476,7 +1782,7 @@ async function main() {
       publicUrl: baseUrl,
       capturedAt: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
     };
-    await renderProof(context, files['autopilot-alibaba-proof.png'], proofEvidence);
+    await renderProof(context, files['autopilot-alibaba-proof.png'], proofEvidence, alibaba);
     await renderThumbnail(context, files['autopilot-live-intake-pending.png'], files['autopilot-youtube-thumbnail.png'], models.decision);
     log('[capture] sanitized Alibaba proof + 1280×720 YouTube thumbnail ready');
 
@@ -1498,7 +1804,7 @@ async function main() {
   assert.ok(proofEvidence && normalItem && securityItem, 'capture evidence was incomplete before manifest creation');
   assert.equal(cleanup?.pendingCleanupZero, true, 'pendingCleanupZero gate did not pass');
   const manifest = buildReviewManifest({
-    release, baseUrl, proofEvidence, live, vision, normalItem, securityItem, github, models, cleanup, files, galleryFiles,
+    release, baseUrl, proofEvidence, live, vision, normalItem, securityItem, github, models, cleanup, files, galleryFiles, alibaba,
   });
   const manifestCandidate = path.join(runDir, 'CAPTURE_REVIEW.json');
   fs.writeFileSync(manifestCandidate, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');

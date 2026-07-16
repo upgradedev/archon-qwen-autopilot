@@ -30,7 +30,7 @@ For each invoice (`POST /intake`) the agent runs a real pipeline:
 
 ```
 raw invoice → normalize → ┌─ bounded multi-step ReAct loop (qwen-plus function-calling) ─┐ → PENDING
-                          │  recall → validate → check_duplicate → compute_variance …     │      │ (gate)
+                          │  recall → validate → relevant duplicate / variance / context  │      │ (gate)
                           └─ … then ONE terminal action: draft_* / flag_for_review ───────┘      │
                                             human approve / amend / reject → execute → remember ──┘
 ```

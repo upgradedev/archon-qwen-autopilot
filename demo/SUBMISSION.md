@@ -18,8 +18,8 @@ surfaced at the approval gate, while safety does not depend on detecting every p
 ### What it does
 
 - **Bounded multi-step ReAct loop** over `qwen-plus` **function-calling**: the agent
-  chains autonomous, side-effect-free tools — recall vendor history → validate
-  (R1–R6) → check duplicate → compute amount variance — before proposing **exactly
+  chains autonomous, side-effect-free tools — recall vendor history first → validate
+  (R1–R4) → relevant duplicate (R5), variance (R6), or context checks — before proposing **exactly
   one** terminal action. The 22-scenario eval averages **2.4 autonomous steps**
   (53 total, rounded to one decimal).
 - **Human-in-the-loop gate**: reviewer-authenticated proposals persist as PENDING

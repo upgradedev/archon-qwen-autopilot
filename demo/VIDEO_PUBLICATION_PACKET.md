@@ -12,7 +12,7 @@ the video to be publicly visible on YouTube, Vimeo, or Youku and below three min
 
 > Archon Autopilot is a correction-aware accounts-payable agent built for Track 4 of the Global AI Hackathon Series with Qwen Cloud.
 >
-> Qwen reads ambiguous invoice documents, recalls persistent vendor evidence, validates finance fields, checks duplicates and amount variance, and proposes exactly one action. It then stops at a durable PENDING item. The model and four-tool MCP surface have no approval or execution authority; only an authenticated human can approve, amend, reject, or recover an action.
+> Qwen reads ambiguous invoice documents, recalls persistent vendor evidence first, validates finance fields, selects only the duplicate/variance/context checks warranted by that evidence, and proposes exactly one action. It then stops at a durable PENDING item. The model and four-tool MCP surface have no approval or execution authority; only an authenticated human can approve, amend, reject, or recover an action.
 >
 > Human corrections become evidence for later decisions: a €5,000 re-bill above a human-corrected €3,000 amount is escalated, while the compliant €3,000 control is not. No model weights are updated.
 >

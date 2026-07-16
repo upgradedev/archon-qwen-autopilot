@@ -48,8 +48,8 @@ media, links, and exact-source evidence.
 1. Upload the original synthetic sample PNG and watch `qwen-vl-max` extraction feed the same loop as
    JSON intake.
 2. See multiple ordered read/analyze steps stream before exactly one PENDING action.
-3. Expand the full evidence trace and inspect validation, duplicate, and variance
-   observations.
+3. Expand the full evidence trace: recall must be first and validation must be
+   present; duplicate, variance, or context observations appear only when relevant.
 4. Authenticate, amend an argument, approve, and inspect the proposed→approved audit
    diff in Decided.
 5. Repeat the same invoice and see the duplicate route to human review.
@@ -150,9 +150,10 @@ fail-safe review behavior.
 
 ## Remaining action
 
-No additional product feature is required for a competitive submission. The required
-sequence is **merge final source → immutable hosted gates → exact-SHA deployment →
-live canaries → sanitized proof → video/screenshots/post → Devpost draft**. Follow
+No additional product feature is required for a competitive submission. The exact
+application SHA is already deployed; the remaining sequence is **merge final
+submission source → immutable hosted gates → bind the existing exact-SHA deployment
+to fresh live canaries → sanitized proof → video/screenshots/post → Devpost draft**. Follow
 [`FINAL_MEDIA_CHECKLIST.md`](FINAL_MEDIA_CHECKLIST.md) and
 [`DEVPOST_PACKET.md`](DEVPOST_PACKET.md); follow the operator-only
 [`POST_PUBLICATION_CHECKLIST.md`](POST_PUBLICATION_CHECKLIST.md), then use only the

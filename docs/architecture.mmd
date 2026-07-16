@@ -14,7 +14,7 @@ flowchart TD
     subgraph LOOP["Bounded multi-step ReAct loop &middot; configured Qwen function-calling"]
       direction TB
       DEC{"Qwen picks<br/>the next tool"}:::ai
-      READ["Autonomous read / analyze &middot; NO side-effect<br/>recall_vendor_history &middot; validate R1-R6<br/>check_duplicate &middot; compute_variance"]:::auto
+      READ["Autonomous read / analyze &middot; NO side-effect<br/>recall &middot; validate R1–R4<br/>duplicate R5 &middot; variance R6"]:::auto
       TERM["Terminal action &mdash; exactly one<br/>draft_journal_entry &middot; draft_payment<br/>draft_vendor_reply &middot; flag_for_review"]:::terminal
       DEC -->|observe| READ
       READ -->|append to trace| DEC
@@ -41,7 +41,7 @@ flowchart TD
     TERM -->|public path| PREVIEW
     TERM -->|reviewer / operator path| PEND
     PEND --> GATE
-    GATE -->|approve only| EXE
+    GATE -->|approve / amend| EXE
     GATE -->|reject| MEM
     EXE -->|write outcome back| MEM
     GATE -.- NOTE

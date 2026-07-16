@@ -41,11 +41,13 @@ into a command, URL, screenshot, evidence file or shell history.
 
 ## One-command capture
 
-After `npm ci` and the exact redeploy:
+After `npm ci`, with fresh project-contained evidence from the already completed
+exact deployment staged under `demo/.private-captures/release/`:
 
 ```bash
 node demo/media-tools/capture-final-media.cjs \
-  --reviewer-credential-file .artifacts/devpost/reviewer-credential.json
+  --reviewer-credential-file .artifacts/devpost/reviewer-credential.json \
+  --alibaba-raw demo/.private-captures/alibaba/alibaba-ecs-overview-raw.png
 ```
 
 Optional environment locks are `AUTOPILOT_URL`, `EXPECTED_DECISION_MODEL`,
@@ -58,6 +60,13 @@ ignored `.artifacts/devpost/reviewer-credential.json` (`token` field) into memor
 The tool refuses a credential file that is outside the repository or not gitignored,
 and never echoes or copies its value. Omit the option to use the project-local `.env`.
 
+`--alibaba-raw` must point to a fresh, genuine Alibaba ECS console PNG under a
+gitignored path inside this repository. The tracked
+`alibaba-proof-redaction.json` profile selects a provider/service-only crop that
+excludes the administrative principal, instance identity, address, and resource
+controls. The raw SHA-256 and profile SHA-256 are bound into
+`demo/gallery/CAPTURE_REVIEW.json`; only the metadata-stripped composite is promoted.
+
 The command aborts without promotion unless all of these are true:
 
 - exact deploy-controller SHA/status/output and fresh evidence age;
@@ -68,8 +77,11 @@ The command aborts without promotion unless all of these are true:
 - authenticated, metered `/ready/deep` exercises the exact embedding model;
 - unauthenticated `/pending` returns `401`;
 - a fresh document extraction exercises the exact vision model;
-- a fresh live invoice reaches durable PENDING with all four required evidence tools
-  and the exact decision model, with no execution;
+- a fresh live invoice reaches durable PENDING with the exact decision model, recall
+  first, structural validation present, and only the relevant side-effect-free
+  duplicate, variance, or context checks warranted by that invoice—with no execution;
+- a genuine Alibaba ECS console capture decodes at the reviewed dimensions, stays
+  private, and contributes only the hash-bound safe crop to the publishable proof;
 - the three-step correction challenge yields `€5,000 → flag_for_review` and the
   `€3,000 → draft_payment` negative control, with stored correction evidence;
 - a synthetic hostile document visibly surfaces a recognized-injection warning and
@@ -107,8 +119,10 @@ canvas (1500×844 content plus 78px mattes). There is no crop or content synthes
 all critical evidence stays inside the 1920×1080 safe margins.
 
 The proof composite explicitly labels the deploy-controller application SHA
-separately from the public source HEAD at capture. Alibaba instance/resource
-and administrative-principal identifiers are intentionally absent.
+separately from the public source HEAD at capture. Its Alibaba context is a
+hash-bound safe crop from a genuine console PNG read exactly once into immutable
+bytes; the same bytes are validated, hashed, and rendered. Alibaba instance/resource,
+address, and administrative-principal identifiers are intentionally absent.
 
 The final video build also writes `demo/final-media/autopilot-demo.en.srt`. It has
 one English cue per final narration beat, using that beat's exact measured,

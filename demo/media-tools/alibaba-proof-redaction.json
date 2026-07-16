@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "description": "Publishable crop for the genuine Alibaba ECS overview capture. The crop proves provider/service context while excluding account, instance, address, and resource identifiers.",
+  "expectedSourceDimensions": {
+    "width": 1600,
+    "height": 842
+  },
+  "crop": {
+    "x": 0,
+    "y": 0,
+    "width": 1180,
+    "height": 300
+  },
+  "excludedSensitiveRegions": [
+    {
+      "name": "administrative principal and avatar",
+      "x": 1360,
+      "y": 0,
+      "width": 240,
+      "height": 70
+    },
+    {
+      "name": "instance id, name, public address, and resource controls",
+      "x": 210,
+      "y": 300,
+      "width": 930,
+      "height": 220
+    }
+  ]
+}

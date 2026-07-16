@@ -4,8 +4,9 @@ The public-main engineering gates and exact-current-source release proof are gre
 the media/publication steps below remain human-gated. Never show the reviewer token,
 `.env`, terminal history containing credentials, cloud keys, or a real vendor address.
 
-Run [`BUILD_RECORDING.md`](BUILD_RECORDING.md) first, then use the concise operator
-sheet in [`VIDEO_RECORDING_CHECKLIST.md`](VIDEO_RECORDING_CHECKLIST.md). Release
+Run [`BUILD_RECORDING.md`](BUILD_RECORDING.md) first, then follow the canonical
+real-motion pipeline in [`REAL_MOTION_VIDEO.md`](REAL_MOTION_VIDEO.md) and the concise
+operator sheet in [`VIDEO_RECORDING_CHECKLIST.md`](VIDEO_RECORDING_CHECKLIST.md).
 Exact application release
 `203f159df25f825a0b994a2f8a4d2c0892b45390` passed project-contained attempt 23 on
 2026-07-16, including the singleton runtime-env contract, staging/final readiness,
@@ -27,8 +28,11 @@ visible in at least one shot.
   reviewer token field blurred/empty.
 - [ ] **Vision extraction:** bundled sample invoice beside the extracted structured
   fields, including source confidence and model id.
-- [ ] **Agent trace:** a PENDING proposal with “How the agent decided” expanded so at
-  least recall, validation, duplicate, and variance steps are legible.
+- [ ] **Agent trace:** a PENDING proposal with “How the agent decided” expanded so
+  the exact relevant read/analyze subset selected in that run is legible. It must
+  start with recall, include validation, and contain no terminal/decision tool;
+  duplicate and variance remain visible in the architecture/catalog and appear in
+  the trace only when the evidence warrants them.
 - [ ] **Human gate:** proposed action and editable arguments with Approve / Amend /
   Reject visible; do not click until the recording is rolling.
 - [ ] **Amend audit:** Decided view with proposed→approved argument diff and reviewer
@@ -45,10 +49,13 @@ visible in at least one shot.
   secret-scan and dependency-audit outcomes. Never type totals from an older run.
 - [ ] **Architecture:** use the 16:9 `docs/judge-architecture.svg` hero; keep the tall
   technical diagram only as secondary documentation.
-- [ ] **Alibaba proof:** make a new Autopilot-only recording: ECS/deployment identity,
-  public network-free `/health` + `/ready`, authenticated/metered `/ready/deep`, one
-  actual decider canary and one document extraction. Keep the token hidden. Do not
-  reuse a cross-entry proof clip.
+- [ ] **Alibaba proof:** provide a fresh genuine console PNG from the shared Alibaba
+  ECS host under ignored `demo/.private-captures/`; the capture tool must apply the
+  tracked safe-crop profile and bind both hashes in `CAPTURE_REVIEW.json`. Bind that
+  host context to Autopilot-specific exact-deploy markers, public network-free
+  `/health` + `/ready`, authenticated/metered `/ready/deep`, one actual decider
+  canary, and one document extraction. Keep token, account, instance, address, and
+  resource identifiers out of every promoted pixel.
 
 Store untouched private masters under ignored `demo/private-originals/`, working
 captures under ignored `demo/.private-captures/`, and build scratch under ignored
@@ -68,7 +75,9 @@ signed-out publication checks.
 - [ ] Show **two real configurable sinks**: SMTP vendor reply + restart-safe,
   durable JSONL ledger; payment/review remain simulated.
 - [ ] Say **22/22 tuned developer-labelled offline regression**, never live-Qwen
-  accuracy. Show keyed numbers only if clean committed three-run artifacts exist.
+  accuracy. The video uses the committed fixed 12-case modeled workflow evidence and
+  16 vision fixtures; no candidate was promoted, and no historical/raw-Qwen keyed
+  comparison is a submission claim.
 - [ ] Auth is visible as a human boundary, but the private token is never visible.
 - [ ] Show at least one live Qwen trace, one PENDING card, one human amendment, one
   correction re-bill/control result, one recognized injection warning, and one duplicate result.
@@ -89,18 +98,16 @@ signed-out publication checks.
   zero matching PENDING capture residue (rejected audit history remains), and match
   every uploaded PNG's hash, dimensions, RGB
   mode, and empty metadata-key list. A missing/stale manifest blocks publication.
-- [ ] Build with `PUBLIC_APP_URL` and `VIDEO_MODEL_LABEL` set to the verified final
-  deployment/model IDs. The fail-closed nine-beat renderer must report `9 beats` and
-  must read only the explicitly promoted captures under `demo/final-media/`.
+- [ ] Run `record-live-motion.cjs` against the public isolated preview, then
+  `build-real-motion-submission.py` with exact SHA
+  `203f159df25f825a0b994a2f8a4d2c0892b45390` and `--replace`. The one-command
+  builder creates a rights-safe caption-only base internally and reads only the
+  explicitly promoted captures under `demo/final-media/`.
 - [ ] If the label contains `qwen3.7`, set `VIDEO_PROMOTION_EVIDENCE` to the exact
   repo-contained counterbalanced artifact and confirm it says `promotion-pass`.
-- [ ] If voice/service rights are not explicitly confirmed, build with
-  `CAPTION_ONLY=true`: fixed 168-second/30-fps beat windows, burned captions, measured
-  English SRT, and locally generated digital silence—no TTS or third-party music.
-- [ ] Use narrated mode only after setting `VOICE_RIGHTS_ATTESTED=true` and confirming
-  that the chosen generated voice/service is licensed or otherwise authorized for
-  this public competition use. Unset `CAPTION_ONLY`; the existing narrated mode is
-  still the default.
+- [ ] Require the real-motion builder's internal `CAPTION_ONLY=true` base: fixed
+  168-second/30-fps beat windows, burned captions, measured English SRT, and locally
+  generated digital silence—no TTS or third-party music.
 - [ ] Watch the rendered MP4 from beginning to end with headphones and muted. In
   caption-only mode, require intentional silence and no unexpected sound; in
   narrated mode, require no clipped audio, silent ending, or drift. In either mode,
@@ -115,10 +122,11 @@ signed-out publication checks.
   remove anything whose publication rights are unclear.
 - [ ] Keep the reviewed render in `demo/final-media/`, then use its **Public hosted
   URL**—not a repository blob—as the Devpost video URL.
-- [ ] For caption-only publication, retain and verify
-  `autopilot-demo.en.srt` plus `autopilot-demo.caption-only.json`; require its
-  recorded MP4/SRT hashes, nine cues, rights profile, 1080p stream contract, and
-  `<175s` duration to match the final assets.
+- [ ] Retain and verify `autopilot-demo.en.srt`,
+  `autopilot-demo.real-motion.json`, and `autopilot-demo.qa.json`; run
+  `python demo/media-tools/compose_real_motion_video.py --verify-only` and require
+  the recorded MP4/SRT/thumbnail/evidence hashes, nine cues, rights profile, genuine
+  frame diversity, 1080p stream contract, and `<175s` duration to match.
 
 ## 3 · Publish one supplied post
 
