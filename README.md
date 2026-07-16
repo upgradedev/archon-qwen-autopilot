@@ -37,7 +37,8 @@ recommends; it never auto-executes.
    only hand-typed JSON.
 3. **A human-in-the-loop money gate with a *structural* tool-attack defense.** Nothing
    executes until a person approves the exact arguments — and the model's tool catalog
-   contains only *proposing* tools, so it literally cannot name `approve`/`pay`. A
+   contains only *proposing* tools, with no `approve`/`pay` capability. An
+   out-of-catalog execution verb is rejected and fails safely to review. A
    prompt-injection buried in an untrusted invoice is therefore unable to
    **autonomously execute by construction**, not because a detector is assumed perfect
    (tested by a multi-step tool-attack suite).

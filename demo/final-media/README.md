@@ -1,5 +1,8 @@
 # Sanitized final media only
 
+The canonical real-motion production and QA commands are in
+[`../REAL_MOTION_VIDEO.md`](../REAL_MOTION_VIDEO.md). They never publish or upload.
+
 Tracked Devpost-ready screenshots belong here after metadata/secret review. Untouched
 private masters belong in ignored `demo/private-originals/`; working captures and
 build scratch belong in ignored `demo/.private-captures/` or `.artifacts/`.

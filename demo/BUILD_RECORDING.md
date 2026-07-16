@@ -11,14 +11,14 @@ project, a chat attachment, or a desktop scratch file as the only copy.
 
 ## Release identity lock
 
-- Historical application release audited, deployed, and verified on 2026-07-15:
-  **`321b6c5440a365fe346d2c446e141e9c5d33854c`**. Later public-main commits contain
-  runtime/dependency changes, so this SHA proves the release process but is **not**
-  final-submission provenance.
-- [ ] Record the new exact final application SHA only after it is fetched, clean,
-  built, deployed, and exercised through every gate below.
-- Project-contained redacted historical evidence records exact checkout, immutable
-  post-merge CI, production build, schema/bootstrap, least privilege,
+- Exact final application release audited, deployed, and verified on 2026-07-16:
+  **`203f159df25f825a0b994a2f8a4d2c0892b45390`**. Project-contained exact-deploy
+  attempt 23 completed with terminal `Success`, exit code `0`, the application marker,
+  and the aggregate success marker.
+- [x] The exact final application SHA was fetched, clean, built, deployed, and
+  exercised through every gate below before media capture.
+- Project-contained redacted evidence records exact checkout, immutable post-merge
+  CI, production build, singleton runtime-env proof, schema/bootstrap, least privilege,
   cross-database denial, health/readiness/deep readiness, a live
   `qwen-vl-max` extraction, a real `qwen-plus` multi-step intake→PENDING smoke with
   authenticated rejection and targeted cleanup, and public TLS canaries for that SHA.

@@ -1,5 +1,8 @@
 # Archon Autopilot — public post copy
 
+Replace bracketed publication URLs only after signed-out verification. Remove an
+optional URL line rather than publishing a placeholder.
+
 ## LinkedIn / long-form social
 
 ```text
@@ -34,11 +37,18 @@ steps plus Node, real-pgvector, browser, adversarial, coverage, and audit gates.
 submission links the exact immutable run for its final commit. The deterministic eval
 is a regression measurement, not live-model accuracy.
 
+Within an authored 12-case workflow model, the assisted arm uses fewer modeled base
+active-review seconds and human checkpoints while both arms match developer policy
+labels. This is synthetic workflow evidence—not a human study, field trial,
+labor-savings or ROI claim.
+
 Live: https://autopilot.43.106.13.19.sslip.io
 
 Code (MIT): https://github.com/upgradedev/archon-qwen-autopilot
 
 Demo: [PUBLIC_VIDEO_URL]
+
+Build journey: [PUBLIC_BLOG_URL]
 
 #Qwen #AlibabaCloud #AIHackathon #AgenticAI #FinTech #HumanInTheLoop
 ```

@@ -19,8 +19,8 @@ Resolve these in the Devpost draft and publication accounts, not by inventing va
 |---|---|
 | `[PUBLIC_VIDEO_URL]` | Devpost video field after signed-out playback succeeds |
 | `[PUBLIC_BLOG_OR_SOCIAL_URL]` | Optional blog/social field after signed-out review |
-| `[ACTIVE_REVIEWER_TOKEN]` | Devpost private testing instructions only |
-| `[ACCESS_CONTACT]` | Devpost private testing instructions only |
+| `[ACTIVE_REVIEWER_TOKEN]` | Only a confirmed non-public judges-only testing field or organizer-approved secure channel |
+| `[OPTIONAL_ACCESS_CONTACT]` | Only a confirmed non-public judges-only testing field; otherwise omit and use an organizer-approved secure channel |
 | `[FINAL_DEPLOYED_APP_SHA]` | Sanitized Alibaba proof + final release record |
 | `[FINAL_SUBMISSION_SHA]` | Final link/CI verification record |
 | `[FINAL_CI_RUN_URL]` | Engineering-proof caption or supporting link |
@@ -65,6 +65,7 @@ technologies or Devpost **Built with** tags.
 | Alibaba/Qwen code proof | https://github.com/upgradedev/archon-qwen-autopilot/blob/main/src/qwen/client.ts |
 | Architecture diagram link | https://github.com/upgradedev/archon-qwen-autopilot/blob/main/docs/judge-architecture.svg |
 | Architecture gallery upload | `demo/final-media/judge-architecture.jpg` |
+| Organizer deck (strict-union artifact) | If the organizer's separate Qwen flow requests a PPT/PDF, use `demo/deck/archon-autopilot-qwen-cloud-hackathon-deck.pptx` and the matching `.pdf` only after exact-release screenshots, layout review and hash verification; never upload a placeholder build. |
 | Devpost project thumbnail | `demo/thumbnail.png` (1500×1000, 3:2) |
 | Editable thumbnail source | `demo/thumbnail.svg` |
 | Public demo video | `[PUBLIC_VIDEO_URL]` |
@@ -171,10 +172,13 @@ Upload the canonical 16:9 `demo/final-media/judge-architecture.jpg` in Devpost's
 separate required **Architecture Diagram** field, not as a substitute for one of the
 no-crop 3:2 gallery files above.
 
-## 8 · Private testing instructions
+## 8 · Testing instructions and credential channel
 
-Paste this block only into the tester-only/private instructions field. Replace the
-two bracketed values directly in Devpost; do not save them in Git.
+Paste the full block below only after the actual field is confirmed non-public and
+judges-only. A label such as “Testing Instructions” is not proof of privacy. If that
+visibility cannot be confirmed, omit the token and personal contact, keep the public
+no-login preview path, and request an organizer-approved secure credential channel.
+Replace bracketed values directly in Devpost; do not save them in Git.
 
 > **Live app:** https://autopilot.43.106.13.19.sslip.io/
 >
@@ -192,11 +196,12 @@ two bracketed values directly in Devpost; do not save them in Git.
 >
 > **Scope:** payment and specialist-review adapters are simulated. SMTP vendor reply and the fsynced append-only JSONL journal are configurable post-approval transports; UI success does not claim recipient delivery or a bank/ERP integration. The `22/22` result is a tuned developer-labelled deterministic regression, not live-Qwen accuracy.
 >
-> **Access help:** `[ACCESS_CONTACT]`
+> **Access help:** `[OPTIONAL_ACCESS_CONTACT — only in a confirmed non-public field]`
 
-Before saving, test these instructions in a signed-out browser with no cached token.
-Keep the credential, database, TLS, Qwen quota, and judge reserve active free of charge
-through **2026-08-11 2:00 PM PDT**.
+Before saving, inspect the resulting public preview logged out, then test the judge
+flow in a signed-out browser with no cached token. If the token appears anywhere
+public, rotate it before continuing. Keep the credential, database, TLS, Qwen quota,
+and judge reserve active free of charge through **2026-08-11 2:00 PM PDT**.
 
 ## 9 · Video and optional blog fields
 
@@ -239,13 +244,14 @@ public repository intentionally does not guess or retain them.
 | Age-of-majority attestation | `[HUMAN LEGAL ATTESTATION REQUIRED]` |
 | Eligible-jurisdiction attestation | `[HUMAN LEGAL ATTESTATION REQUIRED]` |
 | Sponsor/affiliate/government-employment attestation | `[HUMAN LEGAL ATTESTATION REQUIRED]` |
-| Testing Instructions | Paste section 8, replacing the token only in Devpost's judges-visible field after exact-deploy canaries pass. |
+| Testing Instructions | Paste section 8. Add the token/contact only if the field is confirmed non-public and judges-only after exact-deploy canaries pass; otherwise retain the public preview path and use an organizer-approved secure channel. |
 
 - [ ] Project name, tagline, Track 4, English description, and story render correctly.
 - [ ] Repository is Public and Devpost/GitHub visibly detects MIT in the repository
   About/header area.
 - [ ] Alibaba proof links directly to `src/qwen/client.ts`.
 - [ ] Architecture is both uploaded and linked.
+- [ ] Final PPTX/PDF deck reviewed and supplied if the organizer's separate Qwen flow requests it.
 - [ ] `demo/thumbnail.png` is uploaded as the project thumbnail and remains legible in
   Devpost's card/grid preview without cropping the title, workflow, or Human Gate.
 - [ ] Final video is public, signed-out accessible, and `<3:00`.

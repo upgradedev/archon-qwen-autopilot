@@ -24,6 +24,8 @@ the video to be publicly visible on YouTube, Vimeo, or Youku and below three min
 >
 > Alibaba/Qwen code proof: https://github.com/upgradedev/archon-qwen-autopilot/blob/main/src/qwen/client.ts
 >
+> Technical build journey: [PUBLIC_BLOG_URL — replace after signed-out publication, or remove this line]
+>
 > Models: qwen-plus · qwen-vl-max · text-embedding-v4 through the DashScope-compatible Qwen path on Alibaba Cloud.
 >
 > Evidence boundaries: 22/22 is a tuned developer-labelled deterministic regression, not live-model accuracy. Payment and specialist review are simulated. SMTP evidence means transport acceptance, not recipient delivery; JSONL is a restart-safe local ledger, not a bank or ERP. Recognized injection patterns are advisory; autonomous execution is structurally blocked by tool separation and the human gate.
