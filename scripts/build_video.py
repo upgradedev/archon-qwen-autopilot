@@ -31,6 +31,8 @@ Env:
   VIDEO_PROMOTION_EVIDENCE  promotion-pass JSON when the label contains qwen3.7
   VOICE_RIGHTS_ATTESTED must be true for public-use TTS generation (required)
   OUTPUT                final mp4 (default demo/final-media/autopilot-demo.mp4)
+  SRT_OUTPUT            exact measured-beat English subtitles
+                        (default demo/final-media/autopilot-demo.en.srt)
   WORKDIR               scratch dir inside the repository (default .artifacts/video-build)
   FFMPEG / FFPROBE      binaries
 """
@@ -40,6 +42,7 @@ import json
 import os
 import subprocess
 import sys
+import textwrap
 import time
 import urllib.request
 
@@ -70,6 +73,51 @@ def probe_duration(path):
     out = run([FFPROBE, "-v", "error", "-show_entries", "format=duration",
                "-of", "default=nw=1:nk=1", path])
     return float(out.strip())
+
+
+def srt_timestamp(seconds: float) -> str:
+    """Format a non-negative measured timeline position as an SRT timestamp."""
+    if not isinstance(seconds, (int, float)) or seconds < 0:
+        raise ValueError(f"invalid SRT timestamp: {seconds!r}")
+    millis = round(seconds * 1000)
+    hours, millis = divmod(millis, 3_600_000)
+    minutes, millis = divmod(millis, 60_000)
+    secs, millis = divmod(millis, 1_000)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+
+
+def write_measured_srt(beats, durations, output):
+    """Write one exact cue per final, audio-locked beat.
+
+    These are not estimated word timings. Each cue uses the exact frame-quantized
+    start/end window measured from that beat's decoded narration plus its intentional
+    tail. The complete English narration from the same Beat object is the cue text,
+    keeping subtitles, video and narration on one source of truth.
+    """
+    if len(beats) != len(durations):
+        raise ValueError("SRT beat/duration count mismatch")
+    output = repo_contained_path(output, "SRT_OUTPUT", HERE)
+    os.makedirs(os.path.dirname(output), exist_ok=True)
+    start = 0.0
+    cues = []
+    for index, (beat, duration) in enumerate(zip(beats, durations), start=1):
+        if not isinstance(duration, (int, float)) or duration <= 0:
+            raise ValueError(f"invalid duration for SRT beat {beat.id}: {duration!r}")
+        end = start + duration
+        # Wrapping affects display lines only; the cue keeps the exact beat window.
+        text = "\n".join(textwrap.wrap(
+            " ".join(beat.narration.split()),
+            width=64,
+            break_long_words=False,
+            break_on_hyphens=False,
+        ))
+        cues.append(
+            f"{index}\n{srt_timestamp(start)} --> {srt_timestamp(end)}\n{text}\n"
+        )
+        start = end
+    with open(output, "w", encoding="utf-8", newline="\n") as subtitle_file:
+        subtitle_file.write("\n".join(cues))
+    return output
 
 
 # --------------------------------------------------------------------------- #
@@ -239,6 +287,15 @@ def main():
     with open(os.path.join(workdir, "windows.json"), "w", encoding="utf-8") as f:
         json.dump(windows, f, indent=2)
     print("[windows] " + os.path.join(workdir, "windows.json"))
+    srt_output = inside_repo(
+        os.environ.get(
+            "SRT_OUTPUT",
+            os.path.join(HERE, "demo", "final-media", "autopilot-demo.en.srt"),
+        ),
+        "SRT_OUTPUT",
+    )
+    write_measured_srt(beats, durations, srt_output)
+    print(f"[subtitles] {srt_output} · {len(beats)} exact audio-locked beat windows")
     return 0
 
 
