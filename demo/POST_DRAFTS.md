@@ -48,16 +48,11 @@ Demo: [PUBLIC_VIDEO_URL]
 
 ## X / short post
 
-Archon Autopilot for the Qwen Cloud Hackathon (Track 4): Qwen recalls, validates,
-dedupes and checks variance. Public callers get an isolated PREVIEW; reviewer-authenticated
-proposals stop PENDING at a human gate. No approve/pay model tool.
-22/22 tuned offline policy · avg 2.4 steps · full security/browser/DB CI gates.
-
-https://github.com/upgradedev/archon-qwen-autopilot
+Archon Autopilot (Track 4): Qwen recalls, validates, checks duplicates/variance, then stops at PENDING. The model has no approve/pay tool; an authenticated human owns every consequence. Live: https://autopilot.43.106.13.19.sslip.io #QwenCloudHackathon
 
 ## X thread
 
-**1/4** Archon Autopilot is a human-gated AP agent on Qwen. It reads a real invoice,
+**1/4** Archon Autopilot is a human-gated AP agent on Qwen. It reads an original synthetic invoice document,
 recalls vendor history, validates R1–R6, checks duplicate/variance, and proposes one
 action. Public intake returns an isolated redacted PREVIEW; reviewer-authenticated
 intake persists the full trace/rationale as PENDING, then stops.

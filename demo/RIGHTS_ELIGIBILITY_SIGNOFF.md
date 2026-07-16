@@ -14,8 +14,9 @@ identity documents, or other personal data.
   authorized representative and every participating member is listed correctly.
 - [ ] The project did not receive disqualifying financial or preferential support
   from the Sponsor or Administrator.
-- [ ] The repository history and Devpost copy accurately state that the project was
-  newly/materially built after the submission period opened on 2026-05-26.
+- [ ] The repository history and Devpost copy accurately state that the distinct
+  Track-4 product was materially built after the submission period opened on
+  2026-05-26, while disclosing shared Archon naming and limited plumbing patterns.
 - [ ] Any other entry from the same entrant is unique and substantially different;
   this entry is independently defensible as a Track-4 AP workflow product.
 

@@ -33,11 +33,11 @@ page so a human can inspect every field and consent to the rules.
 
 **Project name**
 
-> Archon Autopilot
+> Archon Autopilot — Human-Gated AP Agent
 
 **Tagline / elevator pitch**
 
-> A correction-aware Qwen accounts-payable agent that gathers evidence and proposes actions, while a structural human gate keeps every money-moving decision under human control.
+> Qwen reads invoices, recalls vendor history, and proposes an auditable action—then a structural human gate keeps money under human control.
 
 **Track**
 
@@ -105,11 +105,11 @@ Use this only if Devpost exposes a separate short-summary field:
 
 **What was built during the submission period**
 
-> The repository's first commit is `8a6359f` from 2026-07-04, after the 2026-05-26 submission-period start. The Track-4 application — bounded agent loop, approval state machine, correction feedback, MCP/custom-skill surfaces, pgvector grounding, document intake, real configurable SMTP/JSONL transports, tests, deployment, and submission artifacts — was materially built during the eligibility window.
+> Not applicable — this is a new competition-period Track-4 product started 2026-07-04, after the 2026-05-26 submission-period start. It carries forward the Archon name and limited shared plumbing patterns from the separate MemoryAgent foundation (provider client, pgvector, health, and deployment conventions), not that entry's judged self-audit/resolution core. During the window we built the AP normalizer and validator, bounded Qwen tool loop, durable PENDING/approval state machine, correction feedback, AP sinks, narrower MCP/custom-skill surfaces, document intake, adversarial/evaluation suites, CI, submission artifacts, and Alibaba deployment. The two entries have separate repositories, demos, narratives, and track-specific functionality; shared context is disclosed rather than claimed as newly authored evidence.
 
 **Multiple-entry uniqueness statement, if requested**
 
-> This is a standalone Track-4 accounts-payable orchestration product. Its core is a business-workflow state machine: ambiguous invoice intake, bounded tool use, durable PENDING work, authenticated human decisions, exact-argument execution, uncertain-outcome recovery, and post-decision audit/feedback. Persistent vendor history is one read-only evidence adapter; it is not the product lifecycle or the submitted track objective.
+> This is a standalone Track-4 accounts-payable orchestration product. Its core is a business-workflow state machine: ambiguous invoice intake, bounded tool use, durable PENDING work, authenticated human decisions, exact-argument execution, uncertain-outcome recovery, and post-decision audit/feedback. Persistent vendor history is one read-only evidence adapter; it is not the product lifecycle or the submitted track objective. Shared Archon naming and limited provider/database/deployment plumbing are disclosed above; the MemoryAgent entry's self-audit/resolution core is not reused as this entry's judged functionality.
 
 ## 6 · Project thumbnail
 
@@ -133,32 +133,27 @@ sourced design unless the rights sign-off and the dimension check are repeated.
 
 Upload only reviewed, sanitized final files. Recommended order:
 
-1. `autopilot-live-intake-pending.png`
-   - Caption: **A real invoice becomes one auditable PENDING proposal after Qwen
+1. `demo/gallery/autopilot-01-live-intake-pending.png` (1500×1000, no crop)
+   - Caption: **An original synthetic invoice becomes one auditable PENDING proposal after Qwen
      recalls, validates, checks duplicates, and computes variance. Nothing executes.**
    - Alt: **Archon Autopilot reviewer screen showing invoice extraction, a Qwen
      tool-and-observation trace, and a durable pending proposal.**
-2. `autopilot-human-amend-diff.png`
+2. `demo/gallery/autopilot-02-human-amend-diff.png` (1500×1000, no crop)
    - Caption: **The authenticated reviewer amends the exact domain arguments; the
      decided view preserves the proposed-to-approved diff and execution outcome.**
    - Alt: **Human approval screen showing editable proposal arguments and the audited
      before-and-after amendment.**
-3. `autopilot-correction-learning.png`
+3. `demo/gallery/autopilot-03-correction-learning.png` (1500×1000, no crop)
    - Caption: **A €5,000 re-bill above a human-corrected €3,000 amount is escalated;
      the compliant €3,000 control remains a payment proposal. No model weights change.**
    - Alt: **Side-by-side correction test in which only the non-compliant re-bill is
      routed to review.**
-4. `autopilot-security-pending.png`
+4. `demo/gallery/autopilot-04-security-pending.png` (1500×1000, no crop)
    - Caption: **Recognized hostile input is surfaced, while structural tool separation
      keeps the proposal PENDING behind the human gate. Universal detection is not claimed.**
    - Alt: **Prompt-injection warning beside a pending proposal and a model tool list
      without approval or execution verbs.**
-5. `judge-architecture.jpg`
-   - Caption: **Qwen handles bounded judgment; only the authenticated human surface
-     can cross from proposal to post-approval effects.**
-   - Alt: **Architecture from untrusted invoice through Qwen vision and a bounded
-     function-calling loop to preview or pending, a human gate, sinks, and feedback.**
-6. `autopilot-alibaba-proof.png`
+5. `demo/gallery/autopilot-05-alibaba-qwen-proof.png` (1500×1000, no crop)
    - Caption: **Sanitized exact-release proof: Alibaba deployment context,
      health/readiness, deep embedding probe, and exercised decision and vision model IDs.**
    - Alt: **Composite showing the deployed application SHA, green CI, Alibaba Cloud
@@ -166,6 +161,10 @@ Upload only reviewed, sanitized final files. Recommended order:
 
 Never upload a screenshot until the filename, pixels, metadata, visible model IDs,
 and visible SHA all pass the final-media review.
+
+Upload the canonical 16:9 `demo/final-media/judge-architecture.jpg` in Devpost's
+separate required **Architecture Diagram** field, not as a substitute for one of the
+no-crop 3:2 gallery files above.
 
 ## 8 · Private testing instructions
 
@@ -210,6 +209,32 @@ for the Blog Post bonus. Prefer the full build-journey article in [`BLOG.md`](BL
 over a short post because the bonus is judged on thoroughness and potential impact.
 
 ## 10 · Final draft-only stop gate
+
+### Actual Additional Info form map (verified 2026-07-16)
+
+Values marked **human** must be confirmed by the entrant and entered directly; the
+public repository intentionally does not guess or retain them.
+
+| Actual Devpost field | Exact value / action |
+|---|---|
+| Submitter type | `[HUMAN CONFIRM: Individual / Team / Organization]` |
+| Organization name | Leave blank only if the confirmed submitter type is Individual/Team and no organization applies. |
+| Country of residence | `[HUMAN CONFIRM AND ENTER DIRECTLY]` — appears publicly in the gallery. |
+| Newly built or previously existing | **New** — the distinct Track-4 repository starts 2026-07-04; retain the shared-plumbing disclosure. |
+| Start date | **07-04-26** |
+| Required pre-May-26/update explanation | Paste **What was built during the submission period** from section 5 verbatim. |
+| Track | **Track 4: Autopilot Agent** |
+| Code repository | <https://github.com/upgradedev/archon-qwen-autopilot> |
+| Alibaba/Qwen code file | <https://github.com/upgradedev/archon-qwen-autopilot/blob/main/src/qwen/client.ts> |
+| Architecture Diagram upload | [`final-media/judge-architecture.jpg`](./final-media/judge-architecture.jpg) |
+| Alibaba Deployment Screenshot upload | [`gallery/autopilot-05-alibaba-qwen-proof.png`](./gallery/autopilot-05-alibaba-qwen-proof.png), only after the exact-release capture manifest passes. |
+| Published Blog or Social Post | `[PUBLIC_BLOG_OR_SOCIAL_URL]`, only after signed-out verification. |
+| AI tools leveraged | **Qwen Cloud models (qwen-plus, qwen-vl-max, text-embedding-v4), OpenAI Codex, and Anthropic Claude.** |
+| Learning level | **Significant** |
+| Age-of-majority attestation | `[HUMAN LEGAL ATTESTATION REQUIRED]` |
+| Eligible-jurisdiction attestation | `[HUMAN LEGAL ATTESTATION REQUIRED]` |
+| Sponsor/affiliate/government-employment attestation | `[HUMAN LEGAL ATTESTATION REQUIRED]` |
+| Testing Instructions | Paste section 8, replacing the token only in Devpost's judges-visible field after exact-deploy canaries pass. |
 
 - [ ] Project name, tagline, Track 4, English description, and story render correctly.
 - [ ] Repository is Public and Devpost/GitHub visibly detects MIT in the repository

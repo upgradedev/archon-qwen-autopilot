@@ -60,6 +60,15 @@ unreadable fail toward human review rather than a payment proposal.
 
 **Differentiator:** an agent that *acts* on memory yet can't move money by design.
 
+**Reuse boundary:** this Track-4 entry carries forward the Archon name and limited
+shared plumbing patterns from the separate MemoryAgent foundation (provider-client,
+pgvector, health, and deployment conventions). It does **not** claim that shared
+plumbing as its judged novelty, and it does not reuse the MemoryAgent entry's
+self-audit/resolution product core. The submitted work is the accounts-payable
+normalizer and validator, bounded Qwen tool loop, durable PENDING state machine,
+authenticated human decision boundary, correction feedback, AP sinks, narrower MCP
+surface, adversarial/evaluation suite, separate demo, and Alibaba deployment.
+
 **Live:** https://autopilot.43.106.13.19.sslip.io · **Track 4** · Repo:
 https://github.com/upgradedev/archon-qwen-autopilot
 
@@ -67,8 +76,9 @@ https://github.com/upgradedev/archon-qwen-autopilot
 https://github.com/upgradedev/archon-qwen-autopilot/blob/main/docs/judge-architecture.svg
 
 **Eligibility:** first repository commit `8a6359f` on 2026-07-04, after the
-2026-05-26 start; the Track-4 project was materially built during the submission
-period.
+2026-05-26 start; the distinct Track-4 product described above was materially built
+during the submission period. Shared naming and limited plumbing are disclosed, not
+presented as newly authored evidence.
 
 ---
 

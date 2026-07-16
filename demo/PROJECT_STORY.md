@@ -71,6 +71,15 @@ ledger** (`JsonlLedgerSink`). Payment and specialist-review sinks remain simulat
 no ERP or bank is contacted. Live Qwen is wired; the whole loop is verified offline
 via deterministic Fakes.
 
+**Reuse boundary:** the entry carries forward the Archon name and limited shared
+plumbing patterns from the separate MemoryAgent foundation—provider-client,
+pgvector, health, and deployment conventions. Those seams are disclosed rather than
+presented as Track-4 novelty, and the MemoryAgent self-audit/resolution product core
+is not reused here. The submitted Autopilot core is the AP normalizer/validator,
+bounded Qwen tool loop, durable PENDING/approval state machine, correction feedback,
+AP sinks, narrower MCP surface, adversarial/evaluation package, separate demo, and
+Alibaba deployment.
+
 ## System Architecture
 
 Below is the system architecture diagram showing the Autopilot agent loop, human-in-the-loop gate, and defense layer:

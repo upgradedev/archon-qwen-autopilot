@@ -36,7 +36,7 @@ placement.
 
 ## What a judge can verify quickly
 
-1. Upload the real sample PNG and watch `qwen-vl-max` extraction feed the same loop as
+1. Upload the original synthetic sample PNG and watch `qwen-vl-max` extraction feed the same loop as
    JSON intake.
 2. See multiple ordered read/analyze steps stream before exactly one PENDING action.
 3. Expand the full evidence trace and inspect validation, duplicate, and variance
