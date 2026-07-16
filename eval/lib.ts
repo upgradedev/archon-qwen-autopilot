@@ -25,6 +25,7 @@ import { categoricalEvalError } from "./artifact-safety.js";
 export interface EvalRow {
   scenario: EvalScenario;
   proposed: string;
+  finalGuardedArgs: Record<string, unknown>;
   correct: boolean;
   argSane: boolean;
   argNote: string;
@@ -154,6 +155,7 @@ export async function runScenario(
   return {
     scenario: s,
     proposed,
+    finalGuardedArgs: structuredClone(item.proposed.args),
     correct,
     argSane,
     argNote,

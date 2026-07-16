@@ -755,6 +755,20 @@ test("SUPPLY 1 — every workflow Action is an approved full-SHA release pin", (
   );
 });
 
+test("SUPPLY 1B — ancestry-dependent test jobs always fetch complete Git history", () => {
+  const workflow = parseWorkflow("ci.yml");
+  for (const jobId of ["build-test", "coverage"]) {
+    const label = `ci.yml.jobs.${jobId}`;
+    const checkout = stepByUses(workflowJob(workflow, jobId), CHECKOUT, label);
+    exactKeys(checkout, ["uses", "with"], `${label}.checkout`);
+    assert.deepEqual(
+      objectValue(checkout.with, `${label}.checkout.with`),
+      { "fetch-depth": 0 },
+      `${label} must retain full history for evidence-ledger ancestry verification`,
+    );
+  }
+});
+
 test("SUPPLY 2 — CodeQL runs the pinned security-and-quality suite with narrow permissions", () => {
   const workflow = parseWorkflow("codeql.yml");
   exactKeys(workflow.value, ["name", "on", "concurrency", "permissions", "jobs"], "codeql.yml");

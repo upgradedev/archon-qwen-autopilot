@@ -58,12 +58,19 @@ import type {
 export const DEFAULT_DECIDER_MODEL = process.env.QWEN_MODEL || "qwen-plus";
 // The step budget. With 5 autonomous tools, 8 leaves comfortable headroom to gather
 // evidence and still reach a terminal action before the fallback trips.
-export const DEFAULT_MAX_STEPS = Number(process.env.AUTOPILOT_MAX_STEPS || 8);
+export const DEFAULT_MAX_STEPS = boundedLoopInteger(process.env.AUTOPILOT_MAX_STEPS, 8, 1, 16);
 // The WALL-CLOCK budget for a whole run. The max-steps cap bounds the NUMBER of
 // calls; this bounds the TOTAL TIME across them, so a slow or hung upstream turns
 // into a graceful, already-built escalation (flag_for_review) instead of an
 // open-ended stall that would blow the Firebase 60s / axios 120s ceilings above us.
-export const DEFAULT_RUN_DEADLINE_MS = Number(process.env.AUTOPILOT_DEADLINE_MS || 45_000);
+export const DEFAULT_RUN_DEADLINE_MS = boundedLoopInteger(process.env.AUTOPILOT_DEADLINE_MS, 45_000, 1_000, 120_000);
+
+function boundedLoopInteger(value: string | undefined, fallback: number, min: number, max: number): number {
+  if (value == null || !value.trim()) return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, Math.trunc(parsed)));
+}
 // How many repeated / no-progress steps to tolerate before failing over to the
 // deterministic flag_for_review fallback.
 const MAX_NO_PROGRESS = 2;

@@ -125,8 +125,10 @@ The online artifact reports:
 - strict exact and normalized exact accuracy for vendor, invoice number, date,
   tax ID and currency;
 - numeric-within-one-cent accuracy for subtotal, tax and total;
-- safe-review confusion matrix/recall/specificity where review is triggered by low
-  source confidence or failed structural AP validation;
+- evaluation-only safe-review confusion matrix/recall/specificity/balanced accuracy,
+  preserving raw source-field uncertainty before normalization as well as low source
+  confidence and failed structural AP validation; this measurement is deliberately
+  broader than the production routing guard and is not a claim that both are identical;
 - per-case latency including local PDF rasterization;
 - completion/error rate, all misses, per-run metrics and case stability;
 - model, commit/clean state and a protocol hash that covers the extraction prompt,
@@ -139,22 +141,38 @@ dated pricing source.
 
 ## Model-promotion A/B
 
-Promotion is not inferred by comparing four independently timed artifacts. The
-canonical keyed protocol runs rollback and candidate arms in `AB / BA / AB` order,
-with both AP decision and vision cases inside one immutable attempt:
+Promotion is not inferred by comparing independently timed artifacts. The canonical
+keyed protocol uses four `AB / BA / BA / AB` run starts, then interleaves each
+rollback/candidate case pair back-to-back while alternating which model goes first.
+Both AP decision and vision cases stay inside one immutable attempt:
 
 ```bash
-npm run eval:compare:live -- --baseline-decision qwen-plus --baseline-vision qwen-vl-max --candidate qwen3.7-plus-2026-05-26 --write eval/results/model-promotion-ab-attempt-01.json
+npm run eval:compare:preflight -- --runs 4 --baseline-decision qwen-plus --baseline-vision qwen-vl-max --candidate qwen3.7-plus-2026-05-26 --expected-release <exact-fetched-release-commit> --write eval/results/model-promotion-ab-attempt-02.json
+npm run eval:compare:live -- --baseline-decision qwen-plus --baseline-vision qwen-vl-max --candidate qwen3.7-plus-2026-05-26 --expected-release <exact-fetched-release-commit> --write eval/results/model-promotion-ab-attempt-02.json
 ```
 
+The first command makes zero provider calls and creates no evidence artifact; it
+must pass before the expensive keyed command is allowed operationally.
+
 The runner enforces the clean committed protocol tree, official Model Studio
-endpoint, exact three-repetition order, fixed denominators, exclusive first write,
-crash-safe atomic progress and per-run non-inferiority. Candidate promotion also
-requires 100% proposal-contract/reviewer-enrichment checks, ≥20/22 raw decision
+endpoint, exact four-repetition order, fixed denominators, exclusive first write,
+crash-safe no-overwrite publication/progress, same-release end attestation and per-run
+technical non-inferiority. Candidate promotion also requires 100% final guarded
+agreement and proposal-contract/reviewer-enrichment checks, ≥20/22 raw decision
 agreement in every run, ≥95% normalized-string and numeric vision accuracy, 100%
 safe-review recall, zero unstable decision cases and at most one unstable vision
-case. These absolute floors prevent two equally weak arms from passing relative
-non-inferiority. No new policy-override class is allowed. See
+case. Safe-review specificity must be at least 11/12 and balanced accuracy at least
+23/24, with both non-inferior per run. For both surfaces, the candidate's
+error-inclusive mean must be at most 30 seconds and at most 1.5× the paired baseline
+mean in every run. These absolute floors and latency ceilings prevent two equally
+weak or impractically slow arms from passing relative non-inferiority. No new
+policy-override class or higher override count/rate is allowed. Every aggregate is
+recomputed from its cases. Technical non-inferiority is not itself promotion:
+`promotion.pass` additionally requires either +4 aggregate correct decision/vision
+fields across four runs, or a ≥10% aggregate latency win on one surface with no
+quality loss and no latency regression on the other. A tie cannot pass. A fully
+scheduled experiment containing terminal provider errors closes `promotion-fail`;
+only a missing schedule or attestation/environment failure is `incomplete`. See
 `docs/MODEL_PROMOTION.md` for the preregistered manual review and rollback steps.
 
 ## Claims that these evaluations do not support

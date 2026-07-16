@@ -21,6 +21,7 @@ changing the final submission build.
 | JavaScript graph | `package-lock.json` | `npm ci`; registry tarballs are integrity-checked from the lock |
 | GitHub Actions | Full 40-character commit SHAs | Human-readable exact release comments sit beside every `uses:` reference |
 | Video Python graph | Python `3.11.15` plus `requirements.lock` | `pip --require-hashes --only-binary=:all:` and `pip check` |
+| Local promotion Poppler | Windows x64 package spec `poppler=26.05.0=h4b9d284_3`; executable SHA-256 `742cbbd9a00931ad16c6618410bc40471375d639a45c61c1d86f3dcfc54b6388`; 178-file bundle SHA-256 `26876d12591351aa880d98a4a84b7a3f9d242f043ee95716ac8198ed0f5b0e30` | Runtime is provisioned under ignored `.artifacts/supply-chain/poppler/`; every keyed artifact re-attests the package metadata, executable and complete bundle against `eval/promotion-poppler.lock.json` |
 
 The offline regression `npm run test:docs` parses both security workflows as YAML
 and validates their exact triggers, job environment allowlist, ordered step
@@ -151,6 +152,25 @@ An exception is not added merely to make CI green. Any future allowlist entry mu
 identify the exact vulnerability and package, document reachability and compensating
 controls, name an owner and expiry, and update the fitness function in the same
 review. There are no such exceptions in this revision.
+
+## Local promotion Poppler
+
+Keyed model-promotion evidence does not trust a mutable PATH lookup or host package.
+This keyed protocol is deliberately pinned to Windows x64 until a separately hashed
+platform bundle is preregistered. The complete runtime must be provisioned under the
+ignored project path `.artifacts/supply-chain/poppler/`; the runner resolves the real
+executable, rejects symlink/path escapes, requires platform, architecture,
+basename/version/package spec/executable SHA-256 and the deterministic hash of all 178 bundle
+files to match `eval/promotion-poppler.lock.json`, and proves it can raster every
+frozen PDF before artifact creation or provider spend. Raster outputs and all
+promotion-time Node temporary files stay under a unique `.artifacts/` run root.
+Preflight files are cleaned before provider calls; live files are cleaned and the
+bundle is re-attested before a result can close as complete.
+
+The package spec was captured from the provisioning bundle's dependency manifest;
+the project copy was verified byte-for-byte against that source before the hashes
+were frozen. The package spec is provenance metadata, not a vendor signature—the
+executable and deterministic full-bundle hashes are the authoritative runtime lock.
 
 ## Honest residual nondeterminism
 

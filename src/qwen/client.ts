@@ -97,9 +97,29 @@ export function hasQwenCreds(): boolean {
 
 // Robustness defaults for every live call to DashScope: a per-request timeout so a
 // hung upstream cannot stall the ReAct loop indefinitely, and a small automatic
-// retry budget for transient network / 5xx blips. Overridable via env for tuning.
-export const QWEN_REQUEST_TIMEOUT_MS = Number(process.env.QWEN_TIMEOUT_MS || 20_000);
-export const QWEN_MAX_RETRIES = Number(process.env.QWEN_MAX_RETRIES || 2);
+// retry budget for transient network / 5xx blips. Environment overrides remain
+// bounded integers so NaN, fractions and negative values cannot create ambiguous
+// SDK behaviour or non-canonical evidence.
+export function resolveQwenTransportConfig(env: NodeJS.ProcessEnv = process.env): {
+  timeoutMs: number;
+  maxRetries: number;
+} {
+  return {
+    timeoutMs: boundedEnvInteger(env.QWEN_TIMEOUT_MS, 20_000, 1_000, 120_000),
+    maxRetries: boundedEnvInteger(env.QWEN_MAX_RETRIES, 2, 0, 5),
+  };
+}
+
+function boundedEnvInteger(value: string | undefined, fallback: number, min: number, max: number): number {
+  if (value == null || !value.trim()) return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, Math.trunc(parsed)));
+}
+
+const QWEN_TRANSPORT = resolveQwenTransportConfig();
+export const QWEN_REQUEST_TIMEOUT_MS = QWEN_TRANSPORT.timeoutMs;
+export const QWEN_MAX_RETRIES = QWEN_TRANSPORT.maxRetries;
 
 export function createQwenClient(
   apiKey: string = process.env.DASHSCOPE_API_KEY ?? "",

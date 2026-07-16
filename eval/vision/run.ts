@@ -2,90 +2,69 @@
 // `--check` validates the 16 committed fixtures without network/spend.
 // `--online --runs 3 --write ...` records every attempt, error and miss.
 
-import { createHash } from "node:crypto";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { readFile, mkdir } from "node:fs/promises";
-import { dirname, extname, isAbsolute, relative, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { hasQwenCreds, officialEvidenceEndpoint, requiresNonThinkingJsonOrTools, type OfficialEvidenceEndpoint } from "../../src/qwen/client.js";
-import { QwenVisionExtractionClient, DEFAULT_VISION_MODEL, MAX_PDF_PAGES, MAX_DOCUMENT_BYTES, VISION_TIMEOUT_MS, POPPLER_TIMEOUT_MS, validateDocument, validateMagicBytes } from "../../src/qwen/vision.js";
-import { normalizeInvoice } from "../../src/ap/normalize.js";
-import { validateInvoice } from "../../src/ap/validate.js";
-import { hasLowExtractionConfidence } from "../../src/ap/extraction-confidence.js";
-import { canonicalEvidenceCommand, categoricalEvalError, createExclusiveEvidenceArtifact, persistEvidenceArtifact } from "../artifact-safety.js";
+import { dirname, relative, resolve } from "node:path";
+import { hasQwenCreds, officialEvidenceEndpoint, QWEN_MAX_RETRIES, QWEN_REQUEST_TIMEOUT_MS, requiresNonThinkingJsonOrTools, type OfficialEvidenceEndpoint } from "../../src/qwen/client.js";
+import { QwenVisionExtractionClient, DEFAULT_VISION_MODEL, MAX_PDF_PAGES, MAX_DOCUMENT_BYTES, VISION_TIMEOUT_MS, POPPLER_TIMEOUT_MS } from "../../src/qwen/vision.js";
+import {
+  canonicalEvidenceCommand,
+  categoricalEvalError,
+  createExclusiveEvidenceArtifact,
+  persistEvidenceArtifact,
+  promotionEvidenceArtifactPath,
+} from "../artifact-safety.js";
+import {
+  applyPromotionEnvironment,
+  cleanupPromotionEnvironment,
+  finalizePromotionEnvironment,
+  preflightPromotionEnvironment,
+  PROMOTION_PARAMETER_LOCK,
+  PromotionEnvironmentError,
+  promotionEnvironmentDiagnostic,
+  type PromotionEnvironmentAttestation,
+} from "../promotion-environment.js";
+import { fixtureMime, loadFrozenVisionSet, numericWithinCent, type VisionFixtureCase } from "./fixtures.js";
+import { evaluateVisionSafeReview } from "./safe-review.js";
+import {
+  assertPinnedPromotionRuntime,
+  committedProtocolState,
+  PINNED_PROMOTION_RUNTIME,
+  type CommittedProtocolState,
+} from "../protocol-provenance.js";
 
-interface GroundTruth {
-  vendor: string | null; invoice_number: string | null; invoice_date: string | null;
-  tax_id: string | null; currency: string | null; subtotal: number | null; tax: number | null; total: number | null;
-}
-interface VisionCase { id: string; filename: string; variant: string; safeReviewExpected: boolean; groundTruth: GroundTruth }
-interface Manifest { schemaVersion: number; license: string; cases: VisionCase[] }
+const PROTOCOL_FILES = [
+  "eval/vision/manifest.json", "eval/vision/fixtures.sha256", "eval/vision/generate_fixtures.py",
+  "eval/vision/run.ts", "eval/vision/fixtures.ts", "eval/vision/safe-review.ts",
+  "eval/promotion-environment.ts", "eval/promotion-poppler.lock.json",
+  "eval/results/evidence-ledger.json",
+  "eval/protocol-provenance.ts", "eval/artifact-safety.ts", "src/qwen/vision.ts",
+  "src/ap/loop.ts", "src/ap/analysis-tools.ts", "src/ap/tools.ts", "src/ap/fake-chat.ts",
+  "src/ap/normalize.ts", "src/ap/validate.ts", "src/ap/extraction-confidence.ts",
+  "src/ap/currency.ts", "src/ap/finance-policy.ts", "src/memory/embeddings.ts",
+  "src/memory/memory.ts", "src/memory/store.ts", "src/db/client.ts",
+  "src/qwen/client.ts", "src/security/operational-error.ts", "src/types.ts",
+  "package.json", "package-lock.json",
+] as const;
 
-const ROOT = dirname(fileURLToPath(import.meta.url));
-const exec = promisify(execFile);
-const manifest = JSON.parse(await readFile(resolve(ROOT, "manifest.json"), "utf8")) as Manifest;
-
-function sha(buf: Buffer | string): string { return createHash("sha256").update(buf).digest("hex"); }
-function mime(path: string): string {
-  const ext = extname(path).toLowerCase();
-  return ext === ".pdf" ? "application/pdf" : ext === ".png" ? "image/png" : "image/jpeg";
-}
-
-async function verifyFixtures(): Promise<string> {
-  if (manifest.cases.length < 12 || manifest.cases.length > 20) throw new Error("vision manifest must contain 12–20 cases");
-  const lock = (await readFile(resolve(ROOT, "fixtures.sha256"), "utf8")).trim().split(/\r?\n/);
-  const expected = new Map(lock.map((line) => { const [hash, ...parts] = line.trim().split(/\s+/); return [parts.join(" "), hash]; }));
-  for (const c of manifest.cases) {
-    const path = resolve(ROOT, c.filename);
-    const rel = relative(ROOT, path).replace(/\\/g, "/");
-    if (isAbsolute(relative(ROOT, path)) || relative(ROOT, path).startsWith("..")) throw new Error(`${c.id}: fixture escapes benchmark directory`);
-    const bytes = await readFile(path);
-    if (sha(bytes) !== expected.get(rel)) throw new Error(`${c.id}: fixture hash mismatch for ${rel}`);
-    const v = validateDocument({ filename: path, mimetype: mime(path), size: bytes.length });
-    if (!v.ok) throw new Error(`${c.id}: ${v.error}`);
-    const mb = validateMagicBytes(bytes, v.ext);
-    if (!mb.ok) throw new Error(`${c.id}: ${mb.error}`);
-  }
-  const manifestBytes = await readFile(resolve(ROOT, "manifest.json"));
-  if (sha(manifestBytes) !== expected.get("manifest.json")) throw new Error("vision manifest hash mismatch");
-  return sha(`${lock.join("\n")}\n`);
-}
-
-async function provenance(fixtureSetSha256: string, commandArgs: string[], endpoint: OfficialEvidenceEndpoint | null) {
-  const files = [
-    "eval/vision/manifest.json", "eval/vision/fixtures.sha256", "eval/vision/generate_fixtures.py",
-    "eval/vision/run.ts", "eval/artifact-safety.ts", "src/qwen/vision.ts", "src/ap/normalize.ts", "src/ap/validate.ts",
-    "src/ap/extraction-confidence.ts", "src/ap/currency.ts", "src/ap/finance-policy.ts",
-    "src/qwen/client.ts", "src/types.ts", "package-lock.json",
-  ];
-  const h = createHash("sha256");
-  for (const file of files) h.update(file).update(await readFile(resolve(process.cwd(), file)));
-  let commit: string | null = null, clean: boolean | null = null, protocolTreeClean: boolean | null = null;
-  let allowedDirtyResultArtifacts: Array<{ status: string; path: string }> = [];
-  let disallowedDirtyPaths: Array<{ status: string; path: string }> = [];
-  try {
-    commit = (await exec("git", ["rev-parse", "HEAD"], { cwd: process.cwd() })).stdout.trim();
-    for (const file of files) {
-      await exec("git", ["ls-files", "--error-unmatch", "--", file], { cwd: process.cwd() });
-      await exec("git", ["diff", "--quiet", "HEAD", "--", file], { cwd: process.cwd() });
-    }
-    const statusText = (await exec("git", ["status", "--porcelain=v1", "--untracked-files=all"], { cwd: process.cwd() })).stdout;
-    const dirty = statusText.split(/\r?\n/).filter(Boolean).map((line) => ({ status: line.slice(0, 2), path: line.slice(3).replace(/^"|"$/g, "") }));
-    allowedDirtyResultArtifacts = dirty.filter(
-      (entry) => !entry.status.includes("D") && !entry.status.includes("R") && /^eval\/results\/[A-Za-z0-9._-]+\.json$/.test(entry.path)
-    );
-    const allowed = new Set(allowedDirtyResultArtifacts.map((entry) => `${entry.status}\0${entry.path}`));
-    disallowedDirtyPaths = dirty.filter((entry) => !allowed.has(`${entry.status}\0${entry.path}`));
-    clean = dirty.length === 0;
-    protocolTreeClean = disallowedDirtyPaths.length === 0;
-  } catch { /* preserve null rather than invent provenance */ }
+async function provenance(
+  fixtureSetSha256: string,
+  commandArgs: string[],
+  endpoint: OfficialEvidenceEndpoint | null,
+  environment: PromotionEnvironmentAttestation | null,
+  protocol: CommittedProtocolState
+) {
   const pkg = JSON.parse(await readFile(resolve(process.cwd(), "package.json"), "utf8")) as {version:string;dependencies?:Record<string,string>};
   return {
-    fixtureSetSha256, protocolSha256: h.digest("hex"), files, gitCommit: commit, gitClean: clean,
-    protocolTreeClean, allowedDirtyResultArtifacts, disallowedDirtyPaths,
-    command: canonicalEvidenceCommand("eval/vision/run.ts", commandArgs), node: process.version,
+    fixtureSetSha256, protocolSha256: protocol.protocolSha256, files: protocol.files,
+    gitCommit: protocol.gitCommit, gitClean: protocol.gitClean,
+    protocolTreeClean: protocol.protocolTreeClean,
+    allowedDirtyResultArtifacts: protocol.allowedDirtyResultArtifacts,
+    priorEvidence: protocol.evidenceLedger,
+    disallowedDirtyPaths: protocol.disallowedDirtyPaths,
+    command: canonicalEvidenceCommand("eval/vision/run.ts", commandArgs),
+    runtime: PINNED_PROMOTION_RUNTIME,
     packageVersion: pkg.version, openaiSdk: pkg.dependencies?.openai, providerEndpoint: endpoint,
+    promotionEnvironment: environment,
     parameters: {
       visionModelId: DEFAULT_VISION_MODEL,
       temperature: 0.1,
@@ -94,8 +73,12 @@ async function provenance(fixtureSetSha256: string, commandArgs: string[], endpo
       maxTokens: requiresNonThinkingJsonOrTools(DEFAULT_VISION_MODEL) ? "omitted" : 2048,
       maxPdfPages: MAX_PDF_PAGES,
       maxDocumentBytes: MAX_DOCUMENT_BYTES,
+      providerRequestTimeoutMs: QWEN_REQUEST_TIMEOUT_MS,
+      providerMaxRetries: QWEN_MAX_RETRIES,
+      providerMaxAttempts: QWEN_MAX_RETRIES + 1,
       visionTimeoutMs: VISION_TIMEOUT_MS,
       popplerTimeoutMs: POPPLER_TIMEOUT_MS,
+      promotionParameterLock: PROMOTION_PARAMETER_LOCK,
       errorPolicy: "errors stay in fixed denominators and mark a run incomplete",
     },
   };
@@ -107,27 +90,18 @@ function exact(expected: unknown, actual: unknown): boolean {
 }
 function normalizedExact(expected: unknown, actual: unknown): boolean {
   if (expected == null) return actual == null || actual === "";
-  return String(expected).trim().toLocaleLowerCase() === String(actual ?? "").trim().toLocaleLowerCase();
+  return String(expected).trim().toLowerCase() === String(actual ?? "").trim().toLowerCase();
 }
 function numeric(expected: number | null, actual: unknown): boolean {
-  if (expected == null) return actual == null;
-  const got = typeof actual === "number" ? actual : Number(actual);
-  return Number.isFinite(got) && Math.abs(got - expected) <= 0.01;
+  return numericWithinCent(expected, actual);
 }
 
-function safeReview(invoice: Record<string, unknown>): { predicted: boolean; reasons: string[] } {
-  const normalized = normalizeInvoice(invoice);
-  const failed = validateInvoice(normalized).filter((f) => !f.passed).map((f) => f.rule);
-  const low = hasLowExtractionConfidence(normalized.extraction_confidence);
-  return { predicted: low || failed.length > 0, reasons: [...(low ? ["low_extraction_confidence"] : []), ...failed] };
-}
-
-async function runCase(c: VisionCase, extractor: QwenVisionExtractionClient) {
+async function runCase(c: VisionFixtureCase, extractor: QwenVisionExtractionClient, root: string) {
   const started = performance.now();
   try {
-    const path = resolve(ROOT, c.filename);
+    const path = resolve(root, c.filename);
     const buffer = await readFile(path);
-    const result = await extractor.extract({ buffer, filename: path, mimetype: mime(path) });
+    const result = await extractor.extract({ buffer, filename: path, mimetype: fixtureMime(path) });
     const got = result.invoice;
     const strings = ["vendor", "invoice_number", "invoice_date", "tax_id", "currency"] as const;
     const numbers = ["subtotal", "tax", "total"] as const;
@@ -135,7 +109,11 @@ async function runCase(c: VisionCase, extractor: QwenVisionExtractionClient) {
       ...strings.map((f) => [f, { expected: c.groundTruth[f], actual: got[f] ?? null, strictExact: exact(c.groundTruth[f], got[f]), normalizedExact: normalizedExact(c.groundTruth[f], got[f]) }]),
       ...numbers.map((f) => [f, { expected: c.groundTruth[f], actual: got[f] ?? null, numericWithinCent: numeric(c.groundTruth[f], got[f]) }]),
     ]) as Record<string, { expected: unknown; actual: unknown; strictExact?: boolean; normalizedExact?: boolean; numericWithinCent?: boolean }>;
-    const review = safeReview(got);
+    const review = evaluateVisionSafeReview(got);
+    const misses = Object.entries(fieldResults)
+      .filter(([, v]) => !(v.numericWithinCent ?? v.normalizedExact))
+      .map(([field]) => field);
+    const unsafeExtraction = review.reasons.length > 0 || misses.length > 0;
     return {
       id: c.id, status: "ok", variant: c.variant, latencyMs: Math.round((performance.now() - started) * 100) / 100,
       pages: result.pages, model: result.model, fields: fieldResults,
@@ -144,17 +122,23 @@ async function runCase(c: VisionCase, extractor: QwenVisionExtractionClient) {
       numericCorrect: numbers.filter((f) => fieldResults[f]?.numericWithinCent === true).length,
       safeReviewExpected: c.safeReviewExpected, safeReviewPredicted: review.predicted,
       safeReviewCorrect: c.safeReviewExpected === review.predicted, safeReviewReasons: review.reasons,
-      misses: Object.entries(fieldResults).filter(([, v]) => !(v.strictExact ?? v.numericWithinCent)).map(([field]) => field),
+      sourceFieldUncertainty: review.sourceFieldUncertainty,
+      structuralFailures: review.structuralFailures,
+      unsafeExtraction,
+      unsafeAutoClear: unsafeExtraction && !review.predicted,
+      misses,
     };
   } catch (err) {
-    return { id: c.id, status: "error", variant: c.variant, latencyMs: Math.round((performance.now() - started) * 100) / 100, error: categoricalEvalError(err) };
+    return {
+      id: c.id,
+      status: "error",
+      variant: c.variant,
+      groundTruth: c.groundTruth,
+      safeReviewExpected: c.safeReviewExpected,
+      latencyMs: Math.round((performance.now() - started) * 100) / 100,
+      error: categoricalEvalError(err, "vision"),
+    };
   }
-}
-
-function safePath(input: string): string {
-  const target = resolve(input), rel = relative(process.cwd(), target);
-  if (isAbsolute(rel) || rel.startsWith("..") || !rel) throw new Error("--write must stay inside this repository");
-  return target;
 }
 
 async function main(): Promise<void> {
@@ -164,31 +148,75 @@ async function main(): Promise<void> {
   const wAt = args.indexOf("--write");
   let target: string | null = null;
   if (online) {
-    if (!Number.isInteger(runs) || runs < 3 || runs > 10) throw new Error("online vision evidence requires --runs 3 (up to 10)");
-    if (wAt < 0 || !args[wAt + 1]) throw new Error("online vision evidence requires --write <repo-contained.json>");
-    target = safePath(args[wAt + 1]!);
+    const allowed = new Set(["--online", "--runs", "--write"]);
+    const seen = new Set<string>();
+    for (let index = 0; index < args.length; index++) {
+      const flag = args[index]!;
+      if (!allowed.has(flag) || seen.has(flag)) {
+        throw new PromotionEnvironmentError("promotion_protocol_arguments_invalid");
+      }
+      seen.add(flag);
+      if (flag !== "--online") {
+        if (!args[index + 1] || args[index + 1]!.startsWith("--")) {
+          throw new PromotionEnvironmentError("promotion_protocol_arguments_invalid");
+        }
+        index += 1;
+      }
+    }
+    if (args[nAt + 1] !== "3" || ![...allowed].every((flag) => seen.has(flag)) || wAt < 0 || !args[wAt + 1]) {
+      throw new PromotionEnvironmentError("promotion_protocol_arguments_invalid");
+    }
+    target = await promotionEvidenceArtifactPath(args[wAt + 1]!, process.cwd(), {
+      prefix: "qwen-vl-max",
+      minAttempt: 1,
+      maxAttempt: 99,
+      requireNextAttempt: true,
+    });
+    await assertPinnedPromotionRuntime();
+  } else if (!(args.length === 0 || (args.length === 1 && args[0] === "--check"))) {
+    throw new PromotionEnvironmentError("promotion_protocol_arguments_invalid");
   }
   const commandArgs = online
     ? ["--online", "--runs", String(runs), "--write", relative(process.cwd(), target!).replace(/\\/g, "/")]
     : args.includes("--check") ? ["--check"] : [];
-  const fixtureSetSha256 = await verifyFixtures();
-  console.log(`Vision fixtures verified: ${manifest.cases.length} original PDF/PNG/JPG documents · sha256:${fixtureSetSha256}`);
-  const endpoint = online ? officialEvidenceEndpoint() : null;
-  const prov = await provenance(fixtureSetSha256, commandArgs, endpoint);
-  console.log(`Vision protocol sha256:${prov.protocolSha256} · git ${prov.gitCommit ?? "unknown"} · ${prov.protocolTreeClean === true ? "inputs clean (result artifacts allowed)" : "dirty/unavailable"}`);
+  if (online && !hasQwenCreds()) throw new PromotionEnvironmentError("promotion_protocol_arguments_invalid");
+  const vision = await loadFrozenVisionSet();
+  const fixtureSetSha256 = vision.fixtureSetSha256;
+  console.log(`Vision fixtures verified: ${vision.manifest.cases.length} original PDF/PNG/JPG documents · sha256:${fixtureSetSha256}`);
+  let endpoint: OfficialEvidenceEndpoint | null = null;
+  if (online) {
+    try {
+      endpoint = officialEvidenceEndpoint();
+    } catch {
+      throw new PromotionEnvironmentError("promotion_endpoint_invalid");
+    }
+  }
+  const protocol = await committedProtocolState(PROTOCOL_FILES, {
+    strict: online,
+    allowResultArtifacts: online,
+  });
+  const environment = online
+    ? await preflightPromotionEnvironment({ pdfFixtures: vision.pdfFixtures })
+    : null;
+  const restoreEnvironment = environment ? applyPromotionEnvironment(environment) : () => {};
+  let environmentFinalized = false;
+  try {
+    const prov = await provenance(fixtureSetSha256, commandArgs, endpoint, environment?.attestation ?? null, protocol);
+  console.log(`Vision protocol sha256:${prov.protocolSha256 ?? "unavailable"} · git ${prov.gitCommit ?? "unknown"} · ${prov.protocolTreeClean === true ? "inputs clean (registered result artifacts allowed)" : "dirty/unavailable"}`);
   if (!online) return;
-  if (!hasQwenCreds()) throw new Error("--online requires DASHSCOPE_API_KEY; no vision score was generated");
   if (prov.protocolTreeClean !== true || !prov.gitCommit) throw new Error("online vision evidence requires committed, unchanged protocol inputs and no dirty paths outside eval/results/*.json");
   const evidenceTarget = target!;
   const artifact: Record<string, unknown> = {
-    schemaVersion: 1, status: "running", evaluation: "archon-qwen-vl-invoice-extraction", generatedAt: new Date().toISOString(),
-    model: DEFAULT_VISION_MODEL, fixtureSet: { cases: manifest.cases.length, sha256: fixtureSetSha256, provenance: manifest.license, role: "frozen developer-authored synthetic set; not expert-labelled or representative of real-world invoice traffic" },
+    schemaVersion: 2, status: "running", evaluation: "archon-qwen-vl-invoice-extraction", generatedAt: new Date().toISOString(),
+    model: DEFAULT_VISION_MODEL, fixtureSet: { cases: vision.manifest.cases.length, sha256: fixtureSetSha256, provenance: vision.manifest.license, role: "frozen developer-authored synthetic set; not expert-labelled or representative of real-world invoice traffic" },
     provenance: prov,
     repetitions: runs, metricDefinitions: {
       strictStringAccuracy: "case-sensitive exact match on vendor/reference/date/tax-id/currency",
       normalizedStringAccuracy: "trimmed case-insensitive match",
       numericAccuracy: "absolute error <= 0.01",
-      safeReviewRecall: "review expected cases surfaced by low extraction confidence or failed AP structural validation",
+      safeReviewRecall: "evaluation-only review flags from raw source-field uncertainty, low extraction confidence, or failed AP structural validation",
+      safeReviewSpecificity: "non-review fixtures left unflagged by the evaluation-only review diagnostic",
+      safeReviewBalancedAccuracy: "mean of evaluation-only safe-review recall and specificity",
       latency: "wall clock including local PDF rasterization and one provider extraction request",
     },
     cost: { estimatedUsd: null, note: "Provider token/billing usage is not exposed by the extraction seam; no monetary cost is fabricated." },
@@ -201,8 +229,8 @@ async function main(): Promise<void> {
   for (let run = 1; run <= runs; run++) {
     const extractor = new QwenVisionExtractionClient();
     const cases = [];
-    for (const c of manifest.cases) {
-      cases.push(await runCase(c, extractor));
+    for (const c of vision.manifest.cases) {
+      cases.push(await runCase(c, extractor, vision.root));
       runList[run - 1] = { run, status: "running", cases };
       await persist();
     }
@@ -213,7 +241,7 @@ async function main(): Promise<void> {
     const nums = ok.reduce((s, c) => s + Number(c.numericCorrect), 0);
     const byId = new Map(cases.map((c) => [c.id, c]));
     let tp = 0, tn = 0, fp = 0, fn = 0;
-    for (const def of manifest.cases) {
+    for (const def of vision.manifest.cases) {
       const result = byId.get(def.id) as Record<string, unknown> | undefined;
       const predicted = result?.status === "ok" ? Boolean(result.safeReviewPredicted) : !def.safeReviewExpected;
       if (def.safeReviewExpected && predicted) tp++;
@@ -221,27 +249,48 @@ async function main(): Promise<void> {
       else if (predicted) fp++;
       else tn++;
     }
+    const unsafe = ok.filter((result) => result.unsafeExtraction === true).length;
+    const unsafeAutoClear = ok.filter((result) => result.unsafeAutoClear === true).length;
     runList[run - 1] = {
       run, status: errors ? "incomplete" : "complete", completion: { ok: ok.length, errors, total: cases.length },
       metrics: {
-        strictStringAccuracy: strict / (manifest.cases.length * 5),
-        normalizedStringAccuracy: normalized / (manifest.cases.length * 5),
-        numericAccuracy: nums / (manifest.cases.length * 3),
+        strictStringAccuracy: strict / (vision.manifest.cases.length * 5),
+        normalizedStringAccuracy: normalized / (vision.manifest.cases.length * 5),
+        numericAccuracy: nums / (vision.manifest.cases.length * 3),
         safeReview: { tp, tn, fp, fn, recall: tp / Math.max(1, tp + fn), specificity: tn / Math.max(1, tn + fp), balancedAccuracy: 0.5 * (tp / Math.max(1, tp + fn) + tn / Math.max(1, tn + fp)) },
+        containment: { unsafe, unsafeAutoClear, recall: unsafe === 0 ? 1 : (unsafe - unsafeAutoClear) / unsafe },
       },
       cases,
     };
     await persist();
   }
-  artifact.status = (runList as Array<{status:string}>).every((r) => r.status === "complete") ? "complete" : "incomplete";
+  let environmentDiagnostic: ReturnType<typeof promotionEnvironmentDiagnostic> | null = null;
+  try {
+    prov.promotionEnvironment = await finalizePromotionEnvironment(environment!);
+    environmentFinalized = true;
+  } catch (error) {
+    const fixed = error instanceof PromotionEnvironmentError
+      ? error
+      : new PromotionEnvironmentError("promotion_temp_cleanup_failed");
+    environmentDiagnostic = promotionEnvironmentDiagnostic(fixed);
+    artifact.promotionEnvironmentDiagnostic = environmentDiagnostic;
+  }
+  artifact.status = !environmentDiagnostic
+    && (runList as Array<{status:string}>).every((r) => r.status === "complete")
+    ? "complete"
+    : "incomplete";
   const completeRuns = runList as Array<{status:string;metrics?:Record<string, unknown>;cases?:Array<Record<string, unknown>>}>;
   const metric = (key: string) => completeRuns.map((r) => Number(r.metrics?.[key] ?? 0));
   const safeMetric = (key: string) => completeRuns.map((r) => {
     const safe = r.metrics?.["safeReview"] as Record<string, unknown> | undefined;
     return Number(safe?.[key] ?? 0);
   });
+  const containmentMetric = (key: string) => completeRuns.map((r) => {
+    const containment = r.metrics?.["containment"] as Record<string, unknown> | undefined;
+    return Number(containment?.[key] ?? 0);
+  });
   const summarize = (values: number[]) => ({ perRun: values, mean: values.reduce((s, n) => s + n, 0) / Math.max(1, values.length), min: Math.min(...values), max: Math.max(...values) });
-  const stabilityCases = manifest.cases.map((def) => {
+  const stabilityCases = vision.manifest.cases.map((def) => {
     const outcomes = completeRuns.map((r) => {
       const c = r.cases?.find((x) => x.id === def.id);
       return c?.status === "ok" ? JSON.stringify({ misses: c.misses, review: c.safeReviewPredicted }) : "ERROR";
@@ -256,6 +305,8 @@ async function main(): Promise<void> {
     safeReviewRecall: summarize(safeMetric("recall")),
     safeReviewSpecificity: summarize(safeMetric("specificity")),
     safeReviewBalancedAccuracy: summarize(safeMetric("balancedAccuracy")),
+    containmentRecall: summarize(containmentMetric("recall")),
+    unsafeAutoClear: summarize(containmentMetric("unsafeAutoClear")),
     unstableCaseIds: stabilityCases.filter((c) => !c.stable).map((c) => c.id),
     perCaseStability: stabilityCases,
   };
@@ -263,6 +314,20 @@ async function main(): Promise<void> {
   await persist();
   console.log(`Vision artifact: ${relative(process.cwd(), evidenceTarget)} · status ${artifact.status}`);
   if (artifact.status !== "complete") process.exitCode = 2;
+  } finally {
+    restoreEnvironment();
+    if (environment && !environmentFinalized) {
+      await cleanupPromotionEnvironment(environment).catch(() => {
+        throw new PromotionEnvironmentError("promotion_temp_cleanup_failed");
+      });
+    }
+  }
 }
 
-main().catch((err) => { console.error(`Vision evaluation failed: ${JSON.stringify(categoricalEvalError(err))}`); process.exit(1); });
+main().catch((err) => {
+  const safe = err instanceof PromotionEnvironmentError
+    ? promotionEnvironmentDiagnostic(err)
+    : categoricalEvalError(err);
+  console.error(`Vision evaluation failed: ${JSON.stringify(safe)}`);
+  process.exit(1);
+});

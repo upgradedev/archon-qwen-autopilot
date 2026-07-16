@@ -41,8 +41,10 @@ export function toSafeOperationalError(err: unknown, context = "operation"): Saf
   else if (/\b401\b|\b403\b|unauthori[sz]ed|forbidden|auth|credential|api[_ -]?key/.test(raw)) {
     code = "authentication_failed";
   } else if (/\b429\b|rate.?limit|too many requests|quota/.test(raw)) code = "rate_limited";
-  else if (/postgres|database|sqlstate|econnrefused|connection refused|storage|disk|enospc/.test(raw)) {
+  else if (/postgres|database|sqlstate|storage|disk|enospc/.test(raw)) {
     code = "storage_unavailable";
+  } else if (/econnrefused|connection refused/.test(raw)) {
+    code = context.startsWith("evaluation-") ? "provider_unavailable" : "storage_unavailable";
   } else if (/smtp|email|mail|delivery/.test(raw)) code = "delivery_unavailable";
   else if (/json|parse|schema|invalid response|malformed/.test(raw)) code = "invalid_upstream_response";
   else if (/provider|upstream|network|fetch|socket|econnreset|unavailable/.test(raw)) {

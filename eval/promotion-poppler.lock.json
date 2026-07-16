@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "platform": "win32",
+  "architecture": "x64",
+  "basename": "pdftoppm.exe",
+  "version": "26.05.0",
+  "packageSpec": "poppler=26.05.0=h4b9d284_3",
+  "sha256": "742cbbd9a00931ad16c6618410bc40471375d639a45c61c1d86f3dcfc54b6388",
+  "bundleFiles": 178,
+  "bundleSha256": "26876d12591351aa880d98a4a84b7a3f9d242f043ee95716ac8198ed0f5b0e30"
+}
