@@ -291,8 +291,12 @@ export class AutopilotAgent {
       kind: amended ? "amend" : "approve",
       tool: item.proposed.tool,
       args: structuredClone(approvedArgs),
-      amendment: item.amendment ? structuredClone(item.amendment) : undefined,
-      reason: amended ? item.amendment?.reason : undefined,
+      ...(item.amendment
+        ? {
+            amendment: structuredClone(item.amendment),
+            ...(item.amendment.reason !== undefined ? { reason: item.amendment.reason } : {}),
+          }
+        : {}),
       by: amended ? (item.amendment?.amendedBy ?? actor) : actor,
       recordedAt: new Date().toISOString(),
     });

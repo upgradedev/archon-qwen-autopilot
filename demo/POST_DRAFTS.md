@@ -11,10 +11,11 @@ accounts-payable agent that does the expensive cognitive work without quietly ta
 control of the money.
 
 For each invoice, qwen-plus runs a bounded function-calling loop: recall vendor
-history from pgvector, validate the finance fields, check for a duplicate, compare the
-amount with prior invoices, then propose exactly one action. With a valid reviewer
-credential, the proposal becomes a durable PENDING item with full evidence; the
-unauthenticated demo returns only an isolated, non-durable, redacted PREVIEW with no
+history from pgvector first, validate the finance fields, select only the relevant
+subset of duplicate, amount-variance, or context checks, then propose exactly one
+action. With a valid reviewer credential, the proposal becomes a durable PENDING item
+with full evidence; the unauthenticated demo returns only an isolated, non-durable,
+redacted PREVIEW with no
 queue/history access. A human must approve or amend the exact durable arguments before
 anything executes.
 
@@ -94,8 +95,9 @@ limitations are mapped in the repository.
 
 - **Hero:** `Archon Autopilot approval dashboard showing document intake and a
   human-gated pending queue.`
-- **Trace:** `Expanded AP proposal showing vendor recall, finance validation, duplicate
-  check, amount variance, and one pending terminal action.`
+- **Trace:** `Expanded AP proposal showing vendor recall first, finance validation,
+  the relevant subset of duplicate, amount-variance, or context observations, and one
+  pending terminal action.`
 - **Architecture:** `Flow from untrusted invoice through Qwen's bounded read/analyze
   loop to a pending proposal, authenticated human gate, SMTP/JSONL sinks, and pgvector
   memory.`

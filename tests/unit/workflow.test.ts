@@ -52,6 +52,19 @@ class RejectIntentCasStore extends InMemoryWorkItemStore {
   }
 }
 
+// PostgreSQL JSONB omits object properties whose values are undefined. Keep this
+// boundary in the always-on suite so the in-memory workflow tests cannot mask a
+// production-only intent/fence mismatch when the durable row is read back.
+class JsonRoundTripWorkItemStore extends InMemoryWorkItemStore {
+  override async updateExecuting(
+    item: import("../../src/types.js").WorkItem,
+    expectedRecoveryLeaseId?: string
+  ): Promise<boolean> {
+    const serialized = JSON.parse(JSON.stringify(item)) as import("../../src/types.js").WorkItem;
+    return super.updateExecuting(serialized, expectedRecoveryLeaseId);
+  }
+}
+
 class FailFinalizeOnceStore extends InMemoryWorkItemStore {
   private fail = true;
   override async finishExecuting(
@@ -235,6 +248,35 @@ test("approve executes the tool and moves the item to approved", async () => {
   assert.ok(approved.execution?.ok);
   assert.equal(sinks.ledger.entries().length, 1); // journal entry executed for real
   assert.equal((await agent.pending()).length, 0); // left the queue
+});
+
+test("ordinary approve survives the persistent JSON serialization boundary", async () => {
+  const store = new JsonRoundTripWorkItemStore();
+  const sinks = fakeSinks();
+  const agent = new AutopilotAgent(
+    new FakeEmbedder(),
+    new InMemoryStore(),
+    store,
+    defaultLoop(),
+    sinks,
+  );
+  const item = await agent.intake({ ...cleanInvoice, invoice_number: "JSONB-1" });
+  const approved = await agent.approve(item.id, "json-boundary-reviewer");
+
+  assert.equal(approved.status, "approved");
+  assert.equal(approved.execution?.ok, true);
+  assert.equal(sinks.ledger.entries().filter((entry) => entry.ref === item.id).length, 1);
+  const durable = await store.get(item.id);
+  assert.equal(durable?.status, "approved");
+  assert.equal(durable?.decisionIntent?.kind, "approve");
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(durable!.decisionIntent!, "amendment"),
+    false,
+  );
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(durable!.decisionIntent!, "reason"),
+    false,
+  );
 });
 
 test("approve writes the outcome BACK to memory (the agent gets smarter)", async () => {

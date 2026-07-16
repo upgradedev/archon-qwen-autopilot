@@ -9,9 +9,13 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { FakeEmbedder } from "../../src/memory/embeddings.js";
-import { PgVectorStore } from "../../src/memory/store.js";
+import { InMemoryStore, PgVectorStore } from "../../src/memory/store.js";
 import { PgWorkItemStore } from "../../src/ap/workitem-store.js";
 import { PostgresDailyRateLimiter } from "../../src/ap/rate-limit.js";
+import { defaultLoop } from "../../src/ap/loop.js";
+import { fakeSinks } from "../../src/ap/sinks.js";
+import { FakeQwenChatClient } from "../../src/ap/fake-chat.js";
+import { AutopilotAgent } from "../../src/agents/autopilot-agent.js";
 import { remember, recall } from "../../src/memory/memory.js";
 import { closePool, query } from "../../src/db/client.js";
 import type { WorkItem } from "../../src/types.js";
@@ -70,6 +74,68 @@ test("PgWorkItemStore: create → listPending → update round-trips the JSONB i
   assert.equal(fetched?.trace[0]?.tool, "recall_vendor_history");
   // No longer in the pending queue.
   assert.equal((await store.listPending()).some((p) => p.id === item.id), false);
+});
+
+test("PgWorkItemStore JSONB boundary: ordinary approve survives optional-field serialization and completes", { skip }, async () => {
+  const workitems = new PgWorkItemStore();
+  const sinks = fakeSinks();
+  const agent = new AutopilotAgent(
+    new FakeEmbedder(),
+    new InMemoryStore(),
+    workitems,
+    defaultLoop(new FakeQwenChatClient()),
+    sinks,
+  );
+  const nonce = Date.now().toString(36);
+  const vendor = `${VENDOR}-ordinary-approve-${nonce}`;
+  const item = await agent.intake({
+    vendor,
+    invoice_number: `JSONB-${nonce}`,
+    tax_id: `T-${nonce}`,
+    subtotal: 100,
+    tax: 20,
+    total: 120,
+    date: "2026-07-16",
+    currency: "EUR",
+  });
+
+  try {
+    const approved = await agent.approve(item.id, "jsonb-boundary-reviewer");
+    assert.equal(approved.status, "approved");
+    assert.equal(approved.execution?.ok, true);
+    assert.equal(approved.execution?.output["entry"] != null, true);
+    assert.equal(sinks.ledger.entries().filter((entry) => entry.ref === item.id).length, 1);
+
+    const rows = await query<{
+      status: string;
+      intent: Record<string, unknown>;
+      execution_ok: boolean;
+    }>(
+      `SELECT status,
+              item->'decisionIntent' AS intent,
+              (item->'execution'->>'ok')::boolean AS execution_ok
+         FROM ap_workitems
+        WHERE id = $1`,
+      [item.id],
+    );
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]!.status, "approved");
+    assert.equal(rows[0]!.execution_ok, true);
+    assert.equal(rows[0]!.intent["kind"], "approve");
+    assert.equal(rows[0]!.intent["by"], "jsonb-boundary-reviewer");
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(rows[0]!.intent, "amendment"),
+      false,
+      "ordinary approval must omit amendment at the JSONB boundary",
+    );
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(rows[0]!.intent, "reason"),
+      false,
+      "ordinary approval must omit reason at the JSONB boundary",
+    );
+  } finally {
+    await query(`DELETE FROM ap_workitems WHERE id = $1`, [item.id]);
+  }
 });
 
 test("PgVectorStore: vendor recall uses the same NFKC key for Unicode variants", { skip }, async () => {

@@ -43,10 +43,10 @@ proposal.
 `normalize.ts` is the messy front door: alias keys (`supplier`/`payee` → vendor),
 string amounts (`"€ 2.500,00"`, EU decimals, `"USD 900"`), unparseable dates,
 inferred totals — every coercion recorded in `notes[]`, never silently dropped.
-`validate.ts` runs six cross-checks (amount sanity, required fields, tax
-reconciliation, line-item integrity, and — grounded in recalled memory — duplicate
-and amount-anomaly detection). Then `qwen-plus`, handed a real tool set, **chooses
-one** action. And then it waits.
+`validate_invoice` runs the four structural checks (amount sanity, required fields,
+tax reconciliation, and line-item integrity). After recall and structural validation,
+`qwen-plus` selects only the duplicate, amount-variance, or context tools warranted by
+the observed evidence, then **chooses one** action. And then it waits.
 
 ## The tool set is a real function-calling schema
 
@@ -192,8 +192,9 @@ regression test, not independent model evidence:
 
 - Labels are developer-authored policy expectations; the Fake was tuned when `s22`
   exposed a routing gap.
-- The pipeline up to `computeEvidence` (normalization + R1–R6 + memory-grounded
-  detection) is **real logic** the eval grades against a semantic label.
+- The pipeline up to the terminal proposal (normalization, required R1–R4 structural
+  validation, and the relevant memory-grounded R5/R6 checks) is **real logic** the
+  eval grades against a semantic label.
 - The **precedence** scenarios carry the weight: `s17` duplicate + missing field →
   `flag_for_review` (don't pay twice); `s18` known vendor + missing field →
   `draft_vendor_reply` (do not propose payment); `s19` known vendor + anomaly →

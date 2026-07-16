@@ -79,7 +79,7 @@ commit is supporting history, not evidence for the final submission SHA.
 
 Use this only if Devpost exposes a separate short-summary field:
 
-> Archon Autopilot turns an invoice into an auditable, memory-grounded proposal through a bounded Qwen function-calling loop. It handles ambiguous documents, recalls vendor history, checks duplicates and amount variance, and stops at a durable PENDING item. Only an authenticated human can approve, amend, reject, or recover an action; the model and four-tool MCP surface have no execution authority. Human corrections become evidence for later decisions, so a re-billed amount that was previously corrected down is escalated while a compliant control is not.
+> Archon Autopilot turns an invoice into an auditable, memory-grounded proposal through a bounded Qwen function-calling loop. It handles ambiguous documents, recalls vendor history first, validates the finance fields, selects only the duplicate, variance, or context checks relevant to that invoice, and stops at a durable PENDING item. Only an authenticated human can approve, amend, reject, or recover an action; the model and four-tool MCP surface have no execution authority. Human corrections become evidence for later decisions, so a re-billed amount that was previously corrected down is escalated while a compliant control is not.
 
 ## 4 · Main description / project story
 
