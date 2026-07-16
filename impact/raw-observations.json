@@ -3,14 +3,21 @@
   "protocolId": "autopilot-synthetic-impact-v1",
   "observationKind": "synthetic workflow-model records",
   "collection": {
-    "sourceCommit": "46c0f27888f1b051012529f08e9526d2c2c2b7af",
+    "sourceCommit": "67af1fbc5e88bcc3c35c67d04dc5be517081a036",
     "sourceIdentity": {
-      "gitTree": "4a2df2232491d8bcc77dd1f52db667f86eb04fbc",
+      "gitTree": "ee5d507efcbeb7810c55ec8d7b3ad1d0f1beaf8e",
       "replaySourcePaths": [
         "src",
         "eval/lib.ts",
         "eval/dataset.ts",
         "eval/artifact-safety.ts",
+        "eval/promotion-environment.ts",
+        "eval/protocol-provenance.ts",
+        "impact/analyze.mjs",
+        "impact/provenance.mjs",
+        "impact/protocol.json",
+        "impact/cases.json",
+        "package.json",
         "package-lock.json",
         "tsconfig.json"
       ]

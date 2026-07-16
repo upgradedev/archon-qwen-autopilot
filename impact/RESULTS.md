@@ -14,7 +14,7 @@ The repository-local analysis plan was frozen before these derived files were ge
 - Denominator: 12 paired authored cases; no exclusions or imputation
 - Labels: developer-authored AP policy labels; not expert ground truth
 - Assisted replay: offline / FakeQwenChatClient / Node.js 24.18.0
-- Frozen source identity: commit 46c0f27888f1b051012529f08e9526d2c2c2b7af / tree 4a2df2232491d8bcc77dd1f52db667f86eb04fbc; canonical replay-source closure unchanged and clean
+- Frozen source identity: commit 67af1fbc5e88bcc3c35c67d04dc5be517081a036 / tree ee5d507efcbeb7810c55ec8d7b3ad1d0f1beaf8e; canonical replay-source closure unchanged and clean
 - Raw replay validation: 12/12 cases re-executed through eval/lib.ts runScenario and matched every frozen action/trace field
 - Endpoints: modeled active-review seconds, modeled human touches, and developer-policy-label mismatches
 - Analysis: descriptive paired summaries only; no inferential statistics
@@ -82,8 +82,14 @@ To run only the 12-case agent-to-raw action/trace replay comparison:
 
     npm run impact:check-raw
 
-To intentionally regenerate after a protocol-versioned input change:
+To regenerate derived outputs only after the committed raw/source identity is already valid:
 
     npm run impact:write
+
+After any replay source or protocol change, first commit the complete clean source as commit A, then run:
+
+    npm run impact:refresh-source
+
+Review and commit only the refreshed raw/results as the evidence-only descendant commit B. The refresh command refuses a dirty or uncommitted commit A.
 
 The check revalidates the fixed denominator, exact projection from eval/dataset.ts, task catalogs, raw replay shape, policy boundaries, input hashes, and byte-for-byte generated outputs.

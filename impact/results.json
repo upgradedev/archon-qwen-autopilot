@@ -8,20 +8,27 @@
     "notClaimed": "This is not an external, prospective, outcome-blind preregistration."
   },
   "sourceReplay": {
-    "sourceCommit": "46c0f27888f1b051012529f08e9526d2c2c2b7af",
+    "sourceCommit": "67af1fbc5e88bcc3c35c67d04dc5be517081a036",
     "runtime": "Node.js 24.18.0",
     "agentRunner": "eval/lib.ts runScenario",
     "mode": "offline",
     "modelSeam": "FakeQwenChatClient",
     "networkUsed": false,
     "sourceIdentity": {
-      "gitCommit": "46c0f27888f1b051012529f08e9526d2c2c2b7af",
-      "gitTree": "4a2df2232491d8bcc77dd1f52db667f86eb04fbc",
+      "gitCommit": "67af1fbc5e88bcc3c35c67d04dc5be517081a036",
+      "gitTree": "ee5d507efcbeb7810c55ec8d7b3ad1d0f1beaf8e",
       "replaySourcePaths": [
         "src",
         "eval/lib.ts",
         "eval/dataset.ts",
         "eval/artifact-safety.ts",
+        "eval/promotion-environment.ts",
+        "eval/protocol-provenance.ts",
+        "impact/analyze.mjs",
+        "impact/provenance.mjs",
+        "impact/protocol.json",
+        "impact/cases.json",
+        "package.json",
         "package-lock.json",
         "tsconfig.json"
       ],
@@ -49,12 +56,19 @@
     "excludedField": "latencyMs (nondeterministic local test timing; not an impact endpoint)"
   },
   "inputSha256": {
-    "protocolJson": "932cafd5714db6d51de867fc449cecd4daaa40c562366a98aa63964da56d6c1c",
+    "protocolJson": "878d2e744891c85f6d1fd154e29d8d9db2097b2629e3405be61d827d3b2352a3",
     "casesJson": "aea7709a56541169b0f4f96b0e69dac690d3f2ec6ec2cbd2dfbde69ab7427388",
-    "rawObservationsJson": "dace812e413c08350e721abd3cb0fc7918a7f3a958be9e1c8fc1f5946296a024",
-    "analysisScript": "1d8840a598377ba4acd63825a29d1f53726d012d9f00ea85866ed3534b4ca8da",
-    "provenanceScript": "fbe5634a6672bbd4a375df4b1a1e43496a4a1ba39ef13fd73b8eb922e82d7fcf",
-    "evalDataset": "f09277878dcbbc8c35ddb5089ab18035f961265b9516aafe570a2f7b9711f6af"
+    "rawObservationsJson": "809b2bb4b713b4c2906165d217ec0a3818e3021d6afbe05cf658e57eddde8e0d",
+    "analysisScript": "cc1b32d79b00a0f982d9fb9be58e1325479d297c11914f488cc2ffe394f658e0",
+    "provenanceScript": "99f04786d25c058d01df6e5027d18208f6b47e8cafa18115aa0c94be7e6b0045",
+    "evalDataset": "f09277878dcbbc8c35ddb5089ab18035f961265b9516aafe570a2f7b9711f6af",
+    "evalLib": "97c5ce1eae4e1718b8931e695c3f1c155213ed78fb51ab08dfe4792ac2137950",
+    "evalArtifactSafety": "7b73888efa1404ea9b89b18f10923ea80b8fb36b308421b78d805c113021df5a",
+    "evalPromotionEnvironment": "15f55fbd8843efac38c1c4d8eddeabc3c1bbd7794a9374ef520c45ca0a5aeefb",
+    "evalProtocolProvenance": "a57229a22aaa6121ef6a8bb71dd7e767190bdd12a0f055972b041aa7c4a194ef",
+    "packageJson": "5d3824996444e404ea0c57bd0931a0c8bcb5a8d19a54c96cc124fdb24c89aeb5",
+    "packageLock": "74cb8071ae14361b414daf8e9516d13d7a923759b007469aa9fc04d427cfd27b",
+    "tsconfig": "9b29b3fe4e38d17e57646f763b6954eafecc2ceeb23738577ff282003fca70f6"
   },
   "denominator": 12,
   "labelAuthority": "developer-authored AP policy labels; not expert ground truth",
