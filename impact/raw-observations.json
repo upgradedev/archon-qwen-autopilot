@@ -3,9 +3,9 @@
   "protocolId": "autopilot-synthetic-impact-v1",
   "observationKind": "synthetic workflow-model records",
   "collection": {
-    "sourceCommit": "4107731bd1ef215bdc1109e56d173cbb60b693f2",
+    "sourceCommit": "4d661e172dd6545d3bcff4c6d37cb59836120777",
     "sourceIdentity": {
-      "gitTree": "e56a51c9643adfacd4d86a36e37c9dde1c3a2f92",
+      "gitTree": "fa815acd9efeacb5008c72ea27fad2370f608fe5",
       "replaySourcePaths": [
         ".gitattributes",
         "src",

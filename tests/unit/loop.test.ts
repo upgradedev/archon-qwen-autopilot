@@ -290,19 +290,39 @@ test("parse path: terminal confidence is clamped to [0,1]", async () => {
   assert.equal(res.proposed.confidence, 1);
 });
 
-test("structural evidence gate withholds a step-1 money proposal until recall and validation run", async () => {
-  const client = scriptedClient([
+test("recall-first fence constrains the provider and rejects a non-conforming step-1 money proposal", async () => {
+  const requests: ChatCreateArgs[] = [];
+  const scripted = scriptedClient([
     toolCall("draft_payment", { vendor: "A", amount: 120, currency: "EUR", reasoning: "skip checks", confidence: 1 }),
     toolCall("recall_vendor_history", { reasoning: "run required history" }),
     toolCall("validate_invoice", { reasoning: "run required validation" }),
     toolCall("draft_payment", { vendor: "A", amount: 120, currency: "EUR", reasoning: "evidence complete", confidence: 0.8 }),
   ]);
+  const client: QwenChatClient = { chat: { completions: { create: async (args) => {
+    requests.push(args);
+    return scripted.chat.completions.create(args);
+  } } } };
   const invoice = normalizeInvoice({ vendor: "A", invoice_number: "1", date: "2026-01-01", currency: "EUR", tax_id: "T", total: 120 });
   const res = await new AutopilotLoop(client).run({ invoice, ...loopDeps() });
 
   assert.equal(res.proposed.tool, "draft_payment");
-  assert.match(res.trace[0]!.observation, /Terminal proposal withheld/);
-  assert.ok(res.trace.some((step) => step.tool === "recall_vendor_history"));
+  assert.deepEqual(requests[0]!.tools?.map((tool) => tool.function.name), ["recall_vendor_history"]);
+  assert.deepEqual(requests[0]!.tool_choice, {
+    type: "function",
+    function: { name: "recall_vendor_history" },
+  });
+  assert.equal(res.trace[0]!.tool, "recall_sequence_guard");
+  assert.deepEqual(res.trace[0]!.args, { attemptedTool: "draft_payment" });
+  assert.equal(res.trace[0]!.step, 1);
+  assert.equal(res.trace[1]!.tool, "recall_vendor_history");
+  assert.equal(res.trace[1]!.step, 2);
+  assert.deepEqual(requests[1]!.tools?.map((tool) => tool.function.name), ["recall_vendor_history"]);
+  assert.deepEqual(requests[1]!.tool_choice, {
+    type: "function",
+    function: { name: "recall_vendor_history" },
+  });
+  assert.equal(requests[2]!.tool_choice, "auto");
+  assert.ok((requests[2]!.tools?.length ?? 0) > 1);
   assert.ok(res.trace.some((step) => step.tool === "validate_invoice"));
 });
 
