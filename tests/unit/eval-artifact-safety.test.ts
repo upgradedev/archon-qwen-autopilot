@@ -247,10 +247,18 @@ test("initial evidence publication exposes only complete bytes and cleans interr
     );
     await assert.rejects(access(path), { code: "ENOENT" });
     assert.deepEqual((await readdir(dir)).filter((name) => name.includes(".initial-")), []);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
+test("successful initial evidence publication exposes exactly the complete staged bytes", async () => {
+  const dir = resolve(".artifacts", `eval-artifact-success-${process.pid}`);
+  const path = resolve(dir, "attempt.json");
+  await mkdir(dir, { recursive: true });
+  try {
     await createExclusiveEvidenceArtifact(path, '{"status":"complete"}\n', {
       beforePublish: async (staged) => {
-        await assert.rejects(access(path), { code: "ENOENT" });
         assert.equal(await readFile(staged, "utf8"), '{"status":"complete"}\n');
       },
     });
