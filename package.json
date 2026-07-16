@@ -20,6 +20,7 @@
     "eval:live": "node --import tsx eval/run.ts --online --runs 3",
     "eval:compare:preflight": "node --import tsx eval/promotion-preflight.ts",
     "eval:compare:live": "node --import tsx eval/compare.ts --online --runs 4",
+    "eval:compare:recover": "node --import tsx eval/promotion-recovery.ts",
     "eval:corrections": "tsx eval/corrections.ts",
     "eval:vision": "node --import tsx eval/vision/run.ts --check",
     "eval:vision:live": "node --import tsx eval/vision/run.ts --online --runs 3",

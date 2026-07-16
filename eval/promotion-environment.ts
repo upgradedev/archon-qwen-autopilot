@@ -18,6 +18,7 @@ import {
   MAX_PDF_PAGES,
   pdfRenderArgs,
   POPPLER_TIMEOUT_MS,
+  popplerSubprocessEnvironment,
   validateImageDimensions,
   validateMagicBytes,
 } from "../src/qwen/vision.js";
@@ -154,7 +155,7 @@ const defaultRunner: PromotionCommandRunner = {
       timeout: timeoutMs,
       windowsHide: true,
       maxBuffer: 64 * 1024,
-      env: { ...process.env, ...environment },
+      env: popplerSubprocessEnvironment(process.env, environment),
     });
     return { stdout: result.stdout, stderr: result.stderr };
   },

@@ -69,7 +69,7 @@ export function pairedCaseOrder(
 
 export const PROMOTION_PROTOCOL_FILES = [
   "eval/compare.ts", "eval/artifact-safety.ts", "eval/promotion-environment.ts",
-  "eval/promotion-preflight.ts",
+  "eval/promotion-preflight.ts", "eval/promotion-recovery.ts",
   "eval/promotion-poppler.lock.json", "eval/protocol-provenance.ts",
   "eval/results/evidence-ledger.json", "eval/results/model-promotion-ab-attempt-01.json",
   "eval/dataset.ts", "eval/dataset.sha256", "eval/hash.ts", "eval/lib.ts",
@@ -119,6 +119,23 @@ export const PROMOTION_RELATIVE_GATES = Object.freeze({
   decision: Object.freeze({ maxMeanLatencyRatioVsBaseline: 1.5 }),
   vision: Object.freeze({ maxMeanLatencyRatioVsBaseline: 1.5 }),
 });
+
+// The authoritative root is ledger-acceptable from its first publication. A hard
+// process interruption can therefore freeze any progress snapshot without leaving
+// a non-registerable `running` attempt. Nested run/surface state carries progress;
+// only the normal finalization path may publish a terminal promotion decision.
+export const PROMOTION_PROGRESS_ROOT_STATUS = "incomplete" as const;
+const PROMOTION_TERMINAL_ROOT_STATUSES = new Set(["promotion-pass", "promotion-fail"]);
+
+export function assertPromotionRootStatusForPersistence(
+  status: unknown,
+  terminalPublicationAuthorized = false
+): void {
+  const valid = terminalPublicationAuthorized
+    ? PROMOTION_TERMINAL_ROOT_STATUSES.has(String(status)) || status === PROMOTION_PROGRESS_ROOT_STATUS
+    : status === PROMOTION_PROGRESS_ROOT_STATUS;
+  if (!valid) throw new PromotionEnvironmentError("promotion_artifact_invalid");
+}
 
 export const PROMOTION_MATERIAL_BENEFIT_GATES = Object.freeze({
   aggregateCorrectFieldGain: 4,
@@ -826,6 +843,7 @@ async function main(): Promise<void> {
     strict: true,
     allowResultArtifacts: true,
     expectedReleaseGitCommit: cli.expectedRelease,
+    requireHeadMatchesOriginMain: true,
   });
   const environment = await preflightPromotionEnvironment({ pdfFixtures: vision.pdfFixtures });
   const restoreEnvironment = applyPromotionEnvironment(environment);
@@ -842,7 +860,7 @@ async function main(): Promise<void> {
     const runs: Array<Record<string, unknown>> = [];
     artifact = {
     schemaVersion: 2,
-    status: "running",
+    status: PROMOTION_PROGRESS_ROOT_STATUS,
     evaluation: "archon-counterbalanced-model-promotion",
     generatedAt: new Date().toISOString(),
     models,
@@ -853,7 +871,11 @@ async function main(): Promise<void> {
     provenance: prov,
     runs,
   };
-    persist = () => persistEvidenceArtifact(target, `${JSON.stringify(artifact, null, 2)}\n`);
+    let terminalPublicationAuthorized = false;
+    persist = () => {
+      assertPromotionRootStatusForPersistence(artifact?.status, terminalPublicationAuthorized);
+      return persistEvidenceArtifact(target, `${JSON.stringify(artifact, null, 2)}\n`);
+    };
     const order: Array<[ArmName, ArmName]> = [
     ["baseline", "candidate"],
     ["candidate", "baseline"],
@@ -945,6 +967,7 @@ async function main(): Promise<void> {
       allowResultArtifacts: true,
       activeResultPath,
       expectedReleaseGitCommit: cli.expectedRelease,
+      requireHeadMatchesOriginMain: true,
     });
     if (endProtocol.protocolTreeClean !== true) releaseMismatches.push("protocol-tree");
     if (endProtocol.headMatchesExpectedRelease !== true) releaseMismatches.push("expected-release");
@@ -982,12 +1005,13 @@ async function main(): Promise<void> {
       prov.releaseAttestation.status !== "passed"
     );
     artifact.completedAt = new Date().toISOString();
+    terminalPublicationAuthorized = true;
     await persist();
     console.log(`Counterbalanced A/B artifact: ${relative(process.cwd(), target)} · ${artifact.status}`);
     if (!promotion.pass) process.exitCode = 2;
   } catch (error) {
     if (artifactCreated && artifact && persist) {
-      artifact.status = "incomplete";
+      artifact.status = PROMOTION_PROGRESS_ROOT_STATUS;
       artifact.completedAt = new Date().toISOString();
       artifact.executionDiagnostic = error instanceof PromotionEnvironmentError
         ? promotionEnvironmentDiagnostic(error)

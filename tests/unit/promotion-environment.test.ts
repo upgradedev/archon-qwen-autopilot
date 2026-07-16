@@ -22,9 +22,28 @@ import {
   numericWithinCent,
 } from "../../eval/vision/fixtures.js";
 import { evaluateVisionSafeReview } from "../../eval/vision/safe-review.js";
-import { POPPLER_TIMEOUT_MS } from "../../src/qwen/vision.js";
+import { POPPLER_TIMEOUT_MS, popplerSubprocessEnvironment } from "../../src/qwen/vision.js";
 
 const ROOT = resolve(".");
+
+test("Poppler subprocess environment excludes provider, database, and cloud credentials", () => {
+  const environment = popplerSubprocessEnvironment({
+    PATH: "safe-path",
+    TEMP: "safe-temp",
+    LANG: "C.UTF-8",
+    DASHSCOPE_API_KEY: "sk-provider-secret",
+    DATABASE_URL: "postgresql://secret",
+    AWS_SECRET_ACCESS_KEY: "cloud-secret",
+    SMTP_PASSWORD: "mail-secret",
+  }, { TMP: "bounded-live-root" });
+  assert.deepEqual(environment, {
+    PATH: "safe-path",
+    TEMP: "safe-temp",
+    LANG: "C.UTF-8",
+    TMP: "bounded-live-root",
+  });
+  assert.doesNotMatch(JSON.stringify(environment), /provider-secret|postgresql|cloud-secret|mail-secret/);
+});
 
 test("fixture-set identity is identical for LF and CRLF lock checkouts", async () => {
   const lock = await readFile("eval/vision/fixtures.sha256", "utf8");

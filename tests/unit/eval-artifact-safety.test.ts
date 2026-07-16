@@ -8,6 +8,7 @@ import { join, relative, resolve } from "node:path";
 import {
   canonicalEvidenceCommand,
   categoricalEvalError,
+  cleanupPromotionEvidenceStagingRemnants,
   createExclusiveEvidenceArtifact,
   persistEvidenceArtifact,
   probeEvidencePublicationDirectory,
@@ -16,10 +17,13 @@ import {
 import { createQwenClient, officialEvidenceEndpoint, officialRuntimeEndpoint, resolveQwenTransportConfig } from "../../src/qwen/client.js";
 import {
   assertPromotionCredential,
+  assertPromotionRootStatusForPersistence,
   comparePromotionReleaseSnapshots,
   meanLatencyOrNull,
   pairedCaseOrder,
   parsePromotionCli,
+  PROMOTION_ARTIFACT_POLICY,
+  PROMOTION_PROGRESS_ROOT_STATUS,
   promotionGate,
   PROMOTION_MODELS,
   promotionReleaseSnapshot,
@@ -29,6 +33,7 @@ import {
   summarizeVision,
   terminalPromotionArtifactStatus,
 } from "../../eval/compare.js";
+import { parsePromotionRecoveryCli, recoverPromotionAttempt } from "../../eval/promotion-recovery.js";
 import { EVAL_SET } from "../../eval/dataset.js";
 import { bootstrapConfig } from "../../scripts/bootstrap-db.js";
 import {
@@ -77,6 +82,152 @@ test("atomic evidence progress preserves parseable authoritative JSON across int
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("promotion progress root is always ledger-acceptable and terminal publication needs explicit finalization", () => {
+  assert.equal(PROMOTION_PROGRESS_ROOT_STATUS, "incomplete");
+  assert.doesNotThrow(() => assertPromotionRootStatusForPersistence("incomplete"));
+  for (const forbidden of ["running", "complete", "promotion-pass", "promotion-fail", null]) {
+    assert.throws(
+      () => assertPromotionRootStatusForPersistence(forbidden),
+      (error: unknown) => error instanceof PromotionEnvironmentError
+        && error.code === "promotion_artifact_invalid"
+    );
+  }
+  assert.doesNotThrow(() => assertPromotionRootStatusForPersistence("promotion-pass", true));
+  assert.doesNotThrow(() => assertPromotionRootStatusForPersistence("promotion-fail", true));
+});
+
+test("hard-interrupted promotion progress remains immutable, ledgerable, and advances to the next attempt", async () => {
+  const dir = resolve(".artifacts", `promotion-interruption-ledger-${process.pid}`);
+  const results = join(dir, "eval", "results");
+  const attempt01Path = "eval/results/model-promotion-ab-attempt-01.json";
+  const attempt02Path = "eval/results/model-promotion-ab-attempt-02.json";
+  const attempt03Path = "eval/results/model-promotion-ab-attempt-03.json";
+  const attempt02 = join(dir, attempt02Path);
+  const fixedUuid = "11111111-2222-4333-8444-555555555555";
+  const orphanInitial = `${attempt02}.initial-123-${fixedUuid}`;
+  const orphanNext = `${attempt02}.next-456-${fixedUuid}`;
+  const probeTarget = join(results, `.promotion-publication-probe-321-${fixedUuid}`);
+  const probeStage = `${probeTarget}.initial-654-${fixedUuid}`;
+  const unrelated = `${attempt02}.next-interrupted`;
+  await mkdir(results, { recursive: true });
+  const git = (args: string[]) => spawnSync("git", args, { cwd: dir, encoding: "utf8" });
+  try {
+    assert.equal(git(["init", "--quiet"]).status, 0);
+    assert.equal(git(["config", "user.email", "interruption-test@example.invalid"]).status, 0);
+    assert.equal(git(["config", "user.name", "Interruption Test"]).status, 0);
+    assert.equal(git(["config", "core.autocrlf", "false"]).status, 0);
+    await writeFile(join(dir, "protocol.ts"), "export const protocol = 1;\n", "utf8");
+    assert.equal(git(["add", "protocol.ts"]).status, 0);
+    assert.equal(git(["commit", "--quiet", "-m", "source release"]).status, 0);
+    const firstSource = git(["rev-parse", "HEAD"]).stdout.trim();
+    const attempt01Bytes = Buffer.from(JSON.stringify({
+      status: "incomplete",
+      provenance: { gitCommit: firstSource },
+      promotion: { pass: false },
+    }, null, 2) + "\n");
+    await writeFile(join(dir, attempt01Path), attempt01Bytes);
+    await writeFile(join(results, "evidence-ledger.json"), JSON.stringify({
+      schemaVersion: 1,
+      attempts: [{
+        path: attempt01Path,
+        sha256: createHash("sha256").update(attempt01Bytes).digest("hex"),
+        sourceCommit: firstSource,
+        status: "incomplete",
+        classification: "environment-invalid-diagnostic",
+      }],
+    }, null, 2) + "\n");
+    assert.equal(git(["add", attempt01Path, "eval/results/evidence-ledger.json"]).status, 0);
+    assert.equal(git(["commit", "--quiet", "-m", "register first attempt"]).status, 0);
+    const secondSource = git(["rev-parse", "HEAD"]).stdout.trim();
+
+    const progress = {
+      schemaVersion: 2,
+      status: PROMOTION_PROGRESS_ROOT_STATUS,
+      provenance: { gitCommit: secondSource },
+      runs: [{
+        run: 1,
+        status: "running",
+        arms: { baseline: { decision: { status: "running", cases: [] }, vision: { status: "pending", cases: [] } } },
+      }],
+    };
+    await createExclusiveEvidenceArtifact(attempt02, `${JSON.stringify(progress, null, 2)}\n`);
+    progress.runs[0]!.arms.baseline.decision.cases.push({ id: "d01", status: "ok" } as never);
+    await persistEvidenceArtifact(attempt02, `${JSON.stringify(progress, null, 2)}\n`);
+    const frozenBytes = await readFile(attempt02);
+    await writeFile(orphanInitial, "non-authoritative initial stage\n", "utf8");
+    await writeFile(orphanNext, '{"status":', "utf8");
+    await writeFile(probeTarget, "non-authoritative publication probe\n", "utf8");
+    await writeFile(probeStage, "non-authoritative publication probe stage\n", "utf8");
+    await writeFile(unrelated, "must remain\n", "utf8");
+
+    const recovery = await recoverPromotionAttempt(attempt02Path, dir);
+    assert.equal(recovery.providerCalls, 0);
+    assert.equal(recovery.artifact.authoritative, "present-unregistered");
+    assert.equal(recovery.artifact.rootStatus, "incomplete");
+    assert.equal(recovery.recovery.sameAttemptReusable, false);
+    assert.equal(recovery.recovery.requiredAction, "register-immutable-artifact-before-next-attempt");
+    assert.equal(recovery.recovery.nextAttemptPath, attempt03Path);
+    assert.deepEqual(recovery.staging.removed, [
+      relative(dir, orphanInitial).replace(/\\/g, "/"),
+      relative(dir, orphanNext).replace(/\\/g, "/"),
+      relative(dir, probeTarget).replace(/\\/g, "/"),
+      relative(dir, probeStage).replace(/\\/g, "/"),
+    ].sort());
+    assert.ok((await readFile(attempt02)).equals(frozenBytes), "recovery must not alter authoritative bytes");
+    assert.equal(await readFile(unrelated, "utf8"), "must remain\n");
+
+    const ledgerPath = join(results, "evidence-ledger.json");
+    const ledger = JSON.parse(await readFile(ledgerPath, "utf8"));
+    ledger.attempts.push({
+      path: attempt02Path,
+      sha256: createHash("sha256").update(frozenBytes).digest("hex"),
+      sourceCommit: secondSource,
+      status: "incomplete",
+      classification: "model-promotion-evidence",
+    });
+    await writeFile(ledgerPath, JSON.stringify(ledger, null, 2) + "\n");
+    assert.equal(git(["add", attempt02Path, "eval/results/evidence-ledger.json"]).status, 0);
+    assert.equal(git(["commit", "--quiet", "-m", "register interrupted attempt"]).status, 0);
+
+    await assert.rejects(
+      promotionEvidenceArtifactPath(attempt02Path, dir, PROMOTION_ARTIFACT_POLICY),
+      (error: unknown) => error instanceof PromotionEnvironmentError
+        && error.code === "promotion_artifact_exists"
+    );
+    assert.equal(
+      await promotionEvidenceArtifactPath(attempt03Path, dir, PROMOTION_ARTIFACT_POLICY),
+      join(dir, attempt03Path)
+    );
+    const registeredRecovery = await recoverPromotionAttempt(attempt02Path, dir);
+    assert.equal(registeredRecovery.artifact.authoritative, "present-registered");
+    assert.equal(registeredRecovery.recovery.requiredAction, "use-next-attempt");
+    assert.equal(registeredRecovery.recovery.nextAttemptPath, attempt03Path);
+
+    const strandedPriorStage = `${attempt02}.next-789-${fixedUuid}`;
+    await writeFile(strandedPriorStage, "old non-authoritative stage\n", "utf8");
+    const nextRecovery = await recoverPromotionAttempt(attempt03Path, dir);
+    assert.equal(nextRecovery.artifact.authoritative, "absent");
+    assert.equal(nextRecovery.recovery.sameAttemptReusable, true);
+    assert.deepEqual(nextRecovery.staging.removed, [relative(dir, strandedPriorStage).replace(/\\/g, "/")]);
+    await assert.rejects(access(strandedPriorStage), { code: "ENOENT" });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("promotion recovery CLI and staging cleanup reject broad or escaped deletion targets", async () => {
+  assert.equal(parsePromotionRecoveryCli(["--write", "eval/results/model-promotion-ab-attempt-02.json"]),
+    "eval/results/model-promotion-ab-attempt-02.json");
+  for (const argv of [[], ["--write", "../attempt-02.json"], ["--write", "eval/results/model-promotion-ab-attempt-01.json"], ["--write", "eval/results/model-promotion-ab-attempt-02.json", "--force"]]) {
+    assert.throws(() => parsePromotionRecoveryCli(argv), PromotionEnvironmentError);
+  }
+  await assert.rejects(
+    cleanupPromotionEvidenceStagingRemnants("../model-promotion-ab-attempt-02.json"),
+    (error: unknown) => error instanceof PromotionEnvironmentError
+      && error.code === "promotion_artifact_invalid"
+  );
 });
 
 test("initial evidence publication exposes only complete bytes and cleans interrupted stages", async () => {
@@ -725,7 +876,7 @@ test("same-release attestation detects head, protocol-blob, fixture, and origin-
   assert.deepEqual(origin.mismatches, ["origin-main"]);
 });
 
-test("expected-release binding rejects a changed HEAD even when the new tree is clean", async () => {
+test("expected-release and origin/main binding reject a changed or clean unpushed HEAD", async () => {
   const dir = resolve(".artifacts", `expected-release-${process.pid}`);
   await mkdir(dir, { recursive: true });
   const git = (args: string[]) => spawnSync("git", args, { cwd: dir, encoding: "utf8" });
@@ -746,8 +897,24 @@ test("expected-release binding rejects a changed HEAD even when the new tree is 
     await writeFile(join(dir, "next.ts"), "export const next = 2;\n", "utf8");
     assert.equal(git(["add", "next.ts"]).status, 0);
     assert.equal(git(["commit", "--quiet", "-m", "release two"]).status, 0);
+    const unpushed = git(["rev-parse", "HEAD"]).stdout.trim();
     await assert.rejects(
       committedProtocolState(["protocol.ts"], { cwd: dir, strict: true, expectedReleaseGitCommit: release }),
+      (error: unknown) => error instanceof PromotionEnvironmentError
+        && error.code === "promotion_protocol_tree_invalid"
+    );
+    const cleanButUnpushed = await committedProtocolState(["protocol.ts"], {
+      cwd: dir, strict: true, expectedReleaseGitCommit: unpushed,
+    });
+    assert.equal(cleanButUnpushed.headMatchesExpectedRelease, true);
+    assert.equal(cleanButUnpushed.headMatchesOriginMain, false);
+    await assert.rejects(
+      committedProtocolState(["protocol.ts"], {
+        cwd: dir,
+        strict: true,
+        expectedReleaseGitCommit: unpushed,
+        requireHeadMatchesOriginMain: true,
+      }),
       (error: unknown) => error instanceof PromotionEnvironmentError
         && error.code === "promotion_protocol_tree_invalid"
     );

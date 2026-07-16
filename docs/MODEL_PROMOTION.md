@@ -9,7 +9,8 @@ high-upside candidate, never a silent replacement.
 1. Finish and review the protocol, fixtures, policy and runner changes.
 2. Run the offline checks and full repository verification.
 3. Fetch `origin/main`, run from the exact intended release commit, commit the complete
-   tree and confirm `git status --porcelain` is empty.
+   tree and confirm `git status --porcelain` is empty. Both preflight and keyed run
+   require `HEAD == origin/main`; a clean local-only/unpushed commit fails closed.
 4. Pass that exact 40-character commit as `--expected-release`; the runner binds and
    records it rather than inferring that whichever `HEAD` happens to exist is valid.
 5. Only then run keyed evidence. The online runner refuses a dirty/uncommitted
@@ -123,13 +124,39 @@ npm run eval:compare:live -- `
   --write eval/results/model-promotion-ab-attempt-02.json
 ```
 
-If an attempt is interrupted or incomplete, keep its JSON unchanged, append its hash
-to the evidence ledger, commit, and use the exact next two-digit suffix (`01..99`).
-Gaps, repeated suffixes and three-or-more-digit suffixes fail closed. Initial creation
-uses a fsynced same-directory stage plus atomic no-overwrite hard link; progress uses
-a fsynced same-directory atomic replacement. Both paths remove their stage and flush
-the directory, so an interrupted operation cannot expose a partial target or leave a
-successful-run temp sibling. Unregistered dirty files correctly block keyed evidence.
+The authoritative root JSON is `status: "incomplete"` from its first publication
+through every progress write; only nested run/surface nodes use `running` or `pending`.
+Only normal finalization may change the root to `promotion-pass` or `promotion-fail`.
+Thus even a hard process kill leaves a ledger-acceptable root artifact.
+
+Initial creation uses a fsynced same-directory stage plus atomic no-overwrite hard
+link; progress uses a fsynced same-directory atomic replacement. A hard kill can
+leave `.<initial|next>-<pid>-<uuid>` siblings. Those exact regular-file siblings are
+non-authoritative; the attempt path itself is authoritative and must never be edited,
+deleted, or reconstructed from a stage. Run the project-local zero-provider recovery
+before reusing or advancing an interrupted suffix:
+
+```powershell
+npm run eval:compare:recover -- `
+  --write eval/results/model-promotion-ab-attempt-02.json
+```
+
+Recovery removes only exact regular staging siblings for this promotion prefix up to
+the requested suffix plus exact `.promotion-publication-probe-*` targets/stages (so
+attempt-02 or killed preflight remnants cannot dirty-block attempt 03), rejects
+symlinks/special files and path escapes, never changes an authoritative attempt, and
+reports `providerCalls: 0`. If it reports `authoritative: "absent"`, rerun the same
+suffix's zero-call preflight. If it reports `present-unregistered`, preserve those
+bytes, append the reported path/SHA-256/source commit/root status as
+`model-promotion-evidence` to `eval/results/evidence-ledger.json`, explicitly
+`git add` only that attempt plus the ledger, review, commit, fetch `origin/main`, and
+use the reported next suffix. Run recovery and zero-call preflight for that next path
+before keyed execution. Gaps, repeated suffixes and suffixes outside `01..99` fail
+closed; unregistered dirty files correctly block keyed evidence.
+
+Poppler subprocesses receive only an allowlist of OS lookup, temporary-directory and
+locale/font-configuration variables. Provider keys, database DSNs, SMTP credentials
+and cloud secrets are never inherited by the PDF parser.
 
 The individual `eval:live` and `eval:vision:live` runners remain useful for diagnosis,
 but separate sequential artifacts are not sufficient promotion evidence because their

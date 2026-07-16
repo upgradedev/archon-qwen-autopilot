@@ -33,6 +33,28 @@ import type { RawInvoice } from "../types.js";
 // extraction; VISION_MODEL overrides it (parity with the memory pipeline's env).
 export const DEFAULT_VISION_MODEL = process.env.VISION_MODEL || "qwen-vl-max";
 
+const POPPLER_ENVIRONMENT_ALLOWLIST = new Set([
+  "PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT",
+  "TEMP", "TMP", "TMPDIR", "HOME", "USERPROFILE",
+  "LANG", "LC_ALL", "LC_CTYPE", "TZ",
+  "LD_LIBRARY_PATH", "FONTCONFIG_PATH", "FONTCONFIG_FILE", "XDG_DATA_DIRS",
+]);
+
+// PDF bytes are untrusted and Poppler never needs provider/database credentials.
+// Pass only OS/runtime lookup and temp/locale values to the child process.
+export function popplerSubprocessEnvironment(
+  source: NodeJS.ProcessEnv = process.env,
+  overrides: Readonly<Record<string, string>> = {}
+): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = {};
+  for (const [name, value] of Object.entries({ ...source, ...overrides })) {
+    if (value !== undefined && POPPLER_ENVIRONMENT_ALLOWLIST.has(name.toUpperCase())) {
+      environment[name] = value;
+    }
+  }
+  return environment;
+}
+
 // poppler binary (overridable so a non-standard install path still works). Read at
 // call time (not module load) so it stays overridable per-invocation — which also
 // lets a test point it at a bogus path to exercise the "poppler not installed" path
@@ -546,7 +568,10 @@ function runPdftoppm(args: string[], signal?: AbortSignal): Promise<void> {
     if (signal?.aborted) return finish(abortReason(signal));
     signal?.addEventListener("abort", onAbort, { once: true });
     try {
-      proc = spawn(pdftoppmBin(), args, { stdio: ["ignore", "ignore", "pipe"] });
+      proc = spawn(pdftoppmBin(), args, {
+        stdio: ["ignore", "ignore", "pipe"],
+        env: popplerSubprocessEnvironment(),
+      });
     } catch (err) {
       finish(wrapPopplerError(err));
       return;

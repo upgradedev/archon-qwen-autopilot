@@ -59,12 +59,14 @@ async function main(): Promise<void> {
     strict: true,
     allowResultArtifacts: true,
     expectedReleaseGitCommit: cli.expectedRelease,
+    requireHeadMatchesOriginMain: true,
   });
   const publicationCapability = await probeEvidencePublicationDirectory(resolve(process.cwd(), "eval", "results"));
   const afterPublicationProbe = await committedProtocolState(PROMOTION_PROTOCOL_FILES, {
     strict: true,
     allowResultArtifacts: true,
     expectedReleaseGitCommit: cli.expectedRelease,
+    requireHeadMatchesOriginMain: true,
   });
   if (afterPublicationProbe.protocolSha256 !== protocol.protocolSha256) {
     throw new PromotionEnvironmentError("promotion_protocol_tree_invalid");
@@ -88,6 +90,7 @@ async function main(): Promise<void> {
     strict: true,
     allowResultArtifacts: true,
     expectedReleaseGitCommit: cli.expectedRelease,
+    requireHeadMatchesOriginMain: true,
   });
   const releaseStart = promotionReleaseSnapshot(protocol, datasetSha256, vision, environment.attestation);
   const releaseEnd = promotionReleaseSnapshot(endProtocol, endDatasetSha256, endVision, attestation);

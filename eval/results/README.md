@@ -13,6 +13,15 @@ The comparison preflight is deliberately not evidence: it needs no API key, make
 zero provider calls and creates no attempt file. It proves the local environment and
 committed protocol are ready before the immutable keyed attempt starts.
 
+The keyed comparison root remains `incomplete` during all progress writes; nested
+runs/surfaces carry `running`/`pending`. A hard interruption is therefore directly
+ledgerable. Exact writer staging siblings are non-authoritative. Inspect and remove
+only those project-local remnants with
+`npm run eval:compare:recover -- --write eval/results/model-promotion-ab-attempt-NN.json`.
+The command makes zero provider calls, cleans same-prefix remnants through `NN`, and
+cleans exact killed publication-probe remnants, but never modifies the authoritative attempt. Preserve/register a present attempt and use
+the reported next suffix; reuse `NN` only when authoritative state is `absent`.
+
 The standalone AP and vision runners require three complete repetitions; the keyed
 comparison requires the exact four-run `AB / BA / BA / AB` protocol. All bind output
 to committed fixture hashes, retain every miss and categorical error, and refuse paths

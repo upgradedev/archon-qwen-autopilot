@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { link, lstat, open, readFile, realpath, rename, unlink } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { link, lstat, open, readFile, readdir, realpath, rename, unlink } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
   toSafeOperationalError,
   type OperationalErrorCode,
@@ -154,6 +154,70 @@ export async function promotionEvidenceArtifactPath(
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export interface EvidenceStagingCleanupResult {
+  authoritativePath: string;
+  removed: string[];
+}
+
+// A hard kill may strand only a same-directory stage created by the two writers
+// below. These siblings and publication probes are never authoritative. Cleanup is
+// deliberately narrow: an exact same-prefix attempt stage (through the requested
+// suffix) or exact probe name, plus a real regular file inside this repository, is
+// required before unlinking anything.
+export async function cleanupPromotionEvidenceStagingRemnants(
+  input: string,
+  repoRoot = process.cwd()
+): Promise<EvidenceStagingCleanupResult> {
+  const root = await realpath(resolve(repoRoot)).catch(() => {
+    throw new PromotionEnvironmentError("promotion_artifact_invalid");
+  });
+  if (isAbsolute(input) || input.includes("\\")) {
+    throw new PromotionEnvironmentError("promotion_artifact_invalid");
+  }
+  const target = resolve(root, input);
+  const rel = relative(root, target).replace(/\\/g, "/");
+  if (rel !== input
+    || !/^eval\/results\/[A-Za-z0-9._-]+-attempt-[0-9]{2}\.json$/.test(rel)) {
+    throw new PromotionEnvironmentError("promotion_artifact_invalid");
+  }
+  const parent = await realpath(dirname(target)).catch(() => {
+    throw new PromotionEnvironmentError("promotion_artifact_invalid");
+  });
+  if (relative(root, parent).replace(/\\/g, "/") !== "eval/results") {
+    throw new PromotionEnvironmentError("promotion_artifact_invalid");
+  }
+
+  const targetName = basename(target);
+  const targetMatch = /^(?<prefix>[A-Za-z0-9._-]+)-attempt-(?<attempt>[0-9]{2})\.json$/.exec(targetName);
+  if (!targetMatch?.groups) throw new PromotionEnvironmentError("promotion_artifact_invalid");
+  const prefix = targetMatch.groups.prefix!;
+  const maxAttempt = Number(targetMatch.groups.attempt);
+  const uuid = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+  const stagePattern = new RegExp(`^${escapeRegExp(prefix)}-attempt-([0-9]{2})\\.json\\.(?:initial|next)-[1-9][0-9]*-${uuid}$`);
+  const publicationProbePattern = new RegExp(`^\\.promotion-publication-probe-[1-9][0-9]*-${uuid}(?:\\.initial-[1-9][0-9]*-${uuid})?$`);
+  const candidates = (await readdir(parent, { withFileTypes: true }))
+    .filter((entry) => {
+      const match = stagePattern.exec(entry.name);
+      return (match !== null && Number(match[1]) <= maxAttempt)
+        || publicationProbePattern.test(entry.name);
+    })
+    .sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+  const removed: string[] = [];
+  for (const entry of candidates) {
+    const staged = join(parent, entry.name);
+    const info = await lstat(staged);
+    const stagedReal = await realpath(staged).catch(() => "");
+    if (!entry.isFile() || !info.isFile() || info.isSymbolicLink()
+      || !stagedReal || relative(parent, stagedReal).replace(/\\/g, "/") !== entry.name) {
+      throw new PromotionEnvironmentError("promotion_artifact_invalid");
+    }
+    await unlink(staged);
+    removed.push(`eval/results/${entry.name}`);
+  }
+  if (removed.length > 0) await syncDirectory(parent);
+  return { authoritativePath: rel, removed };
 }
 
 export interface EvidencePublicationOptions {

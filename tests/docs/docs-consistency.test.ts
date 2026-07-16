@@ -732,6 +732,7 @@ test("CHECK 8 · promotion evidence: attempt 01 remains immutable and environmen
   const evaluation = readFileSync(join(ROOT, "EVAL.md"), "utf8");
   const comparison = readFileSync(join(ROOT, "eval", "compare.ts"), "utf8");
   const promotionPreflight = readFileSync(join(ROOT, "eval", "promotion-preflight.ts"), "utf8");
+  const promotionRecovery = readFileSync(join(ROOT, "eval", "promotion-recovery.ts"), "utf8");
   const packageJson = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
   const ledger = JSON.parse(readFileSync(join(ROOT, "eval", "results", "evidence-ledger.json"), "utf8"));
   const attempt01 = readFileSync(join(ROOT, "eval", "results", "model-promotion-ab-attempt-01.json"));
@@ -763,13 +764,28 @@ test("CHECK 8 · promotion evidence: attempt 01 remains immutable and environmen
     packageJson.scripts["eval:compare:preflight"],
     "node --import tsx eval/promotion-preflight.ts"
   );
+  assert.equal(
+    packageJson.scripts["eval:compare:recover"],
+    "node --import tsx eval/promotion-recovery.ts"
+  );
   assert.match(protocol, /eval:compare:preflight/);
   assert.match(protocol, /zero-provider-call/i);
   assert.match(promotionPreflight, /providerCalls: 0/);
   assert.match(promotionPreflight, /artifactCreated: false/);
   assert.match(promotionPreflight, /committedProtocolState\(PROMOTION_PROTOCOL_FILES/);
   assert.match(promotionPreflight, /preflightPromotionEnvironment/);
+  assert.ok((promotionPreflight.match(/requireHeadMatchesOriginMain: true/g) ?? []).length >= 3);
+  assert.ok((comparison.match(/requireHeadMatchesOriginMain: true/g) ?? []).length >= 2);
   assert.doesNotMatch(promotionPreflight, /createExclusiveEvidenceArtifact|persistEvidenceArtifact|hasQwenCreds/);
+  assert.match(comparison, /PROMOTION_PROGRESS_ROOT_STATUS = "incomplete"/);
+  assert.match(comparison, /assertPromotionRootStatusForPersistence/);
+  assert.match(protocol, /authoritative root JSON is `status: "incomplete"`/i);
+  assert.match(protocol, /eval:compare:recover/);
+  assert.match(protocol, /non-authoritative/);
+  assert.match(protocol, /providerCalls: 0/);
+  assert.match(promotionRecovery, /cleanupPromotionEvidenceStagingRemnants/);
+  assert.match(promotionRecovery, /providerCalls: 0/);
+  assert.doesNotMatch(promotionRecovery, /DASHSCOPE|QwenVision|runScenario|createQwenClient/);
   assert.deepEqual(ledger, {
     schemaVersion: 1,
     attempts: [{
