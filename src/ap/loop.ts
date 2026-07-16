@@ -220,6 +220,23 @@ export class AutopilotLoop {
       const name = call?.function?.name ?? "";
       const parsed = call ? safeParseArgs(call.function.arguments) : {};
 
+      // Recall is the trust-establishing first evidence step. The provider is given
+      // only that tool (and a forced tool choice) until it succeeds, but keep this
+      // local fence as well: a malformed or non-conforming compatible endpoint must
+      // not be able to execute validation or propose an action ahead of history.
+      // Rejected calls are deliberately absent from the evidence trace, whose first
+      // persisted step therefore remains the first evidence operation that ran.
+      if (call && !state.didRecall && name !== "recall_vendor_history") {
+        noProgress++;
+        if (noProgress >= MAX_NO_PROGRESS) {
+          return safeFallback(
+            "no_progress_fallback",
+            "the decision model repeatedly ignored the mandatory recall-first evidence boundary"
+          );
+        }
+        continue;
+      }
+
       // TERMINAL action → stop the loop and hand back the proposal (nothing executes).
       if (call && isTerminalTool(name) && toolByName(name)) {
         const missingEvidence = requiredEvidence(state);
@@ -453,6 +470,10 @@ export class AutopilotLoop {
 
     // Convert provider rejection into data before racing, so a late rejection is
     // always observed even after the hard boundary has returned to the caller.
+    const recallFirst = !state.didRecall;
+    const offeredDefs = recallFirst
+      ? allDefs.filter((tool) => tool.function.name === "recall_vendor_history")
+      : allDefs;
     let providerSettled = false;
     const provider = Promise.resolve().then(() => this.client.chat.completions.create(
       {
@@ -460,8 +481,10 @@ export class AutopilotLoop {
         messages: this.messages(invoiceBlock, trace, state),
         temperature: 0.1,
         max_tokens: 512,
-        tools: allDefs,
-        tool_choice: "auto",
+        tools: offeredDefs,
+        tool_choice: recallFirst
+          ? { type: "function", function: { name: "recall_vendor_history" } }
+          : "auto",
         ...(requiresNonThinkingJsonOrTools(this.modelId) ? { enable_thinking: false } : {}),
       },
       { signal: controller.signal }

@@ -65,6 +65,23 @@ class JsonRoundTripWorkItemStore extends InMemoryWorkItemStore {
   }
 }
 
+class JsonRoundTripCrashAfterIntentStore extends InMemoryWorkItemStore {
+  private crash = true;
+  override async updateExecuting(
+    item: import("../../src/types.js").WorkItem,
+    expectedRecoveryLeaseId?: string
+  ): Promise<boolean> {
+    const serialized = JSON.parse(JSON.stringify(item)) as import("../../src/types.js").WorkItem;
+    if (this.crash && serialized.decisionIntent && !serialized.execution && !serialized.executionFailure) {
+      this.crash = false;
+      serialized.executionStartedAt = "2000-01-01T00:00:00.000Z";
+      await super.updateExecuting(serialized, expectedRecoveryLeaseId);
+      throw new Error("process died after JSON-round-tripped intent commit, before sink call");
+    }
+    return super.updateExecuting(serialized, expectedRecoveryLeaseId);
+  }
+}
+
 class FailFinalizeOnceStore extends InMemoryWorkItemStore {
   private fail = true;
   override async finishExecuting(
@@ -277,6 +294,31 @@ test("ordinary approve survives the persistent JSON serialization boundary", asy
     Object.prototype.hasOwnProperty.call(durable!.decisionIntent!, "reason"),
     false,
   );
+});
+
+test("ordinary approve recovers its JSON-round-tripped immutable intent after a pre-sink crash", async () => {
+  const store = new JsonRoundTripCrashAfterIntentStore();
+  const sinks = fakeSinks();
+  const agent = new AutopilotAgent(
+    new FakeEmbedder(),
+    new InMemoryStore(),
+    store,
+    defaultLoop(),
+    sinks,
+  );
+  const item = await agent.intake({ ...cleanInvoice, invoice_number: "JSONB-RECOVERY-1" });
+
+  await assert.rejects(() => agent.approve(item.id, "json-recovery-reviewer"), /nothing was executed/i);
+  assert.equal(sinks.ledger.entries().length, 0);
+  const orphan = await store.get(item.id);
+  assert.equal(orphan?.decisionIntent?.kind, "approve");
+  assert.equal(Object.prototype.hasOwnProperty.call(orphan!.decisionIntent!, "amendment"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(orphan!.decisionIntent!, "reason"), false);
+
+  const recovered = await agent.recover(item.id, "retry", "confirmed no ledger row exists");
+  assert.equal(recovered.status, "approved");
+  assert.equal(recovered.decisionIntent?.kind, "approve");
+  assert.equal(sinks.ledger.entries().filter((entry) => entry.ref === item.id).length, 1);
 });
 
 test("approve writes the outcome BACK to memory (the agent gets smarter)", async () => {
