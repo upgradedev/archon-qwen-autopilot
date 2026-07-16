@@ -1037,6 +1037,7 @@ test("CHECK 9 · synthetic impact evidence: fixed denominator, deterministic der
   const analyzer = readFileSync(join(ROOT, "impact", "analyze.mjs"), "utf8");
   const provenance = readFileSync(join(ROOT, "impact", "provenance.mjs"), "utf8");
   const replaySourcePaths = [
+    ".gitattributes",
     "src",
     "eval/lib.ts",
     "eval/dataset.ts",
