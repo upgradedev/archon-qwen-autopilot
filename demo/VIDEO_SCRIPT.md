@@ -14,7 +14,7 @@ not permitted as renderer inputs or gallery evidence.
 | 5 · Correction changes behavior | 1:11–1:34 | Guided challenge: baseline €3,000 → amend €5,000 to €3,000 → re-bill/control comparison | Hero innovation: re-bill €5,000 → `flag_for_review`; negative control €3,000 → `draft_payment`. Same real routes, no preloaded answer. |
 | 6 · Evidence, not hype | 1:34–1:53 | Workflow metrics + frozen eval artifacts | State exactly: 22/22 tuned developer-labelled offline regression; separate three-run raw-Qwen protocol; 16 original hash-locked vision fixtures; show live numbers only if clean committed artifacts exist. |
 | 7 · Structural safety | 1:53–2:14 | Injection invoice, surfaced warning, model/MCP catalog with execution verbs crossed out | The model and four-tool MCP surface cannot approve/amend/reject/pay. Injection can influence a proposal, never autonomously execute. Human gate remains. |
-| 8 · Alibaba/Qwen proof | 2:14–2:34 | App-specific ECS identity, `/health`, `/ready`, one actual decider canary and one vision extraction | Capture only Autopilot proof. Show `qwen-plus`/`qwen-vl-max`, or the versioned qwen3.7 candidate only after its frozen A/B promotion gate passes. |
+| 8 · Alibaba/Qwen proof | 2:14–2:34 | App-specific ECS identity, `/health`, `/ready`, one actual decider canary and one vision extraction | Capture only Autopilot proof from the newly exact-deployed application release. Label `DEPLOYED APP SHA` separately from a later docs/media-only `SUBMISSION HEAD`. Show `qwen-plus`/`qwen-vl-max`, or the versioned qwen3.7 candidate only after its frozen A/B promotion gate passes. |
 | 9 · Close | 2:34–2:48 | Live URL, repo, MIT, Track 4, four evidence numbers | “Bounded where judgment helps; deterministic and human-controlled where money moves.” |
 
 ## Claim lock
@@ -27,6 +27,8 @@ not permitted as renderer inputs or gallery evidence.
 - Payment/review adapters remain simulated. SMTP and append-only JSONL journal sinks
   are configurable real transports behind approval.
 - Do not mention or link another submission as a product foundation.
+- Do not call historical release `321b6c5…` the final deployment after later runtime
+  changes. Record and show the newly exact-deployed application SHA.
 
 ## Build and acceptance
 

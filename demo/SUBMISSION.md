@@ -1,6 +1,6 @@
 # Archon Autopilot — Devpost submission description
 
-*Paste the body below into the Devpost "description" field. Track 4. ~495 words.*
+*Paste the body below into the Devpost "description" field. Track 4. ~605 words.*
 
 ---
 
@@ -37,9 +37,11 @@ surfaced at the approval gate, while safety does not depend on detecting every p
   attacks in the trace and at the gate. Proven offline — including a
   **poisoned-memory** prior that is genuinely recalled yet still cannot move money
   (`tests/pentest/prompt-injection.test.ts`).
-- **Memory-grounded**: duplicate + anomaly checks read a persistent **pgvector**
-  vendor history; approved outcomes are written back, so recurring vendors get
-  recognized over time.
+- **Correction-aware memory**: duplicate + anomaly checks read persistent **pgvector**
+  vendor history. Human amend/reject outcomes are written back and lifted into the
+  next decision. In the controlled delta, a €5,000 re-bill above a human-corrected
+  €3,000 amount changes `draft_payment → flag_for_review`, while the compliant €3,000
+  control stays a payment proposal. No model weights are updated.
 - **Two deliberately asymmetric surfaces**: HTTP + Approval UI is the exclusive
   authenticated decision path; an **MCP server exposes four proposal/read-only tools**
   (`intake_invoice`, `list_pending`, `recall_vendor`, `list_skills`) and cannot decide
@@ -52,7 +54,9 @@ surfaced at the approval gate, while safety does not depend on detecting every p
 
 `qwen-plus` (function-calling decider) · `text-embedding-v4` (memory) · `qwen-vl-max`
 (reads uploaded invoice PDFs/images via `src/qwen/vision.ts`) — all through the
-OpenAI-compatible DashScope endpoint.
+OpenAI-compatible DashScope endpoint. Low/unknown extraction confidence, unresolved
+field conflicts, or a document payable total inferred because its source total was
+unreadable fail toward human review rather than a payment proposal.
 
 **Differentiator:** an agent that *acts* on memory yet can't move money by design.
 

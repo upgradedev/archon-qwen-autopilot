@@ -25,5 +25,5 @@ Final expected artifacts:
   safety limit. The hosted
   Public video URL, not this repository file, is used in Devpost.
 
-These files do not exist until the post-deploy capture pass; never substitute media
-from another entry.
+These files do not exist until the **new exact-current-source** post-deploy capture
+pass; never substitute historical release media or media from another entry.

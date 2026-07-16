@@ -1,20 +1,19 @@
 # Final media + submission checklist
 
-All automatable engineering checks are green. What remains requires a human browser,
-recording voice, public hosting, or publication account. Never show the reviewer token,
+The public-main engineering gates are green. Exact-current-source release proof and
+the media/publication steps below remain human-gated. Never show the reviewer token,
 `.env`, terminal history containing credentials, cloud keys, or a real vendor address.
 
 Run [`BUILD_RECORDING.md`](BUILD_RECORDING.md) first, then use the concise operator
-sheet in [`VIDEO_RECORDING_CHECKLIST.md`](VIDEO_RECORDING_CHECKLIST.md). The audited
-application release `321b6c5440a365fe346d2c446e141e9c5d33854c` was exact-deployed
-and passed production build, database isolation, health/readiness/deep readiness,
-live `qwen-vl-max` extraction, multi-step `qwen-plus` intake→PENDING, authenticated
-rejection with targeted cleanup, and public TLS canaries on 2026-07-15. The final
-media pass only needs to recapture that proven flow visually and sanitize the proof
-composite. A later documentation/media-only submission HEAD may differ and must be
-labelled separately.
+sheet in [`VIDEO_RECORDING_CHECKLIST.md`](VIDEO_RECORDING_CHECKLIST.md). Release
+`321b6c5440a365fe346d2c446e141e9c5d33854c` passed an exact deployment proof on
+2026-07-15, but it is historical after later runtime changes on public `main`.
+**Do not use that release as final-submission provenance.** Exact-deploy the final
+application release, rerun every canary, and capture its new proof before recording.
+A later documentation/media-only submission HEAD may differ, but the deployed
+application SHA and submission SHA must be labelled separately.
 Recheck the [official rules](https://qwencloud-hackathon.devpost.com/rules) immediately
-before submission; this pack was reconciled to them on 2026-07-15.
+before submission; this pack was reconciled to them on 2026-07-16.
 
 ## 1 · Capture these fresh screenshots
 
@@ -103,6 +102,9 @@ because they predated the final authenticated UI and were not approved evidence.
 
 ## 3 · Publish one supplied post
 
+- [ ] Prefer the full [`BLOG.md`](BLOG.md) route and follow
+  [`BLOG_PUBLICATION_CHECKLIST.md`](BLOG_PUBLICATION_CHECKLIST.md) for the optional
+  bonus judged on thoroughness and potential impact.
 - [ ] Choose a draft from [`POST_DRAFTS.md`](POST_DRAFTS.md).
 - [ ] Attach the hero, trace, and architecture images (no secrets).
 - [ ] Keep the exact scope: offline policy eval, two configurable real transports,
@@ -112,6 +114,8 @@ because they predated the final authenticated UI and were not approved evidence.
 
 ## 4 · Assemble Devpost
 
+- [ ] Open [`DEVPOST_PACKET.md`](DEVPOST_PACKET.md) and resolve only its human-owned
+  placeholders directly in the draft/publication accounts.
 - [ ] Select **Track 4 — Autopilot Agent**.
 - [ ] Paste [`SUBMISSION.md`](SUBMISSION.md) / [`PROJECT_STORY.md`](PROJECT_STORY.md)
   into the matching fields and remove Markdown that Devpost does not render.
@@ -123,10 +127,14 @@ because they predated the final authenticated UI and were not approved evidence.
 - [ ] Put the reviewer Bearer token only in Devpost's private testing instructions.
 - [ ] Add the optional public post URL.
 - [ ] Test every link and the full judge flow in a signed-out/incognito window.
+- [ ] Complete [`RIGHTS_ELIGIBILITY_SIGNOFF.md`](RIGHTS_ELIGIBILITY_SIGNOFF.md) as the
+  entrant or authorized representative; do not commit personal data or signatures.
 - [ ] Keep the live app, TLS, active private reviewer credential, judge reserve,
   database, and Qwen quota free and available through the end of judging:
   **2026-08-11 2:00 PM PDT**.
-- [ ] Submit before **2026-07-20 2:00 PM PDT** and save the confirmation screenshot.
+- [ ] Save the complete draft before **2026-07-20 2:00 PM PDT**
+  (**2026-07-21 00:00 Europe/Athens**), then stop on the final review page.
+- [ ] **Do not press Submit project without the entrant's explicit final approval.**
 
 ## Final claim lock
 

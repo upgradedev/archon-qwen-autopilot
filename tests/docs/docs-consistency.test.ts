@@ -524,6 +524,18 @@ test("CHECK 6 · media: obsolete pre-auth UI captures remain deleted", () => {
   }
 });
 
+test("CHECK 6 · media: proof narration separates deployed application SHA from submission HEAD", () => {
+  const renderer = readFileSync(join(ROOT, "scripts", "make_frames.py"), "utf8").toLowerCase();
+  assert.ok(
+    renderer.includes("recorded deployed application") && renderer.includes("submission head"),
+    "Alibaba proof narration must distinguish the deployed application release from a later docs/media submission HEAD",
+  );
+  assert.ok(
+    !renderer.includes("comes from the exact final commit"),
+    "proof narration must not collapse deployed application SHA and final submission HEAD",
+  );
+});
+
 test("CHECK 7 · supply chain: immutable Actions + hash-locked demo-video Python graph", () => {
   const NODE_VERSION = "24.18.0";
   const NPM_VERSION = "11.16.0";

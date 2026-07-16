@@ -1,6 +1,6 @@
 # Ready-to-publish post drafts
 
-Replace `[VIDEO_URL]` and `[POST_IMAGE_ALT]` only after the final public assets exist.
+Replace `[PUBLIC_VIDEO_URL]` only after the final public video exists.
 The repository and public hostname are fixed, but publish only after the exact-release
 proof in [`BUILD_RECORDING.md`](BUILD_RECORDING.md) passes. Do not include the reviewer
 token.
@@ -42,7 +42,7 @@ Live: https://autopilot.43.106.13.19.sslip.io
 
 Code (MIT): https://github.com/upgradedev/archon-qwen-autopilot
 
-Demo: [VIDEO_URL]
+Demo: [PUBLIC_VIDEO_URL]
 
 #Qwen #AlibabaCloud #AIHackathon #AgenticAI #FinTech #HumanInTheLoop
 
@@ -74,7 +74,7 @@ totals linked from the submitted commit's immutable CI run.
 **4/4** Live on Alibaba Cloud / Qwen, MIT licensed:
 https://autopilot.43.106.13.19.sslip.io
 https://github.com/upgradedev/archon-qwen-autopilot
-[VIDEO_URL]
+[PUBLIC_VIDEO_URL]
 
 ## Devpost community update
 
@@ -93,7 +93,7 @@ limitations are mapped in the repository.
 
 ## Suggested image alt text
 
-- **Hero:** `[POST_IMAGE_ALT] Archon Autopilot approval dashboard showing document
+- **Hero:** `Archon Autopilot approval dashboard showing document
   intake and a human-gated pending queue.`
 - **Trace:** `Expanded AP proposal showing vendor recall, finance validation, duplicate
   check, amount variance, and one pending terminal action.`
