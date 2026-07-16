@@ -16,19 +16,17 @@ Design goals (Track-4 demo video):
   * Missing final captures abort the build instead of falling back to stale assets.
 
 SYNC MODEL (the fix in v2):
-  Each BEAT carries its OWN narration line and its OWN measured duration. The
-  orchestrator (scripts/build_video.py) synthesizes each beat's narration, measures
-  the decoded audio, snaps it to a whole number of frames, and hands the per-beat
-  durations back here. This renderer then emits one exact-length mp4 PER BEAT and
-  concatenates them — so a beat's visual is on-screen for EXACTLY the span its own
-  narration is spoken. There is NO global timeline scaling and NO -t cap: audio and
-  video are built from the SAME per-beat frame-quantized durations, so they are
-  frame-aligned within every scene (and within every "Step N" of the loop) with zero
-  cumulative drift.
+  Each BEAT carries its OWN English accessibility text and assigned duration. The
+  orchestrator (scripts/build_video.py) either measures rights-attested narration or
+  selects the reviewed CAPTION_ONLY=true fixed frame counts, then hands the per-beat
+  durations back here. This renderer emits one exact-length mp4 PER BEAT and
+  concatenates them. Audio, SRT, burned captions and video are built from the SAME
+  per-beat frame-quantized durations, so there is no global scaling and no cumulative
+  drift.
 
 This module is import-friendly:
   * build_beats(assets) -> list[Beat]        (id, narration, factory)
-  * dump_narration(beats, path)              (for the TTS step)
+  * dump_narration(beats, path)              (TTS or caption accessibility text)
   * render_scenes(beats, durations, output)  (per-beat mp4 -> concat)
 
 CLI:
@@ -520,9 +518,10 @@ def scene_outro(cap, public_url, model_label):
 
 # --------------------------------------------------------------------------- #
 # Beats — the SINGLE source of truth: each beat = (id, narration, factory).
-# The narration drives per-beat TTS; the factory renders the visual. There is NO
-# hard-coded duration here — the orchestrator measures each beat's real narration
-# length and passes the per-beat durations to render_scenes().
+# The narration is the accessibility-text source; the factory renders the visual.
+# There is NO hard-coded duration here — the orchestrator either measures narrated
+# audio or applies the reviewed caption-only timing contract, then passes the exact
+# per-beat durations to render_scenes().
 # --------------------------------------------------------------------------- #
 @dataclass
 class Beat:

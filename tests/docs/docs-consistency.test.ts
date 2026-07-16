@@ -823,6 +823,18 @@ test("CHECK 7 · supply chain: immutable Actions + hash-locked demo-video Python
   assert.match(loadScript, /Authorization:\s*`Bearer \$\{REVIEWER_TOKEN\}`/);
 
   const videoWorkflow = readFileSync(join(ROOT, ".github", "workflows", "demo-video.yml"), "utf8");
+  assert.match(videoWorkflow, /caption_only:[\s\S]{0,180}type: boolean[\s\S]{0,80}default: false/);
+  const captionOnlyStep = videoWorkflow
+    .split("- name: Build the rights-safe caption-only video")[1]
+    ?.split("- name: Upload demo video")[0] ?? "";
+  assert.match(captionOnlyStep, /CAPTION_ONLY: ["']true["']/);
+  assert.match(captionOnlyStep, /autopilot-demo\.en\.srt/);
+  assert.match(captionOnlyStep, /autopilot-demo\.caption-only\.json/);
+  assert.doesNotMatch(
+    captionOnlyStep,
+    /XI_API_KEY|ELEVEN_LABS_KEY|VOICE_ID|VOICE_RIGHTS_ATTESTED/,
+    "caption-only workflow step must not receive voice-provider secrets or settings",
+  );
   assert.match(videoWorkflow, /python-version:\s*["']3\.11\.15["']/);
   assert.match(videoWorkflow, /cache:\s*pip/);
   assert.match(videoWorkflow, /cache-dependency-path:\s*demo\/video\/requirements\.lock/);

@@ -384,6 +384,24 @@ test("all artifact writers reject traversal, absolute, symlink, and broken-symli
     assert.match(frames, /repo_contained_path\(\s*args\.durations/);
     assert.match(frames, /repo_contained_path\(args\.output/);
     assert.match(video, /from path_safety import repo_contained_path/);
+    assert.match(video, /caption_only = strict_env_flag\("CAPTION_ONLY"\)/);
+    assert.match(video, /CAPTION_ONLY_BEATS\s*=\s*\([\s\S]*"01-stakes"[\s\S]*"09-close"/);
+    assert.match(
+      video,
+      /if caption_only:[\s\S]{0,500}caption_only_timing\(beats\)[\s\S]{0,500}build_caption_only_silence/,
+      "caption-only mode must choose fixed timings and local silence",
+    );
+    assert.match(
+      video,
+      /if caption_only:[\s\S]{0,900}else:\s+engine, seg_mp3s = synth_all/,
+      "TTS synthesis must remain exclusively in the narrated branch",
+    );
+    assert.match(video, /anullsrc=channel_layout=stereo:sample_rate=48000/);
+    assert.match(video, /"tts": False/);
+    assert.match(video, /"third_party_music": False/);
+    assert.match(video, /verify_caption_only_media\(render_output, total\)/);
+    assert.match(video, /publish_exclusive\(\[/);
+    assert.match(video, /refusing to overwrite existing final artifact/);
     assert.match(ui, /resolveRepoContainedPath/);
     assert.match(attack, /resolveRepoContainedPath/);
     assert.match(demo, /repo-path\.cjs/);

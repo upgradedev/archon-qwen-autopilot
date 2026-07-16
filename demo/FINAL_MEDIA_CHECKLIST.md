@@ -88,11 +88,17 @@ signed-out publication checks.
   must read only the explicitly promoted captures under `demo/final-media/`.
 - [ ] If the label contains `qwen3.7`, set `VIDEO_PROMOTION_EVIDENCE` to the exact
   repo-contained counterbalanced artifact and confirm it says `promotion-pass`.
-- [ ] Set `VOICE_RIGHTS_ATTESTED=true` only after confirming that the chosen generated
-  voice/service is licensed or otherwise authorized for this public competition use;
-  otherwise record an owned human voiceover outside the TTS path.
-- [ ] Watch the rendered MP4 from beginning to end with headphones; no clipped audio,
-  unreadable overlays, blank frames, stale numbers, token flashes, or silent ending.
+- [ ] If voice/service rights are not explicitly confirmed, build with
+  `CAPTION_ONLY=true`: fixed 168-second/30-fps beat windows, burned captions, measured
+  English SRT, and locally generated digital silence—no TTS or third-party music.
+- [ ] Use narrated mode only after setting `VOICE_RIGHTS_ATTESTED=true` and confirming
+  that the chosen generated voice/service is licensed or otherwise authorized for
+  this public competition use. Unset `CAPTION_ONLY`; the existing narrated mode is
+  still the default.
+- [ ] Watch the rendered MP4 from beginning to end with headphones and muted. In
+  caption-only mode, require intentional silence and no unexpected sound; in
+  narrated mode, require no clipped audio, silent ending, or drift. In either mode,
+  reject unreadable overlays, blank frames, stale numbers, or token flashes.
 - [ ] Verify duration with `ffprobe`; the automated publication safety gate is
   **strictly below 175 seconds**, leaving margin below the contest's `<3:00` rule.
 - [ ] Host on an accepted **YouTube, Vimeo, or Youku** page set to exact
@@ -103,6 +109,10 @@ signed-out publication checks.
   remove anything whose publication rights are unclear.
 - [ ] Keep the reviewed render in `demo/final-media/`, then use its **Public hosted
   URL**—not a repository blob—as the Devpost video URL.
+- [ ] For caption-only publication, retain and verify
+  `autopilot-demo.en.srt` plus `autopilot-demo.caption-only.json`; require its
+  recorded MP4/SRT hashes, nine cues, rights profile, 1080p stream contract, and
+  `<175s` duration to match the final assets.
 
 ## 3 · Publish one supplied post
 

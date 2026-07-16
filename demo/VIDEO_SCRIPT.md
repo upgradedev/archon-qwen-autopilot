@@ -32,20 +32,35 @@ not permitted as renderer inputs or gallery evidence.
 
 ## Build and acceptance
 
+Rights-safe publication default when voice/service rights are not explicitly
+confirmed:
+
 ```bash
 $env:PUBLIC_APP_URL='https://autopilot.43.106.13.19.sslip.io'
 $env:VIDEO_MODEL_LABEL='qwen-plus · qwen-vl-max · text-embedding-v4'
-$env:VOICE_RIGHTS_ATTESTED='true' # only after confirming public-use rights
+$env:CAPTION_ONLY='true'
 # Replace the baseline label and set VIDEO_PROMOTION_EVIDENCE to the repo-contained,
 # same-release promotion-pass JSON only if the final model label contains qwen3.7.
 python scripts/build_video.py
 ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 demo/final-media/autopilot-demo.mp4
 ```
 
+`CAPTION_ONLY=true` locks the target windows above to exactly 168 seconds at 30 fps,
+uses the already burned per-beat captions, emits a measured nine-cue English SRT,
+and muxes locally generated digital silence. It invokes no TTS and uses no
+third-party music. The final MP4, SRT and rights/timing/media manifest are promoted
+only after the 1920×1080, H.264/AAC, stream-count, readability and `<175s` gates pass;
+existing reviewed finals are never overwritten.
+
+Narrated mode remains the default when `CAPTION_ONLY` is unset. Use it only after
+confirming publication rights, with `VOICE_RIGHTS_ATTESTED=true`; its measured
+per-beat audio-lock behavior is unchanged.
+
 Scratch stays under ignored `.artifacts/`. Selected sanitized frames/video stay under
 tracked `demo/final-media/`. The renderer has exactly nine beats and aborts if any
 required sanitized capture is missing; it never falls back outside the explicitly
 promoted `demo/final-media/` inputs.
 The build enforces a 175-second publication safety limit. Reject the render if any captured
-token, stale queue, old UI, outdated claim, blank frame, clipped narration, or
-duration ≥175 seconds remains.
+token, stale queue, old UI, outdated claim, blank frame, unreadable burned caption,
+unexpected audio, or duration ≥175 seconds remains. In narrated mode, also reject
+clipped narration or drift.

@@ -25,6 +25,12 @@ Final expected artifacts:
 - `autopilot-demo.mp4` — reviewed nine-beat render below the 175-second publication
   safety limit. The hosted
   Public video URL, not this repository file, is used in Devpost.
+- `autopilot-demo.en.srt` — exact nine-cue English sidecar measured from the same
+  frame-quantized beat windows as the final video.
+- `autopilot-demo.caption-only.json` — present only for the rights-safe
+  `CAPTION_ONLY=true` build; records no TTS/no third-party music, locally generated
+  silence, fixed 168-second/30-fps timings, readability, 1080p stream probes, and
+  SHA-256 values for the exclusively promoted MP4 and SRT.
 
 ## Reproducible authored-asset pass
 
