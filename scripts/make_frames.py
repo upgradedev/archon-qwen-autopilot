@@ -608,14 +608,14 @@ def build_beats(assets) -> list[Beat]:
         lambda: scene_image(media["architecture"], "Product and trust boundary",
             "Public PREVIEW ≠ reviewer PENDING · model proposes · human decides"))
 
-    # 3 · Live invoice to PENDING
+    # 3 · Original synthetic invoice to PENDING on the live deployment
     add("03-live-pending",
-        "On the final Alibaba deployment, a real invoice enters the reviewer flow. Qwen "
+        "On the final Alibaba deployment, an original synthetic invoice document enters the reviewer flow. Qwen "
         "extracts the document, recalls vendor evidence, validates arithmetic, checks "
         "duplicates and computes variance. The live trace shows tool calls and observations, "
         "then stops at one durable pending proposal. Nothing has executed.",
-        lambda: scene_image(media["pending"], "Live invoice → durable PENDING",
-            "Qwen evidence loop · concise rationale · nothing executed"))
+        lambda: scene_image(media["pending"], "Synthetic invoice → durable PENDING",
+            "Original demo data · Qwen evidence loop · nothing executed"))
 
     # 4 · Exact human control
     add("04-human-control",

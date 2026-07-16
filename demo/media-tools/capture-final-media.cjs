@@ -697,8 +697,8 @@ async function main() {
     const pendingRight = await cardSnippet(page, extractedNormalVendor, 'pending');
     await renderUiComposite(context, page, {
       file: files['autopilot-live-intake-pending.png'],
-      title: 'A real invoice becomes evidence—not an execution',
-      subtitle: `${models.vision} extraction · ${models.decision} evidence loop · durable PENDING · nothing executed`,
+      title: 'An original synthetic invoice becomes evidence—not an execution',
+      subtitle: `synthetic demo · ${models.vision} extraction · ${models.decision} evidence loop · durable PENDING · nothing executed`,
       leftHtml: pendingLeft, rightHtml: pendingRight, reviewerToken,
     });
     log('[capture] live intake → PENDING frame ready');
