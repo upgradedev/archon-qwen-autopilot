@@ -178,7 +178,8 @@ through **2026-08-11 2:00 PM PDT**.
 
 **Video URL:** `[PUBLIC_VIDEO_URL]`
 
-Acceptance before paste: publicly visible on YouTube, Vimeo, or Youku; no login or
+Follow [`VIDEO_PUBLICATION_PACKET.md`](VIDEO_PUBLICATION_PACKET.md). Acceptance before
+paste: publicly visible on YouTube, Vimeo, or Youku; no login or
 access request; below three minutes; 1080p works signed out; captions work; no secret
 appears for even one frame; all visible functionality matches the final deployment.
 

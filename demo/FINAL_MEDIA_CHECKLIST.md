@@ -60,6 +60,9 @@ OS temp folders for project media.
 Follow the nine judge-first beats in [`VIDEO_SCRIPT.md`](VIDEO_SCRIPT.md). No final
 MP4 is tracked yet; the obsolete `demo/video/assets/ui_*.png` captures were removed
 because they predated the final authenticated UI and were not approved evidence.
+After rendering, use [`VIDEO_PUBLICATION_PACKET.md`](VIDEO_PUBLICATION_PACKET.md) for
+the public title, bounded description, measured chapters, captions, thumbnail, and
+signed-out publication checks.
 
 - [ ] Show **two real configurable sinks**: SMTP vendor reply + restart-safe,
   durable JSONL ledger; payment/review remain simulated.
