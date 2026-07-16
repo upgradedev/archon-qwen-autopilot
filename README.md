@@ -18,9 +18,10 @@ Judge shortcuts: [5-minute guide](docs/JUDGE-GUIDE.md) ·
 
 Archon Autopilot is a **human-gated accounts-payable (AP) agent**. For each
 incoming vendor invoice it runs a **bounded multi-step ReAct loop** over **Qwen
-function-calling**: the agent autonomously **recalls the vendor's history**,
-**validates**, **checks for a duplicate**, and **computes the amount variance** —
-each a read/analyze step with no side-effect — and only then proposes **one**
+function-calling**: the agent autonomously **recalls the vendor's history** first,
+**validates**, and selects duplicate, variance, or context checks when the observed
+evidence warrants them. Every selected step is read/analyze-only with no side-effect,
+and only then does it propose **one**
 terminal AP action. **Nothing executes until a human approves the exact arguments**
 (the human-in-the-loop gate). It runs the AP workflow from a messy incoming invoice
 to a *proposed* action automatically, then stops and waits for a person. It
@@ -29,9 +30,9 @@ recommends; it never auto-executes.
 **What makes Autopilot distinct** — four things a generic invoice classifier does not do:
 
 1. **A bounded ReAct decision loop over Qwen function-calling.** The agent chooses
-   its own next read/analyze tool each step (recall history → validate → check
-   duplicate → compute variance) and reasons over the accumulated observations before
-   proposing one action — not a single fixed prompt.
+   its own next read/analyze tool each step (recall history first → validate →
+   relevant duplicate/variance/context checks) and reasons over the accumulated
+   observations before proposing one action — not a single fixed prompt.
 2. **`qwen-vl-max` document vision on the intake path.** A photographed or scanned
    invoice is read into structured fields, so the loop runs on real documents, not
    only hand-typed JSON.
@@ -182,7 +183,7 @@ flowchart TD
     subgraph LOOP["Bounded multi-step ReAct loop &middot; qwen-plus function-calling"]
       direction TB
       DEC{"Qwen picks<br/>the next tool"}:::ai
-      READ["Autonomous read / analyze &middot; NO side-effect<br/>recall_vendor_history &middot; validate R1-R6<br/>check_duplicate &middot; compute_variance"]:::auto
+      READ["Autonomous read / analyze &middot; NO side-effect<br/>recall &middot; validate R1–R4<br/>duplicate R5 &middot; variance R6"]:::auto
       TERM["Terminal action &mdash; exactly one<br/>draft_journal_entry &middot; draft_payment<br/>draft_vendor_reply &middot; flag_for_review"]:::terminal
       DEC -->|observe| READ
       READ -->|append to trace| DEC
@@ -208,7 +209,7 @@ flowchart TD
     AUTHZ -->|no| PREVIEW
     AUTHZ -->|yes| PEND
     PEND --> GATE
-    GATE -->|approve only| EXE
+    GATE -->|approve / amend| EXE
     GATE -->|reject| MEM
     EXE -->|write outcome back| MEM
     GATE -.- NOTE
@@ -252,7 +253,8 @@ pgvector for persistent memory and the approval queue.
   record, recording every inference; validation flags what it cannot fix.
 - **Tool-use (multi-step agentic loop)** — a real function-calling tool set across
   two tiers; `qwen-plus` runs a bounded ReAct loop, chaining autonomous read/analyze
-  tools (recall → validate → check_duplicate / compute_variance) before choosing one
+  tools (required recall → validation, then duplicate / variance / context only when
+  warranted by that invoice) before choosing one
   terminal action. The **same** `tool_calls`-parsing code path runs online (real
   Qwen) and offline (a canned `FakeQwenChatClient` that scripts a genuine multi-step
   trajectory at the client seam), so the integration is genuinely exercised in CI.
@@ -418,9 +420,10 @@ in the reviewed nine-beat `demo/final-media/autopilot-demo.mp4`. Final PNGs are
 accepted only with tracked `demo/gallery/CAPTURE_REVIEW.json`, whose exact-release,
 exercised-model, artifact-hash, and authenticated cleanup-zero gates all pass.
 
-The final sanitized proof must show the app-specific ECS region/service identity
-without exposing instance IDs, administrative principals, key paths or secret-file
-locations. It then shows this app's public `/health`, network-free `/ready`, an
+The final sanitized proof must show the shared-host ECS region/service context plus
+Autopilot-specific exact-SHA/runtime binding, without exposing instance IDs,
+administrative principals, key paths or secret-file locations. It then shows this
+app's public `/health`, network-free `/ready`, an
 authenticated/metered `/ready/deep` live embedding probe, and actual decision + vision
 canaries. Runtime model IDs must match the final promoted configuration.
 
@@ -441,8 +444,8 @@ canaries. Runtime model IDs must match the final promoted configuration.
 
 - **Upload + real-time process view** — upload a `.json` invoice (or paste one) and
   click **Process**. The page opens `POST /intake/stream` and renders **each
-  evidence-gathering tool/observation step live as it arrives** (recall → validate →
-  check duplicate → variance), each
+  evidence-gathering tool/observation step live as it arrives** (recall first,
+  validation required, then only the relevant duplicate / variance / context checks), each
   fading in, under a "processing…" header — then shows the proposed action. The
   agent's work is visible *as it happens*, not just the final answer.
 - **Pending queue** — for each proposal: the vendor, amount, the Qwen-proposed tool +

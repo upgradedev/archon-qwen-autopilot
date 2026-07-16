@@ -21,7 +21,7 @@ Resolve these in the Devpost draft and publication accounts, not by inventing va
 | `[PUBLIC_BLOG_OR_SOCIAL_URL]` | Optional blog/social field after signed-out review |
 | `[ACTIVE_REVIEWER_TOKEN]` | Only a confirmed non-public judges-only testing field or organizer-approved secure channel |
 | `[OPTIONAL_ACCESS_CONTACT]` | Only a confirmed non-public judges-only testing field; otherwise omit and use an organizer-approved secure channel |
-| `[FINAL_DEPLOYED_APP_SHA]` | Sanitized Alibaba proof + final release record |
+| Exact deployed app SHA `203f159df25f825a0b994a2f8a4d2c0892b45390` | Sanitized Alibaba proof + final release record; already resolved and must not be relabelled |
 | `[FINAL_SUBMISSION_SHA]` | Final link/CI verification record |
 | `[FINAL_CI_RUN_URL]` | Engineering-proof caption or supporting link |
 | `[FINAL_CODEQL_AND_IMAGE_SCAN_URLS]` | Engineering-proof caption or supporting link |
@@ -140,8 +140,9 @@ sourced design unless the rights sign-off and the dimension check are repeated.
 Upload only reviewed, sanitized final files. Recommended order:
 
 1. `demo/gallery/autopilot-01-live-intake-pending.png` (1500×1000, no crop)
-   - Caption: **An original synthetic invoice becomes one auditable PENDING proposal after Qwen
-     recalls, validates, checks duplicates, and computes variance. Nothing executes.**
+   - Caption: use the canonical, capture-safe wording in
+     [`gallery/GALLERY_MANIFEST.md`](./gallery/GALLERY_MANIFEST.md): **On an original
+     synthetic invoice, Qwen gathers evidence and the action stops at PENDING.**
    - Alt: **Archon Autopilot reviewer screen showing invoice extraction, a Qwen
      tool-and-observation trace, and a durable pending proposal.**
 2. `demo/gallery/autopilot-02-human-amend-diff.png` (1500×1000, no crop)
@@ -160,10 +161,12 @@ Upload only reviewed, sanitized final files. Recommended order:
    - Alt: **Prompt-injection warning beside a pending proposal and a model tool list
      without approval or execution verbs.**
 5. `demo/gallery/autopilot-05-alibaba-qwen-proof.png` (1500×1000, no crop)
-   - Caption: **Sanitized exact-release proof: Alibaba deployment context,
-     health/readiness, deep embedding probe, and exercised decision and vision model IDs.**
-   - Alt: **Composite showing the deployed application SHA, green CI, Alibaba Cloud
-     context, readiness checks, and Qwen canary model identifiers without secrets.**
+   - Caption: **Hash-bound safe crop from a genuine Alibaba ECS console capture,
+     combined with exact-release identity, health/readiness, deep embedding probe,
+     and exercised decision and vision model IDs.**
+   - Alt: **Composite showing a sanitized genuine Alibaba ECS console crop, the
+     deployed application SHA, green CI, readiness checks, and Qwen canary model
+     identifiers without account, instance, address, resource, or credential data.**
 
 Never upload a screenshot until the filename, pixels, metadata, visible model IDs,
 and visible SHA all pass the final-media review.
@@ -189,7 +192,7 @@ Replace bracketed values directly in Devpost; do not save them in Git.
 > **Recommended 90-second test:**
 > 1. Open the live URL and enter the reviewer token.
 > 2. Use the bundled synthetic sample invoice in the document panel; extract it and process it through the reviewer flow.
-> 3. Open the resulting PENDING card and expand **How the agent decided** to inspect recall, validation, duplicate, and variance observations plus the concise model rationale.
+> 3. Open the resulting PENDING card and expand **How the agent decided**. Verify that recall is first and validation is present; duplicate, variance, or context observations appear only when that invoice warrants them. Inspect the concise model rationale.
 > 4. Amend a safe editable argument or reject the synthetic item. Open **Decided** to inspect the proposed-to-approved diff and result.
 > 5. Use the guided correction-learning panel to compare the €5,000 re-bill with the €3,000 control.
 > 6. Remove or reject any remaining synthetic PENDING item; do not use real vendor data.
@@ -261,8 +264,9 @@ public repository intentionally does not guess or retain them.
   deployed SHA/public source HEAD at capture, records `pendingCleanupZero=true` with
   zero matching **PENDING** capture residue (not zero audit history), and hashes every
   uploaded current-release PNG.
-- [ ] `[FINAL_DEPLOYED_APP_SHA]` and `[FINAL_SUBMISSION_SHA]` are labelled separately
-  if docs/media commits follow the deployed application release.
+- [ ] Deployed application SHA `203f159df25f825a0b994a2f8a4d2c0892b45390`
+  and `[FINAL_SUBMISSION_SHA]` are labelled separately if docs/media commits follow
+  the deployed application release.
 - [ ] Exact final CI, CodeQL, and image/SBOM runs are green for the submission SHA.
 - [ ] Blog/social URL works publicly if entered.
 - [ ] No unresolved bracketed placeholder remains in any Devpost field.

@@ -25,12 +25,18 @@ const DEFAULT_VIDEO = '.artifacts/final-video/autopilot-live-interaction.mp4';
 const DEFAULT_MANIFEST = '.artifacts/final-video/autopilot-live-interaction.manifest.json';
 const DEFAULT_POSTER = '.artifacts/final-video/autopilot-live-interaction-poster.png';
 const SHA_RE = /^[0-9a-f]{40}$/;
-const REQUIRED_TRACE_TOOLS = Object.freeze([
+const HIGHLIGHT_WINDOW_SECONDS = 9;
+const HIGHLIGHT_ACTION_PREROLL_SECONDS = 1;
+const HIGHLIGHT_ACTION_POSTROLL_SECONDS = 1.25;
+const HIGHLIGHT_BOUNDARY_TAIL_SECONDS = 4;
+const ALLOWED_TRACE_TOOLS = Object.freeze([
   'recall_vendor_history',
   'validate_invoice',
   'check_duplicate',
   'compute_variance_vs_history',
+  'request_more_context',
 ]);
+const REQUIRED_CORE_TRACE_TOOLS = Object.freeze(['recall_vendor_history', 'validate_invoice']);
 
 function fail(message) { throw new Error(message); }
 
@@ -79,6 +85,16 @@ function exactOrigin(raw) {
   return DEFAULT_URL;
 }
 
+function validateRelevantTraceTools(rawTools, label) {
+  assert.ok(Array.isArray(rawTools), `${label} trace tools must be an array`);
+  const tools = rawTools.map((tool) => String(tool || ''));
+  assert.ok(tools.length >= 2, `${label} must contain at least two read/analyze steps`);
+  assert.equal(tools[0], 'recall_vendor_history', `${label} must establish vendor history first`);
+  for (const tool of tools) assert.ok(ALLOWED_TRACE_TOOLS.includes(tool), `${label} contains a non-read/analyze trace step`);
+  for (const required of REQUIRED_CORE_TRACE_TOOLS) assert.ok(tools.includes(required), `${label} is missing core trace step ${required}`);
+  return tools;
+}
+
 function validateEvidence(file, expectedSha, baseUrl, fixture) {
   const payload = readJson(file, 'CAPTURE_REVIEW');
   assert.equal(payload.status, 'passed', 'CAPTURE_REVIEW status is not passed');
@@ -88,10 +104,14 @@ function validateEvidence(file, expectedSha, baseUrl, fixture) {
     assert.equal(payload.gates && payload.gates.pendingCleanupZero, true, 'CAPTURE_REVIEW does not prove zero capture PENDING residue');
     assert.equal(payload.reviewerCredentialStored, false, 'CAPTURE_REVIEW does not prove credential non-storage');
     assert.equal(payload.models && payload.models.decision, 'qwen-plus', 'CAPTURE_REVIEW decision model is not qwen-plus');
-    assert.deepEqual(
+    assert.equal(
+      payload.canaries && payload.canaries.decision && payload.canaries.decision.tracePolicy,
+      'relevant-side-effect-free-subset',
+      'CAPTURE_REVIEW decision canary trace policy mismatch',
+    );
+    validateRelevantTraceTools(
       payload.canaries && payload.canaries.decision && payload.canaries.decision.traceTools,
-      REQUIRED_TRACE_TOOLS,
-      'CAPTURE_REVIEW decision canary does not bind the exact four-tool trace',
+      'CAPTURE_REVIEW decision canary',
     );
   }
   return payload;
@@ -199,11 +219,12 @@ async function recordLive(page, baseUrl, poster) {
   await page.locator('#processBtn').click();
   mark(actions, started, 'clicked Process invoice to start the live Qwen evidence loop');
   await page.locator('#processView').waitFor({ state: 'visible', timeout: 30_000 });
-  await page.waitForFunction(() => document.querySelectorAll('#processView .proc-step').length >= 4, null, { timeout: 300_000 });
-  mark(actions, started, 'observed recall, validation, duplicate and variance steps stream into the UI');
   await page.waitForFunction(() => /Proposal generated in isolated preview mode\./i.test(document.querySelector('#processView')?.innerText || ''), null, { timeout: 300_000 });
+  const visibleTraceTools = (await page.locator('#processView .proc-step .tool').allInnerTexts()).map((tool) => tool.trim());
+  validateRelevantTraceTools(visibleTraceTools, 'visible public preview');
+  mark(actions, started, `observed relevant read/analyze steps stream into the UI: ${visibleTraceTools.join(' → ')}`);
   const processText = await page.locator('#processView').innerText();
-  for (const tool of REQUIRED_TRACE_TOOLS) {
+  for (const tool of visibleTraceTools) {
     assert.match(processText, new RegExp(`(^|\\s)${tool}(\\s|$)`, 'm'), `visible public preview omitted ${tool}`);
   }
   assert.match(processText, /Isolated preview — nothing persisted/i, 'public preview boundary is not visible');
@@ -213,7 +234,7 @@ async function recordLive(page, baseUrl, poster) {
   mark(actions, started, 'showed the completed non-durable proposal and human-boundary copy');
   await page.waitForTimeout(2200);
   await page.screenshot({ path: poster, fullPage: false, animations: 'disabled' });
-  return actions;
+  return { actions, visibleTraceTools };
 }
 
 async function recordFixture(page, poster) {
@@ -230,25 +251,109 @@ async function recordFixture(page, poster) {
   await page.locator('#processBtn').click();
   mark(actions, started, 'fixture clicked process');
   await page.locator('.preview.shown').waitFor({ state: 'visible' });
-  await page.waitForTimeout(1800);
+  // Keep the raw fixture longer than the nine-second publication window so the
+  // self-test exercises action-timestamp selection instead of the whole-file path.
+  await page.waitForTimeout(7000);
+  mark(actions, started, 'fixture observed relevant read/analyze steps stream into the UI');
+  mark(actions, started, 'fixture showed the completed non-durable proposal and human-boundary copy');
+  await page.waitForTimeout(1200);
   await page.screenshot({ path: poster });
-  return actions;
+  return { actions, visibleTraceTools: ['recall_vendor_history', 'validate_invoice', 'check_duplicate', 'compute_variance_vs_history'] };
 }
 
-function createHighlight(raw, output) {
+function requiredAction(actions, pattern, label) {
+  const matches = actions.filter((entry) => pattern.test(String(entry?.action || '')));
+  assert.equal(matches.length, 1, `recording must contain exactly one ${label} action`);
+  const atSeconds = Number(matches[0].atSeconds);
+  assert.ok(Number.isFinite(atSeconds) && atSeconds >= 0, `${label} action timestamp is invalid`);
+  return { label, atSeconds, action: matches[0].action };
+}
+
+function segmentContains(segments, atSeconds) {
+  return segments.some(([start, end]) => atSeconds >= start - 0.001 && atSeconds <= end + 0.001);
+}
+
+function createHighlight(raw, output, actions, { fixture = false } = {}) {
   const rawMedia = mediaSummary(raw);
   const duration = rawMedia.durationSeconds;
-  const headEnd = Math.min(7, duration);
-  const tailStart = Math.max(headEnd, duration - 13);
+  const entry = requiredAction(
+    actions,
+    fixture ? /fixture typed invoice/i : /entered an original synthetic invoice in the public UI/i,
+    'invoice-entry',
+  );
+  const click = requiredAction(
+    actions,
+    fixture ? /fixture clicked process/i : /clicked Process invoice to start the live Qwen evidence loop/i,
+    'process-click',
+  );
+  const required = [
+    entry,
+    click,
+    requiredAction(
+      actions,
+      fixture ? /fixture observed relevant read\/analyze steps stream into the UI/i
+        : /observed relevant read\/analyze steps stream into the UI/i,
+      'streamed-evidence',
+    ),
+    requiredAction(
+      actions,
+      fixture ? /fixture showed the completed non-durable proposal and human-boundary copy/i
+        : /showed the completed non-durable proposal and human-boundary copy/i,
+      'completed-boundary',
+    ),
+  ];
+  for (const action of required) {
+    assert.ok(action.atSeconds <= duration + 0.001, `${action.label} timestamp is outside the raw recording`);
+  }
+
+  let sourceSegments;
+  if (duration <= HIGHLIGHT_WINDOW_SECONDS + 1e-6) {
+    sourceSegments = [[0, duration]];
+  } else {
+    const interactionStart = Math.max(0, entry.atSeconds - HIGHLIGHT_ACTION_PREROLL_SECONDS);
+    const interactionEnd = Math.min(duration, click.atSeconds + HIGHLIGHT_ACTION_POSTROLL_SECONDS);
+    assert.ok(interactionStart < interactionEnd, 'invoice-entry/process-click segment is empty');
+    const boundaryStart = Math.max(0, duration - HIGHLIGHT_BOUNDARY_TAIL_SECONDS);
+    sourceSegments = interactionEnd >= boundaryStart
+      ? [[interactionStart, duration]]
+      : [[interactionStart, interactionEnd], [boundaryStart, duration]];
+  }
+  const retainedDuration = sourceSegments.reduce((total, [start, end]) => total + end - start, 0);
+  assert.ok(retainedDuration <= HIGHLIGHT_WINDOW_SECONDS + 1e-6,
+    'required interaction and completed-boundary footage cannot fit the canonical 9-second window');
+  for (const action of required) {
+    assert.ok(segmentContains(sourceSegments, action.atSeconds),
+      `${action.label} action is not covered by a retained source segment`);
+  }
+
   const args = ['-y', '-v', 'error', '-i', raw];
-  if (tailStart < duration - 0.5) {
-    args.push('-filter_complex', `[0:v]trim=start=0:end=${headEnd.toFixed(6)},setpts=PTS-STARTPTS[head];[0:v]trim=start=${tailStart.toFixed(6)}:end=${duration.toFixed(6)},setpts=PTS-STARTPTS[tail];[head][tail]concat=n=2:v=1:a=0,fps=30,scale=1920:1080:flags=lanczos[video]`, '-map', '[video]');
+  const keepsWholeRecording = sourceSegments.length === 1
+    && sourceSegments[0][0] === 0
+    && Math.abs(sourceSegments[0][1] - duration) <= 1e-6;
+  if (!keepsWholeRecording) {
+    const trims = sourceSegments.map(([start, end], index) =>
+      `[0:v]trim=start=${start.toFixed(6)}:end=${end.toFixed(6)},setpts=PTS-STARTPTS[segment${index}]`);
+    const inputs = sourceSegments.map((_, index) => `[segment${index}]`).join('');
+    const join = sourceSegments.length === 1
+      ? `${inputs}fps=30,scale=1920:1080:flags=lanczos[video]`
+      : `${inputs}concat=n=${sourceSegments.length}:v=1:a=0,fps=30,scale=1920:1080:flags=lanczos[video]`;
+    args.push('-filter_complex', `${trims.join(';')};${join}`, '-map', '[video]');
   } else {
     args.push('-vf', 'fps=30,scale=1920:1080:flags=lanczos');
   }
   args.push('-an', '-c:v', 'libx264', '-preset', 'medium', '-crf', '18', '-pix_fmt', 'yuv420p', '-map_metadata', '-1', '-movflags', '+faststart', output);
   run('ffmpeg', args, 'build browser-interaction highlight');
-  return { rawDurationSeconds: duration, sourceSegments: tailStart < duration - 0.5 ? [[0, headEnd], [tailStart, duration]] : [[0, duration]] };
+  const finalSegment = sourceSegments[sourceSegments.length - 1];
+  return {
+    rawDurationSeconds: duration,
+    highlightWindowSeconds: HIGHLIGHT_WINDOW_SECONDS,
+    selectionStrategy: 'required-action coverage plus completed-boundary tail',
+    sourceSegments,
+    retainedDurationSeconds: Number(retainedDuration.toFixed(6)),
+    requiredActionCoverage: required.map(({ label, atSeconds }) => ({ label, atSeconds, retained: true })),
+    finalBoundaryTailSeconds: Number((finalSegment[1] - finalSegment[0]).toFixed(6)),
+    finalSourceFrameRetained: Math.abs(finalSegment[1] - duration) <= 0.001,
+  };
 }
 
 async function capture({ expectedSha, evidenceFile, baseUrl, output, manifestFile, poster, replace, fixture }) {
@@ -280,7 +385,8 @@ async function capture({ expectedSha, evidenceFile, baseUrl, output, manifestFil
   }
   const page = await context.newPage();
   page.setDefaultTimeout(90_000);
-  const actions = fixture ? await recordFixture(page, poster) : await recordLive(page, baseUrl, poster);
+  const recording = fixture ? await recordFixture(page, poster) : await recordLive(page, baseUrl, poster);
+  const actions = recording.actions;
   const video = page.video();
   await page.close();
   await context.close();
@@ -288,11 +394,22 @@ async function capture({ expectedSha, evidenceFile, baseUrl, output, manifestFil
   const raw = await video.path();
   await browser.close();
   assert.ok(fs.statSync(raw).size > 10_000, 'raw browser recording is missing or empty');
-  const highlight = createHighlight(raw, output);
+  const highlight = createHighlight(raw, output, actions, { fixture });
   const media = mediaSummary(output);
   assert.deepEqual([media.width, media.height], [1920, 1080], 'highlight is not 1920x1080');
   assert.equal(media.audioStreamCount, 0, 'highlight unexpectedly contains audio');
   assert.ok(media.durationSeconds >= 4, 'highlight is too short to prove interaction');
+  assert.ok(media.durationSeconds <= HIGHLIGHT_WINDOW_SECONDS + 1e-6,
+    'highlight exceeds the canonical 9-second compositor window');
+  assert.equal(highlight.finalSourceFrameRetained, true, 'highlight omitted the completed final browser state');
+  if (highlight.rawDurationSeconds > HIGHLIGHT_WINDOW_SECONDS + 0.05) {
+    assert.ok(highlight.finalBoundaryTailSeconds >= HIGHLIGHT_BOUNDARY_TAIL_SECONDS - 0.01,
+      'highlight did not retain the final four-second human-boundary hold');
+  }
+  if (!fixture) {
+    assert.ok(actions.some((entry) => /completed non-durable proposal and human-boundary copy/i.test(entry.action)),
+      'interaction log does not attest the completed proposal and human-boundary state');
+  }
   const motion = frameDiversity(output, Math.min(media.durationSeconds, 30));
   assert.ok(motion.uniqueFrames >= 8 && motion.uniqueRatio >= 0.25, 'highlight is too static to prove genuine interaction');
   const manifest = {
@@ -315,8 +432,9 @@ async function capture({ expectedSha, evidenceFile, baseUrl, output, manifestFil
       traceTools: evidence.canaries.decision.traceTools,
       captureReviewSha256: sha256(evidenceFile),
     },
+    visibleTraceTools: recording.visibleTraceTools,
     actions,
-    edit: { type: 'truth-preserving head/tail trim only', ...highlight },
+    edit: { type: 'truth-preserving action/tail selection only', ...highlight },
     rawVideo: { path: relative(output), sha256: sha256(output), bytes: fs.statSync(output).size, ...media },
     frameDiversity: motion,
     poster: { path: relative(poster), sha256: sha256(poster), bytes: fs.statSync(poster).size },
@@ -336,11 +454,26 @@ async function selfTest() {
   fs.rmSync(root, { recursive: true, force: true });
   fs.mkdirSync(root, { recursive: true });
   const expectedSha = '1'.repeat(40);
+  assert.deepEqual(
+    validateRelevantTraceTools(['recall_vendor_history', 'validate_invoice'], 'self-test trace'),
+    ['recall_vendor_history', 'validate_invoice'],
+  );
+  assert.throws(
+    () => validateRelevantTraceTools(['recall_vendor_history', 'draft_payment'], 'unsafe self-test trace'),
+    /non-read\/analyze trace step/,
+  );
   const evidence = path.join(root, 'CAPTURE_REVIEW.json');
   fs.writeFileSync(evidence, `${JSON.stringify({ status: 'passed', exactDeployedApplicationSha: expectedSha })}\n`);
-  await capture({ expectedSha, evidenceFile: evidence, baseUrl: DEFAULT_URL,
+  const manifest = await capture({ expectedSha, evidenceFile: evidence, baseUrl: DEFAULT_URL,
     output: path.join(root, 'fixture.mp4'), manifestFile: path.join(root, 'fixture.manifest.json'),
     poster: path.join(root, 'fixture-poster.png'), replace: false, fixture: true });
+  assert.ok(manifest.edit.rawDurationSeconds > HIGHLIGHT_WINDOW_SECONDS,
+    'self-test raw fixture did not exercise action-aware trimming');
+  assert.equal(manifest.edit.selectionStrategy, 'required-action coverage plus completed-boundary tail');
+  assert.equal(manifest.edit.requiredActionCoverage.length, 4,
+    'self-test did not require the entry, click, streamed-evidence, and completed-boundary actions');
+  assert.ok(manifest.edit.requiredActionCoverage.every((entry) => entry.retained === true),
+    'self-test action-aware highlight omitted a required action');
   process.stdout.write('Autopilot live recorder self-test: PASS · real browser video · 1920x1080 · no audio · frame diversity\n');
 }
 

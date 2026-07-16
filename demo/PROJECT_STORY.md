@@ -63,7 +63,7 @@ gets better at *your* vendors over time.
 
 **What it is, stated honestly:** the decision engine is a **genuine bounded ReAct
 loop** (observe → decide → act → observe) — the agent chains autonomous read/analyze
-tools (recall → validate → check_duplicate / compute_variance) before proposing one
+tools (recall first → validate → relevant duplicate / variance / context checks) before proposing one
 terminal action, and the loop + memory grounding are real. Two terminal transports are
 real when configured: `draft_vendor_reply` uses **SMTP** (`SmtpEmailSink`), and
 `draft_journal_entry` fsyncs a balanced row to a restart-safe, append-only **JSONL

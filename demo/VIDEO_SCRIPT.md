@@ -8,13 +8,13 @@ not permitted as renderer inputs or gallery evidence.
 | Beat | Target | What judges see | Narration job |
 |---|---:|---|---|
 | 1 · Stakes | 0:00–0:13 | Messy invoice → duplicate/overbill risk → money boundary | “Automate evidence gathering, never unattended payment.” State Track 4 immediately. |
-| 2 · Product boundary | 0:13–0:28 | New 16:9 architecture | Independent AP orchestration product: public isolated preview vs reviewer-durable PENDING, bounded Qwen tools, atomic claims, explicit uncertain-outcome recovery, and restart-safe JSONL. Vendor memory is one read-only input. |
-| 3 · Original synthetic invoice→PENDING | 0:28–0:52 | Final UI: upload/extract, then streamed recall→validate→duplicate→variance | Use the live hostname and actual model IDs. Label the invoice synthetic; show tool/observation trace plus concise rationale—not “full reasoning.” Nothing executes. |
+| 2 · Product boundary | 0:13–0:28 | 16:9 architecture from 0:13–0:19; genuine public-preview interaction inset from 0:19–0:28 | Establish the independent AP orchestration boundary, then visibly prove the isolated live Qwen preview: relevant read/analyze steps, completed non-durable proposal, and no approve/amend/reject controls. Reviewer-durable PENDING, atomic claims, uncertain-outcome recovery, and restart-safe JSONL remain visible in the architecture. Vendor memory is one read-only input. |
+| 3 · Original synthetic invoice→PENDING | 0:28–0:52 | Final UI: upload/extract, then streamed recall→validate→relevant duplicate/variance/context checks | Use the live hostname and actual model IDs. Label the invoice synthetic; show the exact relevant tool/observation subset plus concise rationale—not “full reasoning.” Nothing executes. |
 | 4 · Exact human control | 0:52–1:11 | Authenticated reviewer amends exact args; Decided view shows before→after diff and ledger result | Make the invariant visual: approved args equal executed args; the atomic claim blocks concurrent replay; JSONL is restart-safe. SMTP has a stable intent ID but not recipient-level exactly once; uncertain execution is never auto-retried. |
 | 5 · Correction changes behavior | 1:11–1:34 | Guided synthetic challenge: baseline €3,000 → amend €5,000 to €3,000 → re-bill/control comparison | Hero innovation: re-bill €5,000 → `flag_for_review`; negative control €3,000 → `draft_payment`. Same live routes, no preloaded answer. |
-| 6 · Evidence, not hype | 1:34–1:53 | Workflow metrics + frozen eval artifacts | State exactly: 22/22 tuned developer-labelled offline regression; separate three-run raw-Qwen protocol; 16 original hash-locked vision fixtures; show live numbers only if clean committed artifacts exist. |
+| 6 · Evidence, not hype | 1:34–1:53 | Workflow metrics + frozen eval artifacts | State exactly: 22/22 tuned developer-labelled offline regression; a fixed 12-case synthetic workflow model with modeled—not observed—review time/checkpoints; 16 original hash-locked vision fixtures. No candidate model was promoted. |
 | 7 · Structural safety | 1:53–2:14 | Injection invoice, surfaced warning, model/MCP catalog with execution verbs crossed out | The model and four-tool MCP surface cannot approve/amend/reject/pay. Injection can influence a proposal, never autonomously execute. Human gate remains. |
-| 8 · Alibaba/Qwen proof | 2:14–2:34 | App-specific ECS identity, `/health`, `/ready`, one actual decider canary and one vision extraction | Capture only Autopilot proof from the newly exact-deployed application release. Label `DEPLOYED APP SHA` separately from a later docs/media-only `SUBMISSION HEAD`. Show `qwen-plus`/`qwen-vl-max`, or the versioned qwen3.7 candidate only after its frozen A/B promotion gate passes. |
+| 8 · Alibaba/Qwen proof | 2:14–2:34 | Hash-bound safe crop of the genuine shared ECS host + Autopilot-specific exact-SHA binding, `/health`, `/ready`, one actual decider canary and one vision extraction | Label the shared-host context honestly and bind Autopilot through its exact deploy-controller markers and runtime canaries. Label `DEPLOYED APP SHA` separately from a later docs/media-only `SUBMISSION HEAD`. Show `qwen-plus` and `qwen-vl-max`; no candidate model was promoted. |
 | 9 · Close | 2:34–2:48 | Live URL, repo, MIT, Track 4, four evidence numbers | “Bounded where judgment helps; deterministic and human-controlled where money moves.” |
 
 ## Claim lock
@@ -32,29 +32,21 @@ not permitted as renderer inputs or gallery evidence.
 
 ## Build and acceptance
 
-Rights-safe publication default when voice/service rights are not explicitly
-confirmed:
+Canonical rights-safe real-motion publication path:
 
 ```bash
-$env:PUBLIC_APP_URL='https://autopilot.43.106.13.19.sslip.io'
-$env:VIDEO_MODEL_LABEL='qwen-plus · qwen-vl-max · text-embedding-v4'
-$env:CAPTION_ONLY='true'
-# Replace the baseline label and set VIDEO_PROMOTION_EVIDENCE to the repo-contained,
-# same-release promotion-pass JSON only if the final model label contains qwen3.7.
-python scripts/build_video.py
+node demo/media-tools/record-live-motion.cjs --expected-sha 203f159df25f825a0b994a2f8a4d2c0892b45390 --capture-review demo/gallery/CAPTURE_REVIEW.json --replace
+python demo/media-tools/build-real-motion-submission.py --expected-sha 203f159df25f825a0b994a2f8a4d2c0892b45390 --replace
+python demo/media-tools/compose_real_motion_video.py --verify-only
 ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 demo/final-media/autopilot-demo.mp4
 ```
 
-`CAPTION_ONLY=true` locks the target windows above to exactly 168 seconds at 30 fps,
-uses the already burned per-beat captions, emits a measured nine-cue English SRT,
-and muxes locally generated digital silence. It invokes no TTS and uses no
-third-party music. The final MP4, SRT and rights/timing/media manifest are promoted
-only after the 1920×1080, H.264/AAC, stream-count, readability and `<175s` gates pass;
-existing reviewed finals are never overwritten.
-
-Narrated mode remains the default when `CAPTION_ONLY` is unset. Use it only after
-confirming publication rights, with `VOICE_RIGHTS_ATTESTED=true`; its measured
-per-beat audio-lock behavior is unchanged.
+The builder internally locks `CAPTION_ONLY=true`: exactly 168 seconds at 30 fps,
+burned per-beat captions, a measured nine-cue English SRT, and locally generated
+digital silence. It invokes no TTS and uses no third-party music. The final MP4,
+SRT, real-motion manifest and independent QA record are promoted only after the
+1920×1080, H.264/AAC, stream-count, readability, genuine-motion and `<175s` gates
+pass; existing reviewed finals are never overwritten without explicit `--replace`.
 
 Scratch stays under ignored `.artifacts/`. Selected sanitized frames/video stay under
 tracked `demo/final-media/`. The renderer has exactly nine beats and aborts if any
@@ -62,5 +54,4 @@ required sanitized capture is missing; it never falls back outside the explicitl
 promoted `demo/final-media/` inputs.
 The build enforces a 175-second publication safety limit. Reject the render if any captured
 token, stale queue, old UI, outdated claim, blank frame, unreadable burned caption,
-unexpected audio, or duration ≥175 seconds remains. In narrated mode, also reject
-clipped narration or drift.
+unexpected audio, or duration ≥175 seconds remains.

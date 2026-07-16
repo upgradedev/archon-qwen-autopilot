@@ -25,12 +25,12 @@ printed or committed.
 > also returned `200` over valid TLS. The redacted deployment record is retained only
 > in this project's ignored `.artifacts/` evidence directory.
 >
-> The exercised release proves all three baseline model paths: a
-> `text-embedding-v4` deep probe, `qwen-vl-max` extraction of the bundled synthetic
-> invoice, and a multi-step `qwen-plus` decision that stopped at `PENDING`. The
-> canary was rejected through the authenticated human gate and exactly its work item
-> and vendor-memory row were removed. Final screenshots/video must capture this
-> evidence; configuration alone is never substituted for an exercised model claim.
+> Exact-deploy attempt 23 exercised a `text-embedding-v4` deep probe and a multi-step
+> `qwen-plus` JSON intake decision that stopped at `PENDING`. The canary was rejected
+> through the authenticated human gate and exactly its work item and vendor-memory
+> row were removed. A separate post-deploy media canary must exercise and
+> response-bind `qwen-vl-max` document extraction before final screenshots/video are
+> accepted; configuration alone is never substituted for an exercised model claim.
 > A later docs/media-only submission HEAD may differ from the deployed application
 > SHA and must be labelled separately. See
 > [`../demo/BUILD_RECORDING.md`](../demo/BUILD_RECORDING.md).

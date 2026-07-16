@@ -30,10 +30,11 @@ Final expected artifacts:
   Public video URL, not this repository file, is used in Devpost.
 - `autopilot-demo.en.srt` — exact nine-cue English sidecar measured from the same
   frame-quantized beat windows as the final video.
-- `autopilot-demo.caption-only.json` — present only for the rights-safe
-  `CAPTION_ONLY=true` build; records no TTS/no third-party music, locally generated
-  silence, fixed 168-second/30-fps timings, readability, 1080p stream probes, and
-  SHA-256 values for the exclusively promoted MP4 and SRT.
+- `autopilot-demo.real-motion.json` — final evidence/rights/hash manifest binding the
+  caption-only base, genuine public-preview footage, `CAPTURE_REVIEW`, exact runtime,
+  MP4, SRT and thumbnail.
+- `autopilot-demo.qa.json` — independent post-compose media, silence, timing,
+  frame-diversity and hash verification consumed by `--verify-only`.
 
 The live capture transaction also writes tracked
 `../gallery/CAPTURE_REVIEW.json`. It is the canonical secret-safe acceptance record:

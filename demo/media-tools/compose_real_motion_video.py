@@ -243,6 +243,61 @@ def validate_bindings(
     if not allow_fixture:
         require(interaction.get("mode") == "live", "production requires a live interaction manifest")
         require(interaction.get("submissionEligible") is True, "interaction is marked non-submission/draft")
+        actions = interaction.get("actions")
+        require(isinstance(actions, list), "interaction manifest has no ordered action log")
+        required_markers = (
+            "entered an original synthetic invoice in the public UI",
+            "clicked Process invoice",
+            "observed relevant read/analyze steps",
+            "completed non-durable proposal and human-boundary copy",
+        )
+        required_actions = []
+        for marker in required_markers:
+            matches = [row for row in actions if isinstance(row, dict)
+                       and marker.lower() in str(row.get("action", "")).lower()]
+            require(len(matches) == 1, f"interaction action log must contain exactly one marker: {marker}")
+            try:
+                at_seconds = float(matches[0].get("atSeconds"))
+            except (TypeError, ValueError):
+                raise AssertionError(f"interaction action timestamp is invalid: {marker}")
+            require(math.isfinite(at_seconds) and at_seconds >= 0,
+                    f"interaction action timestamp is invalid: {marker}")
+            required_actions.append((marker, at_seconds))
+        edit = interaction.get("edit")
+        require(isinstance(edit, dict), "interaction manifest has no highlight edit record")
+        require(edit.get("finalSourceFrameRetained") is True,
+                "interaction highlight does not retain the completed final browser state")
+        require(float(edit.get("highlightWindowSeconds", 0)) == 9.0,
+                "interaction highlight is not built for the canonical 9-second window")
+        segments = edit.get("sourceSegments")
+        require(isinstance(segments, list) and len(segments) >= 1,
+                "interaction highlight has no source-segment record")
+        normalized_segments = []
+        for segment in segments:
+            require(isinstance(segment, list) and len(segment) == 2,
+                    "interaction highlight source segment is malformed")
+            try:
+                segment_start, segment_end = map(float, segment)
+            except (TypeError, ValueError):
+                raise AssertionError("interaction highlight source segment is malformed")
+            require(math.isfinite(segment_start) and math.isfinite(segment_end)
+                    and 0 <= segment_start < segment_end,
+                    "interaction highlight source segment is invalid")
+            normalized_segments.append((segment_start, segment_end))
+        raw_duration = float(edit.get("rawDurationSeconds", -1))
+        require(math.isfinite(raw_duration) and raw_duration > 0,
+                "interaction highlight raw duration is invalid")
+        for marker, at_seconds in required_actions:
+            require(at_seconds <= raw_duration + 0.001,
+                    f"interaction action lies outside the raw recording: {marker}")
+            require(any(start - 0.001 <= at_seconds <= end + 0.001
+                        for start, end in normalized_segments),
+                    f"interaction action is not retained by the highlight: {marker}")
+        final_segment = segments[-1]
+        require(isinstance(final_segment, list) and len(final_segment) == 2,
+                "interaction highlight final source segment is malformed")
+        require(abs(float(final_segment[1]) - raw_duration) <= 0.001,
+                "interaction highlight does not end at the final raw browser frame")
     raw = interaction.get("rawVideo")
     require(isinstance(raw, dict), "interaction manifest has no rawVideo record")
     require(raw.get("sha256") == sha256_file(live_video), "live video hash does not match interaction manifest")
@@ -292,6 +347,7 @@ def compose(
         project_path(path, label, exists=True)
     require(output != base_video and output != live_video, "final output must not alias an input")
     require(0 <= overlay_start < overlay_end, "invalid live overlay window")
+    window = overlay_end - overlay_start
 
     _evidence, interaction = validate_bindings(
         expected_sha=expected_sha, expected_url=expected_url,
@@ -306,8 +362,10 @@ def compose(
     require(live["audioStreamCount"] == 0, "live recorder must not capture any audio stream")
     require(live["width"] == 1920 and live["height"] == 1080, "live recording must be 1920x1080")
     require(live["durationSeconds"] >= 4.0, "live recording is too short to prove interaction")
+    require(live["durationSeconds"] <= window + 1e-6,
+            "live highlight exceeds the overlay window; completed browser state could be truncated")
     require(overlay_end <= base["durationSeconds"] + 1e-6, "live overlay extends past the base timeline")
-    live_diversity = diversity(live_video, duration=min(float(live["durationSeconds"]), overlay_end - overlay_start))
+    live_diversity = diversity(live_video, duration=float(live["durationSeconds"]))
     require(live_diversity["uniqueFrames"] >= 8 and live_diversity["uniqueRatio"] >= 0.25,
             "live recording is too static; genuine interaction motion was not demonstrated")
     srt_qa = validate_srt(srt, float(base["durationSeconds"]))
@@ -317,7 +375,6 @@ def compose(
     os.close(fd)
     candidate = Path(candidate_name)
     candidate.unlink(missing_ok=True)
-    window = overlay_end - overlay_start
     filter_graph = (
         f"[1:v]fps=30,scale=1424:800:force_original_aspect_ratio=decrease,"
         f"pad=1424:800:(ow-iw)/2:(oh-ih)/2:color=0x06110d,"
@@ -374,6 +431,7 @@ def compose(
         "liveInputFrameDiversity": live_diversity,
         "shippedOverlayFrameDiversity": overlay_diversity,
         "overlayWindow": {"startSeconds": overlay_start, "endSeconds": overlay_end},
+        "liveInputFullyConsumed": True,
         "reviewerCredentialRendered": False,
     }
     manifest = {
@@ -393,6 +451,7 @@ def compose(
             "actions": interaction.get("actions", []),
             "overlayStartSeconds": overlay_start,
             "overlayEndSeconds": overlay_end,
+            "liveInputFullyConsumed": True,
         },
         "inputs": {
             "baseVideo": {"path": relative(base_video), "sha256": sha256_file(base_video)},
@@ -471,7 +530,12 @@ def verify_existing(manifest_path: Path, qa_path: Path, *, allow_fixture: bool =
     start = float(live_record.get("overlayStartSeconds"))
     end = float(live_record.get("overlayEndSeconds"))
     require(0 <= start < end <= float(measured["durationSeconds"]), "manifest overlay window is invalid")
-    live_motion = diversity(live_video, duration=min(float(media_summary(live_video)["durationSeconds"]), end - start))
+    live_measured = media_summary(live_video)
+    require(float(live_measured["durationSeconds"]) <= end - start + 1e-6,
+            "live highlight now exceeds the manifest overlay window")
+    require(live_record.get("liveInputFullyConsumed") is True and qa.get("liveInputFullyConsumed") is True,
+            "build records do not attest full live-highlight consumption")
+    live_motion = diversity(live_video, duration=float(live_measured["durationSeconds"]))
     shipped_motion = diversity(final_video, start=start, duration=end - start)
     require(live_motion["uniqueFrames"] >= 8 and live_motion["uniqueRatio"] >= 0.25,
             "live input no longer proves genuine frame motion")
@@ -547,7 +611,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--scratch", default=".artifacts/final-video/compose")
     parser.add_argument("--expected-sha")
     parser.add_argument("--expected-url", default=DEFAULT_URL)
-    parser.add_argument("--overlay-start", type=float, default=13.0)
+    parser.add_argument("--overlay-start", type=float, default=19.0)
     parser.add_argument("--overlay-end", type=float, default=28.0)
     parser.add_argument("--replace", action="store_true")
     return parser.parse_args(argv)
