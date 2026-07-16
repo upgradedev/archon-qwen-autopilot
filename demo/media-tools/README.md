@@ -7,8 +7,11 @@ reviewer path, captures real UI states, then rejects every still-PENDING capture
 It never approves a payment or vendor reply.
 
 Nothing is written outside this repository. Raw candidates, controller evidence and
-the detailed capture manifest remain under ignored `demo/.private-captures/`. Tracked
-files under `demo/final-media/` are replaced only after every gate passes.
+the detailed private copy of the capture manifest remain under ignored
+`demo/.private-captures/`. A secret-safe canonical
+`demo/gallery/CAPTURE_REVIEW.json` is promoted with the images and is intended to be
+tracked. Canonical files are replaced as one rollback-capable transaction only after
+every gate—including authenticated cleanup and a zero-residue re-query—passes.
 The tool records no browser trace/video and refuses to start when capture scratch
 exceeds 750 MiB (bounded by `MAX_CAPTURE_SCRATCH_MB`), preventing repeated failed
 runs from silently consuming the host disk.
@@ -28,8 +31,10 @@ The SHA file contains exactly the selected 40-character Autopilot application SH
 plus a newline. The status and output must come from the same terminal-success
 controller attempt. `deploy/DEPLOY_STATE.md` must name that exact application SHA.
 The pipeline cross-checks all four sources, their age, exact checkout/deploy/success
-markers, and verifies that the release SHA is an ancestor of the later docs/media
-submission HEAD. `/health` is deliberately **not** treated as source attestation.
+markers, and verifies that the release SHA is an ancestor of the clean source HEAD
+at capture. That HEAD must equal freshly fetched public `origin/main`; the generated
+media commit will necessarily follow it and must be linked separately as the final
+submission SHA. `/health` is deliberately **not** treated as source attestation.
 
 The project-local `.env` supplies `REVIEWER_TOKEN` in memory. Do not paste the token
 into a command, URL, screenshot, evidence file or shell history.
@@ -69,6 +74,9 @@ The command aborts without promotion unless all of these are true:
   `€3,000 → draft_payment` negative control, with stored correction evidence;
 - a synthetic hostile document visibly surfaces a recognized-injection warning and
   still stops at PENDING;
+- authenticated cleanup rejects every still-PENDING item carrying this run's exact
+  synthetic prefixes, then a fully paginated authenticated query proves zero matching
+  residue;
 - every PNG has the exact dimensions, is RGB, contains no metadata, and passes the
   credential-like-content guard.
 
@@ -91,6 +99,7 @@ demo/gallery/autopilot-02-human-amend-diff.png
 demo/gallery/autopilot-03-correction-learning.png
 demo/gallery/autopilot-04-security-pending.png
 demo/gallery/autopilot-05-alibaba-qwen-proof.png
+demo/gallery/CAPTURE_REVIEW.json
 ```
 
 Each gallery file contains the complete 16:9 evidence frame centered on a dark 3:2
@@ -98,7 +107,7 @@ canvas (1500×844 content plus 78px mattes). There is no crop or content synthes
 all critical evidence stays inside the 1920×1080 safe margins.
 
 The proof composite explicitly labels the deploy-controller application SHA
-separately from a later docs/media-only submission HEAD. Alibaba instance/resource
+separately from the public source HEAD at capture. Alibaba instance/resource
 and administrative-principal identifiers are intentionally absent.
 
 The final video build also writes `demo/final-media/autopilot-demo.en.srt`. It has
@@ -109,12 +118,14 @@ publish a voice and does not make any voice-rights assertion.
 ## Safety and retry behavior
 
 If capture fails, inspect only the latest ignored directory under
-`demo/.private-captures/`; no partial candidate is promoted. The `finally` cleanup
-queries the authenticated queue and rejects only vendors bearing that run's exact
-`SOTA-CAP-*` or deterministic correction-challenge prefix. A failed cleanup is
-reported and must be completed through the
-reviewer UI before another run. Previously decided synthetic correction evidence is
-retained as the audit source for the amendment screenshot.
+`demo/.private-captures/`; no candidate is promoted. The `finally` cleanup queries the
+complete authenticated queue and rejects only items bearing that run's exact
+`SOTA-CAP-*` or deterministic correction-challenge prefix. Any rejection/query
+failure, or any matching post-cleanup residue, makes the command exit nonzero before
+promotion. Promotion stages every file, preserves the prior reviewed set, commits the
+images and canonical manifest together, and rolls back on an exception; an interrupted
+transaction is recovered before the next run. Previously decided synthetic correction
+evidence is retained as the audit source for the amendment screenshot.
 
 Run the non-network guard tests with:
 

@@ -1,0 +1,309 @@
+{
+  "schemaVersion": 1,
+  "protocolId": "autopilot-synthetic-impact-v1",
+  "source": {
+    "dataset": "eval/dataset.ts",
+    "datasetScenarioCount": 22,
+    "selectionRule": "fixed 12-case stratified subset declared in impact/protocol.json",
+    "labelAuthority": "developer-authored AP policy labels; not expert ground truth"
+  },
+  "cases": [
+    {
+      "id": "s01",
+      "category": "clean_new_vendor",
+      "label": "Clean invoice from a brand-new vendor, all fields present and reconciling",
+      "seed": [],
+      "invoice": {
+        "vendor": "Harborline Office Supply",
+        "invoice_number": "HO-1001",
+        "date": "2026-02-03",
+        "subtotal": 1000,
+        "tax": 200,
+        "total": 1200,
+        "tax_id": "TX-8842",
+        "currency": "EUR"
+      },
+      "expectedAction": "draft_journal_entry"
+    },
+    {
+      "id": "s05",
+      "category": "clean_recurring_vendor",
+      "label": "Second clean invoice from a now-known vendor, amount in line with history",
+      "seed": [
+        {
+          "vendor": "Harborline Office Supply",
+          "invoice_number": "HO-1001",
+          "date": "2026-02-03",
+          "subtotal": 1000,
+          "tax": 200,
+          "total": 1200,
+          "tax_id": "TX-8842",
+          "currency": "EUR"
+        }
+      ],
+      "invoice": {
+        "vendor": "Harborline Office Supply",
+        "invoice_number": "HO-1002",
+        "date": "2026-03-03",
+        "subtotal": 1100,
+        "tax": 220,
+        "total": 1320,
+        "tax_id": "TX-8842",
+        "currency": "EUR"
+      },
+      "expectedAction": "draft_payment"
+    },
+    {
+      "id": "s08",
+      "category": "missing_fields",
+      "label": "New vendor invoice missing the tax_id — cannot be paid safely until supplied",
+      "seed": [],
+      "invoice": {
+        "vendor": "Greenridge Foods",
+        "invoice_number": "GF-12",
+        "date": "2026-02-08",
+        "subtotal": 900,
+        "tax": 180,
+        "total": 1080,
+        "currency": "EUR"
+      },
+      "expectedAction": "draft_vendor_reply"
+    },
+    {
+      "id": "s11",
+      "category": "unreconciled",
+      "label": "All fields present, but subtotal + tax does not reconcile to the stated total",
+      "seed": [],
+      "invoice": {
+        "vendor": "Brightforge Manufacturing",
+        "invoice_number": "BM-9",
+        "date": "2026-02-15",
+        "subtotal": 2000,
+        "tax": 300,
+        "total": 3000,
+        "tax_id": "TX-1000",
+        "currency": "EUR"
+      },
+      "expectedAction": "draft_vendor_reply"
+    },
+    {
+      "id": "s13",
+      "category": "suspected_duplicate",
+      "label": "Same vendor + same vendor reference as an already-processed invoice — likely double-billing",
+      "seed": [
+        {
+          "vendor": "Redcliff Automation",
+          "invoice_number": "RA-500",
+          "date": "2026-01-20",
+          "subtotal": 5000,
+          "tax": 1000,
+          "total": 6000,
+          "tax_id": "TX-8080",
+          "currency": "EUR"
+        }
+      ],
+      "invoice": {
+        "vendor": "Redcliff Automation",
+        "invoice_number": "RA-500",
+        "date": "2026-01-20",
+        "subtotal": 5000,
+        "tax": 1000,
+        "total": 6000,
+        "tax_id": "TX-8080",
+        "currency": "EUR"
+      },
+      "expectedAction": "flag_for_review"
+    },
+    {
+      "id": "s14",
+      "category": "suspected_duplicate",
+      "label": "Different reference but identical vendor + amount + date as a prior invoice — suspected duplicate",
+      "seed": [
+        {
+          "vendor": "Meadowgate Components",
+          "invoice_number": "MG-1",
+          "date": "2026-04-01",
+          "subtotal": 800,
+          "tax": 0,
+          "total": 800,
+          "tax_id": "TX-3030",
+          "currency": "EUR"
+        }
+      ],
+      "invoice": {
+        "vendor": "Meadowgate Components",
+        "invoice_number": "MG-2",
+        "date": "2026-04-01",
+        "subtotal": 800,
+        "tax": 0,
+        "total": 800,
+        "tax_id": "TX-3030",
+        "currency": "EUR"
+      },
+      "expectedAction": "flag_for_review"
+    },
+    {
+      "id": "s15",
+      "category": "amount_anomaly",
+      "label": "Known vendor, but this invoice is many times their usual amount — confirm before posting",
+      "seed": [
+        {
+          "vendor": "Willowbrook Software",
+          "invoice_number": "WS-1",
+          "date": "2026-01-06",
+          "subtotal": 200,
+          "tax": 0,
+          "total": 200,
+          "tax_id": "TX-9090",
+          "currency": "EUR"
+        },
+        {
+          "vendor": "Willowbrook Software",
+          "invoice_number": "WS-2",
+          "date": "2026-02-06",
+          "subtotal": 220,
+          "tax": 0,
+          "total": 220,
+          "tax_id": "TX-9090",
+          "currency": "EUR"
+        }
+      ],
+      "invoice": {
+        "vendor": "Willowbrook Software",
+        "invoice_number": "WS-3",
+        "date": "2026-03-06",
+        "subtotal": 5000,
+        "tax": 0,
+        "total": 5000,
+        "tax_id": "TX-9090",
+        "currency": "EUR"
+      },
+      "expectedAction": "flag_for_review"
+    },
+    {
+      "id": "s17",
+      "category": "precedence",
+      "label": "Duplicate AND missing tax_id — duplicate risk outranks the missing field (never pay twice)",
+      "seed": [
+        {
+          "vendor": "Greenridge Foods",
+          "invoice_number": "GF-500",
+          "date": "2026-01-25",
+          "subtotal": 4000,
+          "tax": 800,
+          "total": 4800,
+          "tax_id": "TX-2323",
+          "currency": "EUR"
+        }
+      ],
+      "invoice": {
+        "vendor": "Greenridge Foods",
+        "invoice_number": "GF-500",
+        "date": "2026-01-25",
+        "subtotal": 4000,
+        "tax": 800,
+        "total": 4800,
+        "currency": "EUR"
+      },
+      "expectedAction": "flag_for_review"
+    },
+    {
+      "id": "s18",
+      "category": "precedence",
+      "label": "Known vendor but this invoice is missing its tax_id — do not propose payment; query first",
+      "seed": [
+        {
+          "vendor": "Stonebridge Imports",
+          "invoice_number": "SB-1",
+          "date": "2026-01-14",
+          "subtotal": 700,
+          "tax": 140,
+          "total": 840,
+          "tax_id": "TX-4545",
+          "currency": "EUR"
+        }
+      ],
+      "invoice": {
+        "vendor": "Stonebridge Imports",
+        "invoice_number": "SB-2",
+        "date": "2026-02-14",
+        "subtotal": 720,
+        "tax": 144,
+        "total": 864,
+        "currency": "EUR"
+      },
+      "expectedAction": "draft_vendor_reply"
+    },
+    {
+      "id": "s19",
+      "category": "precedence",
+      "label": "Known vendor but an anomalous amount — anomaly outranks a payment proposal",
+      "seed": [
+        {
+          "vendor": "Hillcrest Capital",
+          "invoice_number": "HC-1",
+          "date": "2026-01-30",
+          "subtotal": 400,
+          "tax": 80,
+          "total": 480,
+          "tax_id": "TX-6767",
+          "currency": "EUR"
+        }
+      ],
+      "invoice": {
+        "vendor": "Hillcrest Capital",
+        "invoice_number": "HC-2",
+        "date": "2026-02-28",
+        "subtotal": 6000,
+        "tax": 1200,
+        "total": 7200,
+        "tax_id": "TX-6767",
+        "currency": "EUR"
+      },
+      "expectedAction": "flag_for_review"
+    },
+    {
+      "id": "s21",
+      "category": "ambiguous_messy",
+      "label": "Recurring vendor invoice changes from EUR history to USD — verify the material currency change before payment",
+      "seed": [
+        {
+          "vendor": "Hearthland Foods",
+          "invoice_number": "HF-1",
+          "date": "2026-01-22",
+          "subtotal": 1000,
+          "tax": 200,
+          "total": 1200,
+          "tax_id": "TX-1313",
+          "currency": "EUR"
+        }
+      ],
+      "invoice": {
+        "vendor": "Hearthland Foods",
+        "invoice_number": "HF-2",
+        "date": "2026-02-22",
+        "subtotal": 1050,
+        "tax": 210,
+        "total": 1260,
+        "tax_id": "TX-1313",
+        "currency": "USD"
+      },
+      "expectedAction": "flag_for_review"
+    },
+    {
+      "id": "s22",
+      "category": "ambiguous_messy",
+      "label": "No payable total could be parsed (garbled amount, no subtotal/tax) — cannot post or pay; must query the vendor",
+      "seed": [],
+      "invoice": {
+        "vendor": "Golden Barley Foods",
+        "invoice_number": "GB-9",
+        "date": "2026-02-25",
+        "amount": "see attached",
+        "tax_id": "TX-2626",
+        "currency": "EUR"
+      },
+      "expectedAction": "draft_vendor_reply"
+    }
+  ]
+}

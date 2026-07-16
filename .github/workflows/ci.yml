@@ -173,6 +173,9 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          # Impact evidence verifies its historical source commit by ancestry.
+          fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "24.18.0"
@@ -210,22 +213,23 @@ jobs:
   # Problem 25 / Presentation 15) as REAL behavioral checks against the live code (runs
   # the eval, measures the learning delta, drives an injection through the agent, invokes
   # both real sinks through their transport seams, verifies the docs/video/diagram
-  # surface). It FAILS the build if automatable completion drops below 95%, and emits
-  # readiness.json (uploaded as an artifact). Fully OFFLINE (no key, no DB, no browser).
+  # surface). It requires both ≥95% weighted completion and zero failed automatable
+  # checks, then emits readiness.json (uploaded as an artifact). Fully OFFLINE
+  # (no key, no DB, no browser).
   readiness:
     needs: secret-scan
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          fetch-depth: 0 # the gate reads `git ls-files` for the tracked-mp4 allowlist
+          fetch-depth: 0 # impact evidence verifies its historical source commit by ancestry
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "24.18.0"
           cache: npm
       - name: Install deps
         run: npm ci
-      - name: Readiness gate (weighted rubric; fails below 95% automatable — offline)
+      - name: Readiness gate (≥95% weighted + zero automatable failures — offline)
         run: npm run readiness
       - name: Upload readiness.json
         if: always()

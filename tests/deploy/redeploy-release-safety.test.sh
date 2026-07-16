@@ -252,7 +252,53 @@ remove_container() {
   rm -f -- "$meta_dir/$id."*
 }
 
+perform_build() {
+  local iid_file="" previous="" argument context input
+  for argument in "$@"; do
+    [ "$previous" != "--iidfile" ] || iid_file="$argument"
+    previous="$argument"
+  done
+  context="$(last_arg "$@")"
+  [ -n "$iid_file" ] || exit 2
+  case "$context" in
+    "$FAKE_REPO"/.git/autopilot-build-context.*) ;;
+    *) event "archive-context-invalid $context"; exit 1 ;;
+  esac
+  for input in Dockerfile .dockerignore package.json package-lock.json src/db/schema.sql archive-marker.txt; do
+    [ -f "$context/$input" ] && [ ! -L "$context/$input" ] || exit 1
+  done
+  [ "$(cat "$context/archive-marker.txt")" = "committed-release-input" ] || exit 1
+  [ ! -e "$context/local-only.txt" ] || exit 1
+  [ ! -e "$context/.git" ] || exit 1
+  event "archive-context-ok $context"
+  if [ "${FAKE_BUILD_BLOCK:-0}" = "1" ]; then
+    : >"$FAKE_BUILD_MARKER"
+    while [ ! -f "$FAKE_BUILD_RELEASE" ]; do /bin/sleep 0.05; done
+    [ "${FAKE_BUILD_FAIL_AFTER_BLOCK:-0}" != "1" ] || exit 1
+  fi
+  [ "${FAKE_BUILD_FAIL:-0}" != "1" ] || exit 1
+  printf '%s\n' "$FAKE_BUILT_IMAGE_ID" >"$iid_file"
+  event "build-complete $FAKE_BUILT_IMAGE_ID"
+}
+
 case "${1:-}" in
+  buildx)
+    case "${2:-}" in
+      version)
+        [ "${FAKE_BUILDX_MISSING:-0}" != "1" ] || exit 1
+        if [ "${FAKE_BUILDX_WRONG_VERSION:-0}" = "1" ]; then
+          printf '%s\n' 'github.com/docker/buildx v0.34.0 fake'
+        else
+          printf '%s\n' 'github.com/docker/buildx v0.35.0 fake'
+        fi
+        ;;
+      build)
+        [ "${FAKE_BUILDX_MISSING:-0}" != "1" ] || exit 1
+        perform_build "${@:2}"
+        ;;
+      *) exit 2 ;;
+    esac
+    ;;
   network)
     case "${2:-}" in
       ls)
@@ -292,33 +338,10 @@ case "${1:-}" in
     done
     ;;
   build)
-    iid_file=""
-    previous=""
-    for argument in "$@"; do
-      [ "$previous" != "--iidfile" ] || iid_file="$argument"
-      previous="$argument"
-    done
-    context="$(last_arg "$@")"
-    [ -n "$iid_file" ] || exit 2
-    case "$context" in
-      "$FAKE_REPO"/.git/autopilot-build-context.*) ;;
-      *) event "archive-context-invalid $context"; exit 1 ;;
-    esac
-    for input in Dockerfile .dockerignore package.json package-lock.json src/db/schema.sql archive-marker.txt; do
-      [ -f "$context/$input" ] && [ ! -L "$context/$input" ] || exit 1
-    done
-    [ "$(cat "$context/archive-marker.txt")" = "committed-release-input" ] || exit 1
-    [ ! -e "$context/local-only.txt" ] || exit 1
-    [ ! -e "$context/.git" ] || exit 1
-    event "archive-context-ok $context"
-    if [ "${FAKE_BUILD_BLOCK:-0}" = "1" ]; then
-      : >"$FAKE_BUILD_MARKER"
-      while [ ! -f "$FAKE_BUILD_RELEASE" ]; do /bin/sleep 0.05; done
-      [ "${FAKE_BUILD_FAIL_AFTER_BLOCK:-0}" != "1" ] || exit 1
-    fi
-    [ "${FAKE_BUILD_FAIL:-0}" != "1" ] || exit 1
-    printf '%s\n' "$FAKE_BUILT_IMAGE_ID" >"$iid_file"
-    event "build-complete $FAKE_BUILT_IMAGE_ID"
+    # Kept only so a test can detect an accidental regression back to the
+    # unbound legacy command. Production must call `docker buildx build`.
+    [ "${FAKE_ALLOW_LEGACY_BUILD:-0}" = "1" ] || exit 86
+    perform_build "$@"
     ;;
   inspect)
     format=""
@@ -696,6 +719,20 @@ cat >"$FAKE_BIN/stat" <<'STAT'
 set -euo pipefail
 path="${!#}"
 case "$path" in
+  *'/.artifacts')
+    [ "${2:-}" = '%u:%g:%a' ] || exec /usr/bin/stat "$@"
+    [ "${FAKE_BUILDX_ROOT_UNSAFE:-0}" != "1" ] \
+      && printf '0:0:700\n' || printf '1000:1000:777\n'
+    ;;
+  *'/.artifacts/docker-config'|*'/.artifacts/docker-config/cli-plugins')
+    [ "${2:-}" = '%u:%g:%a' ] || exec /usr/bin/stat "$@"
+    printf '0:0:700\n'
+    ;;
+  *'/.artifacts/docker-config/cli-plugins/docker-buildx')
+    [ "${2:-}" = '%u:%g:%a:%h' ] || exec /usr/bin/stat "$@"
+    [ "${FAKE_BUILDX_PLUGIN_UNSAFE:-0}" != "1" ] \
+      && printf '0:0:755:1\n' || printf '0:0:777:2\n'
+    ;;
   .env|*'/.env') printf '%s\n' "${FAKE_RUNTIME_MODE:-600}" ;;
   .env.migration|*'/.env.migration') printf '%s\n' "${FAKE_MIGRATION_MODE:-600}" ;;
   "$LEDGER_HOST_DIR")
@@ -730,12 +767,29 @@ case "$path" in
 esac
 STAT
 
+cat >"$FAKE_BIN/sha256sum" <<'SHA256SUM'
+#!/usr/bin/env bash
+set -euo pipefail
+path="${!#}"
+case "$path" in
+  *'/.artifacts/docker-config/cli-plugins/docker-buildx')
+    if [ "${FAKE_BUILDX_HASH_BAD:-0}" = "1" ]; then
+      printf '%064d  %s\n' 0 "$path"
+    else
+      printf 'd41ece72044243b4f58b343441ae37446d9c29a7d6b5e11c61847bbcf8f7dfda  %s\n' "$path"
+    fi
+    ;;
+  *) exec /usr/bin/sha256sum "$@" ;;
+esac
+SHA256SUM
+
 chmod 0755 "$FAKE_BIN/chown" "$FAKE_BIN/docker" "$FAKE_BIN/flock" "$FAKE_BIN/install" \
-  "$FAKE_BIN/sleep" "$FAKE_BIN/stat" "$FAKE_BIN/timeout"
+  "$FAKE_BIN/sha256sum" "$FAKE_BIN/sleep" "$FAKE_BIN/stat" "$FAKE_BIN/timeout"
 
 cat >"$REPO/.gitignore" <<'IGNORE'
 .env
 .env.*
+.artifacts/
 ledger/
 *.log
 local-only.txt
@@ -791,6 +845,13 @@ cp "$REPO/.env" "$REPO2/.env"
 cp "$REPO/.env.migration" "$REPO2/.env.migration"
 chmod 0600 "$REPO2/.env" "$REPO2/.env.migration"
 
+for repo in "$REPO" "$REPO2"; do
+  mkdir -p "$repo/.artifacts/docker-config/cli-plugins"
+  printf 'fake test Buildx; hash response is controlled by the sha256sum seam\n' \
+    >"$repo/.artifacts/docker-config/cli-plugins/docker-buildx"
+  chmod 0755 "$repo/.artifacts/docker-config/cli-plugins/docker-buildx"
+done
+
 VALID_ENV="$SANDBOX/valid.env"
 cp "$REPO/.env" "$VALID_ENV"
 
@@ -835,7 +896,7 @@ invoke_deploy() {
   local repo="$1" expected_release="$2"
   (
     cd "$repo"
-    env "${CASE_ENV[@]}" \
+    env DOCKER_CONFIG="$repo/.artifacts/docker-config" "${CASE_ENV[@]}" \
       PATH="$FAKE_BIN:$PATH" \
       FAKE_STATE="$FAKE_STATE" \
       FAKE_DOCKER_LOG="$FAKE_DOCKER_LOG" \
@@ -1028,6 +1089,66 @@ run_deploy invalid-release short
 assert_contains "$RUN_OUTPUT" "EXPECTED_RELEASE must be the exact 40-character lowercase"
 assert_not_contains "$FAKE_DOCKER_LOG" "<build>"
 
+CASE_ENV=(DOCKER_CONFIG=)
+run_deploy buildx-config-missing "$EXPECTED"
+[ "$RUN_STATUS" -ne 0 ] || fail "missing project DOCKER_CONFIG unexpectedly passed"
+assert_contains "$RUN_OUTPUT" "DOCKER_CONFIG must select the project-contained"
+assert_not_contains "$FAKE_DOCKER_LOG" "<build>"
+
+CASE_ENV=(DOCKER_CONFIG="$SANDBOX/untrusted-docker-config")
+run_deploy buildx-config-outside "$EXPECTED"
+[ "$RUN_STATUS" -ne 0 ] || fail "external DOCKER_CONFIG unexpectedly passed"
+assert_contains "$RUN_OUTPUT" "DOCKER_CONFIG must equal the canonical project-contained"
+assert_not_contains "$FAKE_DOCKER_LOG" "<build>"
+
+CASE_ENV=(FAKE_BUILDX_HASH_BAD=1)
+run_deploy buildx-hash-mismatch "$EXPECTED"
+[ "$RUN_STATUS" -ne 0 ] || fail "wrong Buildx hash unexpectedly passed"
+assert_contains "$RUN_OUTPUT" "Buildx artifact/layout failed canonical path, closed-config"
+assert_not_contains "$FAKE_DOCKER_LOG" "<build>"
+
+CASE_ENV=(FAKE_BUILDX_PLUGIN_UNSAFE=1)
+run_deploy buildx-plugin-unsafe "$EXPECTED"
+[ "$RUN_STATUS" -ne 0 ] || fail "unsafe Buildx plugin identity unexpectedly passed"
+assert_contains "$RUN_OUTPUT" "Buildx artifact/layout failed canonical path, closed-config"
+assert_not_contains "$FAKE_DOCKER_LOG" "<build>"
+
+printf '{"cliPluginsExtraDirs":["/untrusted/plugins"]}\n' \
+  >"$REPO/.artifacts/docker-config/config.json"
+CASE_ENV=()
+run_deploy buildx-config-redirect "$EXPECTED"
+[ "$RUN_STATUS" -ne 0 ] || fail "Buildx config plugin redirect unexpectedly passed"
+assert_contains "$RUN_OUTPUT" "Buildx artifact/layout failed canonical path, closed-config"
+assert_not_contains "$FAKE_DOCKER_LOG" "<build>"
+rm -f -- "$REPO/.artifacts/docker-config/config.json"
+
+printf 'unreviewed sibling plugin\n' \
+  >"$REPO/.artifacts/docker-config/cli-plugins/docker-unreviewed"
+CASE_ENV=()
+run_deploy buildx-extra-plugin "$EXPECTED"
+[ "$RUN_STATUS" -ne 0 ] || fail "extra Docker CLI plugin unexpectedly passed"
+assert_contains "$RUN_OUTPUT" "Buildx artifact/layout failed canonical path, closed-config"
+assert_not_contains "$FAKE_DOCKER_LOG" "<build>"
+rm -f -- "$REPO/.artifacts/docker-config/cli-plugins/docker-unreviewed"
+
+CASE_ENV=(DOCKER_CLI_PLUGIN_EXTRA_DIRS="$SANDBOX/untrusted-plugins")
+run_deploy buildx-extra-dir-env "$EXPECTED"
+[ "$RUN_STATUS" -ne 0 ] || fail "Buildx extra plugin directory environment unexpectedly passed"
+assert_contains "$RUN_OUTPUT" "Buildx artifact/layout failed canonical path, closed-config"
+assert_not_contains "$FAKE_DOCKER_LOG" "<build>"
+
+CASE_ENV=(FAKE_BUILDX_MISSING=1)
+run_deploy buildx-missing "$EXPECTED"
+[ "$RUN_STATUS" -ne 0 ] || fail "missing Buildx unexpectedly passed"
+assert_contains "$RUN_OUTPUT" "Docker Buildx v0.35.0 is required"
+assert_not_contains "$FAKE_DOCKER_LOG" "<build>"
+
+CASE_ENV=(FAKE_BUILDX_WRONG_VERSION=1)
+run_deploy buildx-wrong-version "$EXPECTED"
+[ "$RUN_STATUS" -ne 0 ] || fail "wrong Buildx version unexpectedly passed"
+assert_contains "$RUN_OUTPUT" "Docker Buildx must be exactly v0.35.0"
+assert_not_contains "$FAKE_DOCKER_LOG" "<build>"
+
 OTHER_RELEASE="$(printf 'different origin main\n' | git -C "$REPO" commit-tree "$(git -C "$REPO" write-tree)")"
 git -C "$REPO" update-ref refs/remotes/origin/main "$OTHER_RELEASE"
 CASE_ENV=()
@@ -1088,7 +1209,7 @@ SECOND_LOCK_STATUS=$?
 set -e
 [ "$SECOND_LOCK_STATUS" -ne 0 ] || fail "second checkout acquired the host-global lock"
 assert_contains "$SECOND_LOCK_OUTPUT" "another Autopilot deployment is already in progress from this or another checkout"
-[ "$(grep -Fc 'argv: <build>' "$FAKE_DOCKER_LOG" || true)" = "1" ] \
+[ "$(grep -Fc 'argv: <buildx> <build>' "$FAKE_DOCKER_LOG" || true)" = "1" ] \
   || fail "the second checkout reached Docker despite the shared global lock"
 touch "$BUILD_RELEASE"
 set +e
@@ -1140,7 +1261,18 @@ CASE_ENV=(FAKE_STAGE_PUBLISHED=1)
 run_deploy staging-published "$EXPECTED"
 [ "$RUN_STATUS" -ne 0 ] || fail "host-published staging candidate unexpectedly passed"
 assert_contains "$RUN_OUTPUT" "non-published staging contract/readiness failed"
+assert_contains "$RUN_OUTPUT" "stage=runtime-contract"
 assert_contains "$FAKE_EVENT_LOG" "gate-closed-staging"
+assert_not_contains "$FAKE_EVENT_LOG" "stop $FAKE_OLD_ID"
+assert_name_id test-autopilot "$FAKE_OLD_ID"
+
+# The operator-facing failure marker names the exact safe probe seam without
+# printing credentials, response bodies, or provider data. This keeps a live
+# fail-closed incident diagnosable while the immutable old release remains up.
+CASE_ENV=(FAKE_DEEP_READY_FAIL=1)
+run_deploy staging-deep-readiness-failure "$EXPECTED"
+[ "$RUN_STATUS" -ne 0 ] || fail "failed staging deep-readiness unexpectedly passed"
+assert_contains "$RUN_OUTPUT" "stage=qwen-deep-readiness"
 assert_not_contains "$FAKE_EVENT_LOG" "stop $FAKE_OLD_ID"
 assert_name_id test-autopilot "$FAKE_OLD_ID"
 
@@ -1296,6 +1428,7 @@ run_signal_case() {
   (
     cd "$REPO"
     exec setsid env "${CASE_ENV[@]}" \
+      DOCKER_CONFIG="$REPO/.artifacts/docker-config" \
       PATH="$FAKE_BIN:$PATH" \
       FAKE_STATE="$FAKE_STATE" \
       FAKE_DOCKER_LOG="$FAKE_DOCKER_LOG" \

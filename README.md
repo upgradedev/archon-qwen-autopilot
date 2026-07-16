@@ -11,6 +11,7 @@
 Judge shortcuts: [5-minute guide](docs/JUDGE-GUIDE.md) ·
 [16:9 architecture](docs/judge-architecture.svg) ·
 [claim/evidence matrix](docs/CLAIM_EVIDENCE_MATRIX.md) ·
+[synthetic impact study](docs/IMPACT_STUDY.md) ·
 [security boundaries](SECURITY.md) ·
 [exact release proof](demo/BUILD_RECORDING.md) ·
 [final recording run sheet](demo/VIDEO_RECORDING_CHECKLIST.md)
@@ -412,7 +413,9 @@ application SHA, its immutable CI run, this app's `/health` + `/ready`, authenti
 `/ready/deep`, and exercised decision + vision model IDs have been freshly captured
 using [`demo/BUILD_RECORDING.md`](./demo/BUILD_RECORDING.md). The sanitized composite
 belongs at `demo/final-media/autopilot-alibaba-proof.png`; the same evidence belongs
-in the reviewed nine-beat `demo/final-media/autopilot-demo.mp4`.
+in the reviewed nine-beat `demo/final-media/autopilot-demo.mp4`. Final PNGs are
+accepted only with tracked `demo/gallery/CAPTURE_REVIEW.json`, whose exact-release,
+exercised-model, artifact-hash, and authenticated cleanup-zero gates all pass.
 
 The final sanitized proof must show the app-specific ECS region/service identity
 without exposing instance IDs, administrative principals, key paths or secret-file
@@ -483,6 +486,31 @@ entered in the header; it is kept only in that browser tab's `sessionStorage`.
 | `POST /recover/:id` | **Bearer-protected.** Reconcile an uncertain `executing` item: `{ action: "retry" | "mark_completed", reason }`. There is no automatic retry; a live claim cannot be reset before a recorded failure or the bounded stale-claim window (`EXECUTION_RECOVERY_AFTER_MS`). |
 | `GET /skills` | The **custom Qwen skill catalog** — every function schema the decider chooses from, annotated with tier / gate / rule (mirrors the MCP `list_skills` tool). |
 | `GET /docs` · `GET /openapi.json` | Interactive Swagger UI + the raw OpenAPI 3 spec. |
+
+### Fixed synthetic workflow-model impact study
+
+The offline [impact study](docs/IMPACT_STUDY.md) compares a reasonable manual AP
+checklist with Autopilot-assisted review on a frozen 12-case subset. The
+[protocol](impact/protocol.json), [case payloads](impact/cases.json), [raw task
+sequences and replay traces](impact/raw-observations.json), deterministic
+[analyzer](impact/analyze.mjs), and generated [results](impact/RESULTS.md) are
+all reviewable. The analyzer binds the cases to `eval/dataset.ts`, rejects
+missing/reordered observations, reruns every frozen case through
+`runScenario(..., "offline")`, compares seven action/trace fields, derives time
+and touches only from published weights, and byte-checks both generated outputs.
+The replay requires exact Node 24.18.0, a committed raw input, and an unchanged
+commit-bound closure covering every local module and runtime manifest it loads;
+the eval modules are imported only after those gates. Source changes use the
+documented commit-A → `impact:refresh-source` → evidence-only-commit-B flow.
+
+This is a **fixed synthetic workflow-model comparison; not a human study, field
+trial, production benchmark, labor-savings claim, or ROI analysis**. No person
+was timed, labels are developer-authored, and the equal mismatch counts do not
+show error reduction. Reproduce the bounded evidence with:
+
+```bash
+npm run impact:check
+```
 
 **Approval-gate semantics:** missing/invalid credentials → `401`; an unconfigured
 reviewer token → generic `503` plus a request id; unknown id → `404`; an already claimed/decided item → `409`.
@@ -835,7 +863,8 @@ and `c8` enforces at least 80% for statements, branches, functions, and lines.
 - **Coverage** — the full unit + integration pyramid runs under **c8** with an **80%
   floor** (statements / branches / functions / lines) on `src/`, gated in CI.
 - **Readiness gate** — `scripts/readiness.ts` encodes the Track-4 rubric as **real
-  behavioral checks** and fails CI below **95%** automatable completion (see below).
+  behavioral checks** and fails CI unless completion is at least **95%** with
+  **zero failed automatable checks** (see below).
 
 CI (`.github/workflows/ci.yml`): **gitleaks** (pinned v8.18.4) → **dep-audit**
 (`npm audit`, fails on high/critical) → **typecheck** → **build** (`tsc`) →
@@ -880,10 +909,11 @@ npm run readiness       # print the per-criterion report + write readiness.json
 ```
 
 It emits `readiness.json` (per-criterion breakdown + the user-gated list, uploaded as a
-CI artifact) and **exits non-zero** below the 95% floor, so a regressed check — a broken
-eval, a dropped sink, an MCP-count drift — fails the build. An e2e
+CI artifact) and **exits non-zero** below the 95% floor or when even one automatable
+check fails. A regressed check — a broken eval, a dropped sink, an MCP-count drift —
+therefore cannot hide at the weighted threshold boundary. An e2e
 (`tests/integration/readiness.e2e.test.ts`) spawns the gate exactly as CI does and
-asserts it runs green offline.
+pins both the zero-failure policy and a green offline run.
 
 ---
 
@@ -985,7 +1015,7 @@ claim→source→test mapping is in
 |---|---|
 | **Technical Depth & Engineering (30%)** | A real bounded **multi-step ReAct loop** over `qwen-plus` **function-calling** (`src/ap/loop.ts`) across a two-tier tool set — autonomous read/analyze skills vs. human-gated terminal actions — with the **same `tool_calls`-parse path online and offline** (a canned `FakeQwenChatClient`), so the integration is exercised in CI with no key. The injectable core has two intentionally asymmetric surfaces: HTTP + Approval UI is the exclusive authenticated decision surface, while an agent-safe **four-tool MCP server** can only intake proposals and read queue/memory/catalog state. A derived **nine-skill custom-skills catalog** remains introspectable. Real `qwen-vl-max` document vision on the upload path. Full test pyramid (unit → integration → Playwright e2e) + an **80% coverage gate** + **documentation-drift fitness functions** + gitleaks + dep-audit; live on Alibaba Cloud (ECS + pgvector). |
 | **Innovation & AI Creativity (30%)** | **The approval gate creates a runtime correction signal** — a human's amend/reject is written back and *read* on the vendor's next decision, so re-billing an amount a person corrected *down* is escalated instead of receiving a payment proposal (a **measured** before/after behavioural delta; no model weights are updated; see [`EVAL.md`](EVAL.md)). Plus the **structural safety design**: the model's tool catalog **excludes** approve/pay, so prompt-injection in untrusted data cannot autonomously execute — tested by the multi-step adversarial suite. Decision quality is a **measured** number (22/22 offline, gated), not asserted. |
-| **Problem Value & Impact (25%)** | A real, recurring SMB pain: accounts-payable teams triage messy incoming invoices under duplicate-payment and over-billing risk. Archon automates the demonstrated normalization, evidence gathering and proposal steps, then stops for an authenticated human. `/impact-metrics` reports proposal latency, steps, catches and touches; no labor-saving or ROI study is claimed. |
+| **Problem Value & Impact (25%)** | A real, recurring SMB pain: accounts-payable teams triage messy incoming invoices under duplicate-payment and over-billing risk. Archon automates the demonstrated normalization, evidence gathering and proposal steps, then stops for an authenticated human. `/impact-metrics` reports proposal latency, steps, catches and touches. A separate [fixed synthetic workflow-model study](docs/IMPACT_STUDY.md) publishes its protocol, case payloads, raw task sequences/replay traces, sensitivity bounds, and deterministic analysis; it is not a human, production, labor-savings, or ROI study. |
 | **Presentation & Documentation (15%)** | This README + the architecture diagram + [`EVAL.md`](EVAL.md) (method + honest caveats) + [`docs/JUDGE-GUIDE.md`](docs/JUDGE-GUIDE.md) + [JUDGE_REVIEW.md](./demo/JUDGE_REVIEW.md) (internal evidence/readiness memo, not submission copy) + the interactive `/docs` API explorer + the live Alibaba Cloud URL + the demo video. |
 
 ### Consciously deferred — an A2A validator-debate layer

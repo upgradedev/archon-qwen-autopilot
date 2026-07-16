@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
   <title id="title">Archon Autopilot Track-4 architecture</title>
-  <desc id="desc">An untrusted invoice is extracted by the configured Qwen vision model and analyzed by a bounded Qwen tool loop. Unauthenticated callers receive an isolated, redacted, non-durable preview; only a valid reviewer path persists a full-evidence pending proposal. An authenticated human must then approve, amend, or reject before any sink. Human corrections become vendor evidence for later decisions. Model and MCP surfaces have no execution verbs.</desc>
+  <desc id="desc">A browser-facing approval UI and Fastify API run behind HTTPS on Alibaba ECS. An untrusted invoice is extracted through DashScope by Qwen vision and analyzed by a bounded Qwen tool loop. Unauthenticated callers receive an isolated, redacted, non-durable preview; only a valid reviewer path persists a full-evidence pending proposal in PostgreSQL with pgvector. An authenticated human must then approve, amend, or reject before the durable external-sink boundary. Human corrections become vendor evidence for later decisions. Model and MCP surfaces have no execution verbs.</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#0d1117"/><stop offset="1" stop-color="#111827"/></linearGradient>
     <linearGradient id="hero" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#2563eb"/><stop offset="1" stop-color="#7c3aed"/></linearGradient>
@@ -12,23 +12,23 @@
   <rect width="1600" height="900" rx="28" fill="url(#bg)"/>
   <text x="70" y="75" class="h1">Archon Autopilot</text>
   <text x="70" y="111" class="sub">Track 4 · bounded accounts-payable orchestration with a hard human consequence boundary</text>
-  <rect x="1260" y="53" width="270" height="54" rx="27" fill="url(#hero)"/><text x="1395" y="87" text-anchor="middle" class="title" font-size="19">Qwen · Alibaba Cloud</text>
+  <rect x="1260" y="53" width="270" height="54" rx="27" fill="url(#hero)"/><text x="1395" y="87" text-anchor="middle" class="title" font-size="19">Alibaba ECS · HTTPS</text>
 
   <rect class="box" x="70" y="180" width="220" height="190" rx="18"/>
   <text x="95" y="215" class="cap">UNTRUSTED INPUT</text><text x="95" y="258" class="title">Invoice</text>
   <text x="95" y="291" class="body">PDF · PNG · JPG · JSON</text><text x="95" y="323" class="small">type/size/magic checks</text><text x="95" y="346" class="small">pattern warnings are advisory</text>
 
   <rect class="box" x="350" y="180" width="230" height="190" rx="18"/>
-  <text x="375" y="215" class="cap">EXTRACT</text><text x="375" y="258" class="title">Qwen vision</text>
-  <text x="375" y="291" class="mono">configured model</text><text x="375" y="323" class="small">structured fields + source</text><text x="375" y="346" class="small">confidence, human-review guard</text>
+  <text x="375" y="215" class="cap">DASHSCOPE EXTRACT</text><text x="375" y="258" class="title">Qwen vision</text>
+  <text x="375" y="291" class="mono">qwen-vl-max</text><text x="375" y="323" class="small">structured fields + source</text><text x="375" y="346" class="small">confidence, human-review guard</text>
 
   <rect x="640" y="150" width="400" height="250" rx="22" fill="#111f35" stroke="#3b82f6" stroke-width="3"/>
-  <text x="670" y="190" class="cap">BOUNDED AGENT LOOP</text><text x="670" y="232" class="title">Qwen function calling</text>
+  <text x="670" y="190" class="cap">DASHSCOPE · BOUNDED LOOP</text><text x="670" y="232" class="title">qwen-plus function calling</text>
   <text x="670" y="270" class="mono">1 recall_vendor_history</text><text x="670" y="301" class="mono">2 validate_invoice</text><text x="670" y="332" class="mono">3 check_duplicate · variance</text>
   <text x="670" y="368" class="small">read/analyze only · capped steps/deadline</text>
 
   <rect class="box" x="1100" y="180" width="210" height="190" rx="18"/>
-  <text x="1125" y="215" class="cap">RESULT ROUTING</text><text x="1125" y="258" class="title" style="font-size:18px">PREVIEW / PENDING</text>
+  <text x="1125" y="215" class="cap">FASTIFY API + UI</text><text x="1125" y="258" class="title" style="font-size:18px">PREVIEW / PENDING</text>
   <text x="1125" y="291" class="small">public → isolated + redacted</text><text x="1125" y="323" class="small">reviewer → durable + full trace</text><text x="1125" y="346" class="small">only PENDING reaches the gate</text>
 
   <rect x="1360" y="165" width="170" height="220" rx="20" fill="#18251d" stroke="#3fb950" stroke-width="3"/>
@@ -38,12 +38,12 @@
   <path class="flow" d="M290 275H340"/><path class="flow" d="M580 275H630"/><path class="flow" d="M1040 275H1090"/><path class="flow" d="M1310 275H1350"/>
 
   <rect class="box" x="160" y="485" width="340" height="180" rx="18"/>
-  <text x="190" y="522" class="cap">READ-ONLY EVIDENCE</text><text x="190" y="560" class="title">Vendor history · pgvector</text>
+  <text x="190" y="522" class="cap">POSTGRESQL · READ ONLY</text><text x="190" y="560" class="title">Vendor history · pgvector</text>
   <text x="190" y="594" class="body">completed invoices · outcomes</text><text x="190" y="624" class="body">human corrections · rejections</text>
   <path d="M500 555C590 555 570 365 650 340" class="flow"/>
 
   <rect class="box" x="610" y="485" width="360" height="180" rx="18"/>
-  <text x="640" y="522" class="cap">AFTER EXPLICIT APPROVAL</text><text x="640" y="560" class="title">Fenced execution</text>
+  <text x="640" y="522" class="cap">EXTERNAL SINK BOUNDARY</text><text x="640" y="560" class="title">Fenced after approval</text>
   <text x="640" y="594" class="body">JSONL: durable ref dedupe</text><text x="640" y="624" class="small">SMTP is not recipient-exactly-once · explicit recovery</text>
   <path d="M1445 385V450C1445 465 980 465 970 545" class="flow"/>
 

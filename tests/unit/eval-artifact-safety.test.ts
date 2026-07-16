@@ -421,12 +421,17 @@ test("all artifact writers reject traversal, absolute, symlink, and broken-symli
     const cleanDemoEnv = Object.fromEntries(
       Object.entries(process.env).filter(([key]) => !["REVIEWER_TOKEN", "DEMO_RUN_ID"].includes(key.toUpperCase()))
     );
+    // Windows resolves `bash` through the WSL launcher in this environment. A cold
+    // distro startup can exceed ten seconds before the script reaches its first
+    // guard, so give the process enough startup headroom without masking hangs.
+    const bashGuardTimeoutMs = process.platform === "win32" ? 30_000 : 10_000;
     const noReviewer = spawnSync("bash", ["demo/capture_demo.sh"], {
       cwd: repoRoot,
       env: cleanDemoEnv,
       encoding: "utf8",
-      timeout: 10_000,
+      timeout: bashGuardTimeoutMs,
     });
+    assert.equal(noReviewer.error, undefined, `bash token-guard probe failed to run: ${noReviewer.error?.message}`);
     assert.notEqual(noReviewer.status, 0);
     assert.match(noReviewer.stderr, /REVIEWER_TOKEN is required/);
 
@@ -437,8 +442,9 @@ test("all artifact writers reject traversal, absolute, symlink, and broken-symli
       cwd: repoRoot,
       env: cleanDemoEnv,
       encoding: "utf8",
-      timeout: 10_000,
+      timeout: bashGuardTimeoutMs,
     });
+    assert.equal(invalidRunId.error, undefined, `bash run-id guard probe failed to run: ${invalidRunId.error?.message}`);
     assert.notEqual(invalidRunId.status, 0);
     assert.match(invalidRunId.stderr, /DEMO_RUN_ID must be/);
   } finally {

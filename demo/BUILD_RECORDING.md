@@ -93,7 +93,8 @@ Acceptance is all-or-nothing:
 - [ ] An unauthenticated `/pending` request fails closed, while the private reviewer
   path works. Do not display the credential.
 - [ ] Smoke work items and vendor-memory rows are removed through the approved cleanup
-  path after capture; no stale PENDING card is left for judges.
+  path after capture; the media gate's fully paginated authenticated re-query proves
+  zero matching PENDING residue before any canonical screenshot/manifest promotion.
 - [ ] Public UI, `/health`, `/ready`, and TLS are tested after the exact deployment.
 - [ ] Recheck `/docs`, the private judge path, and the proven vision flow while making
   the sanitized incognito/off-network final capture.

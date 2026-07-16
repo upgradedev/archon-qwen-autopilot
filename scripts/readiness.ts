@@ -15,9 +15,10 @@
 //
 // Scoring: each criterion's weight is split evenly across its AUTOMATABLE checks
 // (user-gated checks are listed but consume no weight). The automatable completion % is
-// the weighted fraction of automatable checks that pass. CI FAILS the gate when it drops
-// below 95% — so a single regressed check (≈6 pts) trips it. The full breakdown is
-// emitted to readiness.json for the CI artifact + the e2e assertion.
+// the weighted fraction of automatable checks that pass. CI requires both ≥95% weighted
+// completion AND zero failed automatable checks, so no known regression can hide at the
+// threshold boundary. The full breakdown is emitted to readiness.json for the CI artifact
+// + the e2e assertion.
 
 import { writeFileSync, existsSync, statSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -45,6 +46,10 @@ import { JsonlLedgerSink, type LedgerTransport } from "../src/ap/ledger-sink.js"
 import { defaultSinks } from "../src/deps.js";
 import type { ChatCreateArgs, ChatResponse, QwenChatClient, ToolCall } from "../src/qwen/client.js";
 import { safeOperationalSummary } from "../src/security/operational-error.js";
+import {
+  passesReadinessGate,
+  READINESS_GATE_THRESHOLD_PCT,
+} from "./readiness-policy.js";
 
 // Offline: no key means the decider/embedder/extractor auto-select the deterministic Fakes.
 delete process.env.DASHSCOPE_API_KEY;
@@ -52,7 +57,6 @@ delete process.env.DASHSCOPE_API_KEY;
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..");
 const GOLDEN = JSON.parse(readFileSync(join(ROOT, "tests", "docs", "claims.golden.json"), "utf8"));
-const GATE_THRESHOLD_PCT = 95;
 
 type Status = "pass" | "fail" | "user-gated";
 interface Check {
@@ -345,6 +349,52 @@ async function problem(): Promise<CriterionSpec> {
   // does not claim a mailbox receipt. Do not turn that non-goal into a fake release
   // blocker merely because external SMTP credentials are absent.
 
+  // Fixed synthetic workflow-model evidence — recompute every derived row and
+  // byte-check the generated artifacts. This is deliberately not a human/ROI claim.
+  {
+    let verified = false;
+    let detail = "";
+    try {
+      const output = execFileSync(
+        process.execPath,
+        ["--import", "tsx", join(ROOT, "impact", "analyze.mjs"), "--check"],
+        { cwd: ROOT, encoding: "utf8", env: { ...process.env, DASHSCOPE_API_KEY: "" } }
+      ).trim();
+      const report = JSON.parse(readFileSync(join(ROOT, "impact", "results.json"), "utf8"));
+      const baseDelta = Number(report.aggregate?.modeledActiveReviewSeconds?.base?.pairedDeltaTotal);
+      const touchDelta = Number(report.aggregate?.modeledHumanTouches?.pairedDeltaTotal);
+      const manualMismatch = Number(report.aggregate?.policyLabelMismatch?.manual?.count);
+      const assistedMismatch = Number(report.aggregate?.policyLabelMismatch?.assisted?.count);
+      const prohibited = new Set((report.claimBoundary?.notPermitted ?? []).map((claim: unknown) => String(claim).toLowerCase()));
+      verified =
+        output.includes("impact-study check: PASS") &&
+        report.studyType === "fixed synthetic workflow-model comparison" &&
+        report.denominator === 12 &&
+        baseDelta > 0 &&
+        touchDelta > 0 &&
+        assistedMismatch <= manualMismatch &&
+        prohibited.has("roi") &&
+        prohibited.has("labor savings");
+      detail =
+        output +
+        "; n=" + report.denominator +
+        ", modeled base seconds delta=" + baseDelta +
+        ", modeled touches delta=" + touchDelta +
+        ", policy-label mismatches manual/assisted=" + manualMismatch + "/" + assistedMismatch +
+        "; synthetic assumptions only, no human/ROI extrapolation";
+    } catch (error) {
+      detail = safeOperationalSummary(error, "synthetic impact study");
+    }
+    checks.push(
+      assertCheck(
+        "synthetic-impact-study",
+        "Fixed synthetic impact study: protocol/raw rows/results reproduce with bounded claims",
+        verified,
+        detail
+      )
+    );
+  }
+
   return { key: "problem", name: "Problem value", weight: 25, checks };
 }
 
@@ -431,7 +481,34 @@ async function presentation(): Promise<CriterionSpec> {
     );
   }
 
-  // 5/6) Human-only presentation surfaces — a hosted video URL + a current live box.
+  // 5) The media release gate is executable offline: cleanup failure/residue blocks
+  //    promotion and a synthetic mid-commit fault restores the reviewed finals.
+  {
+    let passed = false;
+    let evidence = "media capture self-test did not run";
+    try {
+      const output = execFileSync(process.execPath, ["demo/media-tools/capture-final-media.cjs", "--self-test"], {
+        cwd: ROOT,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 60_000,
+      });
+      passed = /cleanup-zero, rollback, and interrupted-transaction guards passed/i.test(output);
+      evidence = passed
+        ? "cleanup failure + post-cleanup residue fail closed; promotion rollback/recovery self-test passed"
+        : "media capture self-test returned without its complete acceptance marker";
+    } catch (error) {
+      evidence = `media capture self-test failed (${error instanceof Error ? error.message.split("\n")[0] : "unknown error"})`;
+    }
+    checks.push(assertCheck(
+      "media-capture-fail-closed",
+      "Final-media gate proves cleanup-zero before rollback-capable canonical promotion",
+      passed,
+      evidence,
+    ));
+  }
+
+  // 6/7) Human-only presentation surfaces — a hosted video URL + a current live box.
   checks.push(gate("video-hosted", "Demo video hosted on a Public judges-accessible page", "Upload demo/final-media/autopilot-demo.mp4 and record its Public URL in the submission."));
   checks.push(gate("live-box-redeploy", "Live deployment serves the current image", "Redeploy the Alibaba Cloud box from the merged branch so the live OpenAPI + sinks match this repo."));
 
@@ -574,13 +651,14 @@ async function main() {
   const userGated = allChecks.filter((ch) => ch.status === "user-gated");
   const failed = allChecks.filter((ch) => ch.status === "fail");
   const passed = allChecks.filter((ch) => ch.status === "pass");
-  const gatePass = automatablePct >= GATE_THRESHOLD_PCT;
+  const gatePass = passesReadinessGate(automatablePct, failed.length);
 
   const report = {
     generatedAt: new Date().toISOString(),
     rubric: "Track-4 Autopilot Agent — Technical 30 / Innovation 30 / Problem 25 / Presentation 15 · Security 25 (cross-cutting app-sec assurance)",
     automatableCompletionPct: automatablePct,
-    gateThresholdPct: GATE_THRESHOLD_PCT,
+    gateThresholdPct: READINESS_GATE_THRESHOLD_PCT,
+    gatePolicy: { requiresZeroFailedAutomatableChecks: true },
     gatePass,
     totals: { passed: passed.length, failed: failed.length, userGated: userGated.length, automatable: passed.length + failed.length },
     criteria: scored,
@@ -605,7 +683,7 @@ async function main() {
     }
     console.log("\n" + "=".repeat(78));
     console.log(`Automatable completion : ${automatablePct}%  ${bar(automatablePct)}`);
-    console.log(`Gate (≥ ${GATE_THRESHOLD_PCT}%)          : ${gatePass ? "PASS" : "FAIL"}   (${passed.length} pass · ${failed.length} fail · ${userGated.length} user-gated)`);
+    console.log(`Gate (0 fails and ≥ ${READINESS_GATE_THRESHOLD_PCT}%): ${gatePass ? "PASS" : "FAIL"}   (${passed.length} pass · ${failed.length} fail · ${userGated.length} user-gated)`);
     if (userGated.length) {
       console.log(`\nUser-gated (not counted — a human must confirm):`);
       for (const ch of userGated) console.log(`  ◐ [${ch.criterion}] ${ch.label}`);
@@ -618,7 +696,10 @@ async function main() {
   }
 
   if (!gatePass) {
-    console.error(`\nREADINESS GATE FAILED — automatable completion ${automatablePct}% is below the ${GATE_THRESHOLD_PCT}% floor.`);
+    console.error(
+      `\nREADINESS GATE FAILED — requires zero failed automatable checks and at least ` +
+      `${READINESS_GATE_THRESHOLD_PCT}% weighted completion; observed ${failed.length} failed and ${automatablePct}%.`,
+    );
     process.exit(1);
   }
 }

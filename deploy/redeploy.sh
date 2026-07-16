@@ -25,7 +25,9 @@
 #     ssh -i <key.pem> <deployer>@<ecs-host>
 #     cd <autopilot-checkout>
 #     git fetch origin main && git switch main && git merge --ff-only origin/main
-#     EXPECTED_RELEASE=<exact-40-character-final-main-sha> bash deploy/redeploy.sh
+#     sudo bash deploy/bootstrap-buildx.sh
+#     sudo DOCKER_CONFIG="$PWD/.artifacts/docker-config" \
+#       EXPECTED_RELEASE=<exact-40-character-final-main-sha> bash deploy/redeploy.sh
 #
 # Production requires a .env with DASHSCOPE_API_KEY and REVIEWER_TOKEN next to
 # the repository. Missing real-Qwen or reviewer credentials fail closed.
@@ -657,6 +659,55 @@ APP_DIR="$(pwd -P)" || die "could not resolve the physical app directory."
   || die "production release requires a normal Git checkout with a real in-project .git directory."
 ok "app dir: $APP_DIR"
 
+# The release build is bound to the exact, hash-pinned Buildx artifact installed
+# by deploy/bootstrap-buildx.sh. A same-version global/spoofed plugin is not an
+# acceptable substitute: both its canonical project location and bytes are part
+# of the reviewed release input.
+BUILDX_SHA256='d41ece72044243b4f58b343441ae37446d9c29a7d6b5e11c61847bbcf8f7dfda'
+BUILDX_ARTIFACT_ROOT="$APP_DIR/.artifacts"
+EXPECTED_DOCKER_CONFIG="$BUILDX_ARTIFACT_ROOT/docker-config"
+BUILDX_PLUGIN_DIR="$EXPECTED_DOCKER_CONFIG/cli-plugins"
+BUILDX_PLUGIN="$BUILDX_PLUGIN_DIR/docker-buildx"
+[ -n "${DOCKER_CONFIG:-}" ] \
+  || die "DOCKER_CONFIG must select the project-contained hash-pinned Buildx installation."
+[ "$(realpath -m -- "$DOCKER_CONFIG")" = "$EXPECTED_DOCKER_CONFIG" ] \
+  || die "DOCKER_CONFIG must equal the canonical project-contained .artifacts/docker-config path."
+[ -d "$BUILDX_ARTIFACT_ROOT" ] && [ ! -L "$BUILDX_ARTIFACT_ROOT" ] \
+  || die "Buildx artifact root must be a non-symlink directory."
+IFS=: read -r buildx_root_uid buildx_root_gid buildx_root_mode \
+  <<<"$(stat -Lc '%u:%g:%a' "$BUILDX_ARTIFACT_ROOT" 2>/dev/null)"
+[ "$buildx_root_uid:$buildx_root_gid" = 0:0 ] \
+  && [[ "$buildx_root_mode" =~ ^[0-7]{3,4}$ ]] \
+  && (( (8#$buildx_root_mode & 0022) == 0 )) \
+  || die "Buildx artifact root must be root-owned and not group/world writable."
+attest_exact_buildx_artifact() {
+  local buildx_directory
+  [ -z "${DOCKER_CLI_PLUGIN_EXTRA_DIRS:-}" ] \
+    && [ ! -e "$EXPECTED_DOCKER_CONFIG/config.json" ] && [ ! -L "$EXPECTED_DOCKER_CONFIG/config.json" ] \
+    && [ "$(find "$EXPECTED_DOCKER_CONFIG" -mindepth 1 -maxdepth 1 -printf '%f\n')" = cli-plugins ] \
+    && [ "$(find "$BUILDX_PLUGIN_DIR" -mindepth 1 -maxdepth 1 -printf '%f\n')" = docker-buildx ] \
+    || return 1
+  for buildx_directory in "$EXPECTED_DOCKER_CONFIG" "$BUILDX_PLUGIN_DIR"; do
+    [ -d "$buildx_directory" ] && [ ! -L "$buildx_directory" ] \
+      && [ "$(realpath -- "$buildx_directory")" = "$buildx_directory" ] \
+      && [ "$(stat -Lc '%u:%g:%a' "$buildx_directory" 2>/dev/null)" = 0:0:700 ] \
+      || return 1
+  done
+  [ -f "$BUILDX_PLUGIN" ] && [ ! -L "$BUILDX_PLUGIN" ] \
+    && [ "$(realpath -- "$BUILDX_PLUGIN")" = "$BUILDX_PLUGIN" ] \
+    && [ "$(stat -Lc '%u:%g:%a:%h' "$BUILDX_PLUGIN" 2>/dev/null)" = 0:0:755:1 ] \
+    && [ "$(sha256sum "$BUILDX_PLUGIN" | awk '{print $1}')" = "$BUILDX_SHA256" ]
+}
+attest_exact_buildx_artifact \
+  || die "Buildx artifact/layout failed canonical path, closed-config, ownership, mode, link-count, or SHA-256 attestation."
+BUILDX_VERSION_OUTPUT="$(docker buildx version 2>/dev/null)" \
+  || die "Docker Buildx v0.35.0 is required; run deploy/bootstrap-buildx.sh and pass its project-contained DOCKER_CONFIG."
+[[ "$BUILDX_VERSION_OUTPUT" =~ ^github\.com/docker/buildx[[:space:]]+v0\.35\.0([[:space:]]|$) ]] \
+  || die "Docker Buildx must be exactly v0.35.0; run deploy/bootstrap-buildx.sh and pass its project-contained DOCKER_CONFIG."
+attest_exact_buildx_artifact \
+  || die "Buildx artifact/layout changed while the exact version was being attested."
+ok "Docker Buildx v0.35.0 exact project-contained artifact attested"
+
 [[ "${EXPECTED_RELEASE:-}" =~ ^[0-9a-f]{40}$ ]] \
   || die "EXPECTED_RELEASE must be the exact 40-character lowercase final-main Git commit."
 [[ "$CONTAINER" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] \
@@ -961,7 +1012,9 @@ IID_FILE="$(mktemp "$APP_DIR/.git/autopilot-image-id.XXXXXX")" \
   || die "could not create a private image-ID capture file."
 chmod 0600 "$IID_FILE" || die "could not restrict the image-ID capture file."
 trap cleanup_private_artifacts EXIT
-DOCKER_BUILDKIT=1 docker_job build \
+attest_exact_buildx_artifact \
+  || die "Buildx artifact/layout changed before the immutable image build."
+DOCKER_BUILDKIT=1 docker_job buildx build \
   --iidfile "$IID_FILE" \
   --label "org.opencontainers.image.revision=$EXPECTED_RELEASE" \
   -t "$IMAGE" "$BUILD_CONTEXT" \
@@ -1077,14 +1130,21 @@ log "Non-published staging candidate: immutable contract + bounded read-only pro
 STAGING_CONTAINER_ID="$(start_runtime_container staging)" \
   || die "staging candidate creation failed with no reconcilable immutable identity."
 docker_control network connect --gw-priority 1 "$EDGE_NETWORK" "$STAGING_CONTAINER_ID" >/dev/null 2>&1 || true
-if ! verify_runtime_contract "$STAGING_CONTAINER_ID" staging no \
-  || ! wait_for_probe "$STAGING_CONTAINER_ID" /health ok false 8 20 \
-  || ! container_probe "$STAGING_CONTAINER_ID" /ready ready false 20 \
-  || ! container_probe "$STAGING_CONTAINER_ID" /ready/deep ready-deep true 90; then
+STAGING_FAILURE=""
+if ! verify_runtime_contract "$STAGING_CONTAINER_ID" staging no; then
+  STAGING_FAILURE="runtime-contract"
+elif ! wait_for_probe "$STAGING_CONTAINER_ID" /health ok false 8 20; then
+  STAGING_FAILURE="health"
+elif ! container_probe "$STAGING_CONTAINER_ID" /ready ready false 20; then
+  STAGING_FAILURE="database-readiness"
+elif ! container_probe "$STAGING_CONTAINER_ID" /ready/deep ready-deep true 90; then
+  STAGING_FAILURE="qwen-deep-readiness"
+fi
+if [ -n "$STAGING_FAILURE" ]; then
   remove_container_reconciled "$STAGING_CONTAINER_ID" "$STAGING_CONTAINER" \
     || die "staging verification failed and its container could not be reconciled."
   STAGING_CONTAINER_ID=""
-  die "non-published staging contract/readiness failed; old release remained serving."
+  die "non-published staging contract/readiness failed (stage=$STAGING_FAILURE); old release remained serving."
 fi
 remove_container_reconciled "$STAGING_CONTAINER_ID" "$STAGING_CONTAINER" \
   || die "passed staging container could not be removed before final cutover."

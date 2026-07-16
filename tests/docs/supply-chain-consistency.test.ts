@@ -757,7 +757,7 @@ test("SUPPLY 1 — every workflow Action is an approved full-SHA release pin", (
 
 test("SUPPLY 1B — ancestry-dependent test jobs always fetch complete Git history", () => {
   const workflow = parseWorkflow("ci.yml");
-  for (const jobId of ["build-test", "coverage"]) {
+  for (const jobId of ["build-test", "docs-consistency", "readiness", "coverage"]) {
     const label = `ci.yml.jobs.${jobId}`;
     const checkout = stepByUses(workflowJob(workflow, jobId), CHECKOUT, label);
     exactKeys(checkout, ["uses", "with"], `${label}.checkout`);
@@ -766,6 +766,32 @@ test("SUPPLY 1B — ancestry-dependent test jobs always fetch complete Git histo
       { "fetch-depth": 0 },
       `${label} must retain full history for evidence-ledger ancestry verification`,
     );
+  }
+});
+
+test("SUPPLY 1C — impact replay inputs are LF-pinned across Windows and Linux", () => {
+  const attributes = new Set(
+    readText(".gitattributes")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith("#")),
+  );
+  for (const rule of [
+    ".gitattributes text eol=lf",
+    "src/** text eol=lf",
+    "eval/lib.ts text eol=lf",
+    "eval/dataset.ts text eol=lf",
+    "eval/artifact-safety.ts text eol=lf",
+    "eval/promotion-environment.ts text eol=lf",
+    "eval/protocol-provenance.ts text eol=lf",
+    "impact/*.mjs text eol=lf",
+    "impact/*.json text eol=lf",
+    "impact/*.md text eol=lf",
+    "package.json text eol=lf",
+    "package-lock.json text eol=lf",
+    "tsconfig.json text eol=lf",
+  ]) {
+    assert.ok(attributes.has(rule), `.gitattributes must retain ${rule}`);
   }
 });
 
@@ -1156,8 +1182,8 @@ test("SUPPLY 3 — the image inventory and scanner/database inputs are byte-pinn
   assert.match(redeploy, /ordinary redeploy requires byte-identical schema/);
   assert.match(
     redeploy,
-    /^DOCKER_BUILDKIT=1 docker_job build \\$/m,
-    "the authoritative redeploy path must enable the reviewed BuildKit Dockerfile features under its bounded job wrapper",
+    /^DOCKER_BUILDKIT=1 docker_job buildx build \\$/m,
+    "the authoritative redeploy path must invoke the attested Buildx plugin under its bounded job wrapper",
   );
   assert.match(redeploy, /^  --iidfile "\$IID_FILE" \\$/m);
   assert.match(redeploy, /^  --label "org\.opencontainers\.image\.revision=\$EXPECTED_RELEASE" \\$/m);

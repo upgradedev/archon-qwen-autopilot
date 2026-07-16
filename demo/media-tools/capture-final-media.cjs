@@ -5,12 +5,15 @@
  * This tool is intentionally fail-closed and stateful. It exercises the real public
  * deployment with a reviewer credential, but every created invoice has a unique
  * `SOTA-CAP-*` vendor prefix and every still-PENDING item is rejected in `finally`.
+ * Cleanup is a hard release gate: an authenticated, fully paginated post-cleanup
+ * query must prove zero run-prefix residue before any canonical file is replaced.
  * The reviewer token is read only into memory; it is never logged, serialized, put
  * in a URL, browser trace, screenshot, or tracked file.
  *
  * Raw candidates stay below ignored `demo/.private-captures/`. The five renderer
- * inputs and YouTube thumbnail are atomically promoted to `demo/final-media/` only
- * after every source, model, readiness, CI, workflow and pixel-sanitization gate.
+ * inputs, gallery variants, and the tracked review manifest are transactionally
+ * promoted only after every source, model, readiness, CI, workflow, cleanup, and
+ * pixel-sanitization gate. A failed promotion restores the previous reviewed set.
  */
 'use strict';
 
@@ -25,11 +28,18 @@ const ROOT = path.resolve(__dirname, '..', '..');
 const PRIVATE_ROOT = path.join(ROOT, 'demo', '.private-captures');
 const RELEASE_DIR = path.join(PRIVATE_ROOT, 'release');
 const FINAL_DIR = path.join(ROOT, 'demo', 'final-media');
+const GALLERY_DIR = path.join(ROOT, 'demo', 'gallery');
+const REVIEW_MANIFEST_PATH = path.join(GALLERY_DIR, 'CAPTURE_REVIEW.json');
 const FIXED_REPOSITORY = 'upgradedev/archon-qwen-autopilot';
 const FIXED_PROJECT = 'archon-qwen-autopilot';
 const FIXED_REGION = 'ap-southeast-1';
 const DEFAULT_URL = 'https://autopilot.43.106.13.19.sslip.io';
-const DEFAULT_WORKFLOWS = ['CI', 'CodeQL', 'Production Image Supply Chain'];
+const CANONICAL_RELEASE_WORKFLOWS = Object.freeze([
+  Object.freeze({ name: 'CI', path: '.github/workflows/ci.yml' }),
+  Object.freeze({ name: 'CodeQL', path: '.github/workflows/codeql.yml' }),
+  Object.freeze({ name: 'Production Image Supply Chain', path: '.github/workflows/supply-chain.yml' }),
+]);
+const DEFAULT_WORKFLOWS = Object.freeze(CANONICAL_RELEASE_WORKFLOWS.map(({ name }) => name));
 const FINAL_NAMES = Object.freeze([
   'autopilot-live-intake-pending.png',
   'autopilot-human-amend-diff.png',
@@ -45,6 +55,19 @@ const GALLERY_MAP = Object.freeze({
   'autopilot-04-security-pending.png': 'autopilot-security-pending.png',
   'autopilot-05-alibaba-qwen-proof.png': 'autopilot-alibaba-proof.png',
 });
+const FINAL_DIMENSIONS = Object.freeze({
+  'autopilot-live-intake-pending.png': [1920, 1080],
+  'autopilot-human-amend-diff.png': [1920, 1080],
+  'autopilot-correction-learning.png': [1920, 1080],
+  'autopilot-security-pending.png': [1920, 1080],
+  'autopilot-alibaba-proof.png': [1920, 1080],
+  'autopilot-youtube-thumbnail.png': [1280, 720],
+});
+const CANONICAL_OUTPUT_PATHS = new Set([
+  ...FINAL_NAMES.map((name) => path.join(FINAL_DIR, name)),
+  ...Object.keys(GALLERY_MAP).map((name) => path.join(GALLERY_DIR, name)),
+  REVIEW_MANIFEST_PATH,
+]);
 const REQUIRED_TRACE_TOOLS = Object.freeze([
   'recall_vendor_history',
   'validate_invoice',
@@ -96,15 +119,106 @@ function argumentValue(name) {
   return value;
 }
 
+function credentialFileFingerprint(stats) {
+  return [
+    stats.dev,
+    stats.ino,
+    stats.nlink,
+    stats.size,
+    stats.mode,
+    stats.uid,
+    stats.gid,
+    stats.mtimeNs,
+    stats.ctimeNs,
+  ];
+}
+
 function tokenFromExplicitCredentialFile(rawPath) {
   if (!rawPath) return '';
-  const file = insideRepo(rawPath, '--reviewer-credential-file', { mustExist: true });
-  const ignored = spawnSync('git', ['check-ignore', '-q', '--', file], { cwd: ROOT, stdio: 'ignore' });
-  assert.equal(ignored.status, 0, 'reviewer credential file must be gitignored');
-  let payload;
-  try { payload = JSON.parse(fs.readFileSync(file, 'utf8')); }
-  catch (error) { fail(`reviewer credential file is not valid JSON: ${error.message}`); }
-  return typeof payload.token === 'string' ? payload.token.trim() : '';
+  const file = insideRepo(rawPath, '--reviewer-credential-file');
+
+  // Open first: every security decision and the eventual read are bound to this
+  // one descriptor. POSIX also rejects a final-component symlink atomically.
+  // Windows does not expose O_NOFOLLOW, so the post-open lstat/fstat identity
+  // comparison below is its fail-closed symlink/path-swap control.
+  const noFollow = Number.isInteger(fs.constants.O_NOFOLLOW) ? fs.constants.O_NOFOLLOW : 0;
+  // A hostile FIFO must not block the process before fstat can reject it.
+  // O_NONBLOCK has no effect on regular-file reads and is available on POSIX;
+  // Windows exposes neither this FIFO primitive nor the flag.
+  const nonBlock = Number.isInteger(fs.constants.O_NONBLOCK) ? fs.constants.O_NONBLOCK : 0;
+  const descriptor = fs.openSync(file, fs.constants.O_RDONLY | noFollow | nonBlock);
+  try {
+    const opened = fs.fstatSync(descriptor, { bigint: true });
+    assert.equal(opened.isFile(), true, 'reviewer credential descriptor must reference a regular file');
+    assert.equal(opened.nlink, 1n, 'reviewer credential descriptor must have exactly one hard link');
+    assert.ok(opened.size > 0n && opened.size <= 16_384n, 'reviewer credential file must be between 1 byte and 16 KiB');
+    if (typeof process.getuid === 'function') {
+      assert.equal(opened.uid, BigInt(process.getuid()), 'reviewer credential file must be owned by the current user');
+      assert.equal(opened.mode & 0o077n, 0n, 'reviewer credential file must not be accessible by group or other users');
+    }
+
+    const canonical = fs.realpathSync.native(file);
+    insideRepo(canonical, '--reviewer-credential-file canonical target', { mustExist: true });
+    assert.equal(path.resolve(canonical), path.resolve(file), 'reviewer credential file path must be canonical');
+    const current = fs.lstatSync(file, { bigint: true });
+    assert.equal(current.isSymbolicLink(), false, 'reviewer credential file must remain non-symlinked');
+    assert.equal(current.isFile(), true, 'reviewer credential path must remain a regular file');
+    assert.deepEqual(
+      credentialFileFingerprint(current),
+      credentialFileFingerprint(opened),
+      'reviewer credential pathname or contents changed after open',
+    );
+    const ignored = spawnSync('git', ['check-ignore', '-q', '--', file], { cwd: ROOT, stdio: 'ignore' });
+    assert.equal(ignored.status, 0, 'reviewer credential file must be gitignored');
+
+    const text = fs.readFileSync(descriptor, 'utf8');
+    const afterRead = fs.fstatSync(descriptor, { bigint: true });
+    assert.deepEqual(
+      credentialFileFingerprint(afterRead),
+      credentialFileFingerprint(opened),
+      'reviewer credential file changed after its descriptor was opened',
+    );
+    assert.equal(afterRead.nlink, 1n, 'reviewer credential file gained a hard link while it was being read');
+    assert.ok(afterRead.size > 0n && afterRead.size <= 16_384n, 'reviewer credential file left the 1 byte to 16 KiB bound while it was being read');
+    let payload;
+    try { payload = JSON.parse(text); }
+    // V8 parse errors can quote source bytes. Never append parser diagnostics:
+    // malformed credential material must not reach CI or terminal output.
+    catch { fail('reviewer credential file is not valid JSON'); }
+    return typeof payload.token === 'string' ? payload.token.trim() : '';
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+function trustedAutopilotOrigin(rawValue) {
+  const candidate = String(rawValue || DEFAULT_URL).replace(/\/$/, '');
+  const parsed = new URL(candidate);
+  assert.equal(parsed.protocol, 'https:', 'AUTOPILOT_URL must use HTTPS');
+  assert.equal(parsed.username, '', 'AUTOPILOT_URL must not contain credentials');
+  assert.equal(parsed.password, '', 'AUTOPILOT_URL must not contain credentials');
+  assert.equal(parsed.pathname, '/', 'AUTOPILOT_URL must be an origin without a path');
+  assert.equal(parsed.search, '', 'AUTOPILOT_URL must not contain a query string');
+  assert.equal(parsed.hash, '', 'AUTOPILOT_URL must not contain a fragment');
+  assert.equal(parsed.origin, DEFAULT_URL, `AUTOPILOT_URL must equal the pinned reviewer-token origin ${DEFAULT_URL}`);
+  return DEFAULT_URL;
+}
+
+async function installReviewerSessionOnPinnedTopFrame(page, baseUrl, reviewerToken) {
+  await page.goto(`${baseUrl}/`, { waitUntil: 'networkidle', timeout: 90_000 });
+  assert.equal(new URL(page.url()).origin, baseUrl, 'initial application navigation left the pinned reviewer-token origin');
+  // Deliberately use a top-frame evaluate after the final navigation instead of
+  // addInitScript. Init scripts also run in child frames and on redirected
+  // origins, which could place the reviewer bearer in an untrusted frame's own
+  // sessionStorage before its scripts execute.
+  await page.evaluate(({ expectedOrigin, token }) => {
+    if (location.origin !== expectedOrigin || window.top !== window) {
+      throw new Error('reviewer session may be installed only in the pinned top frame');
+    }
+    sessionStorage.setItem('archonReviewerToken', token);
+  }, { expectedOrigin: baseUrl, token: reviewerToken });
+  await page.reload({ waitUntil: 'networkidle', timeout: 90_000 });
+  assert.equal(new URL(page.url()).origin, baseUrl, 'authenticated application reload left the pinned reviewer-token origin');
 }
 
 function sha256(file) {
@@ -138,6 +252,48 @@ function exactSha(value, label) {
   return sha;
 }
 
+function canonicalReleaseWorkflows(rawValue = process.env.REQUIRED_RELEASE_WORKFLOWS) {
+  const configured = String(rawValue || '').trim()
+    ? String(rawValue).split(',').map((name) => name.trim()).filter(Boolean)
+    : [...DEFAULT_WORKFLOWS];
+  const configuredSet = new Set(configured);
+  const exactCanonicalSet = configured.length === DEFAULT_WORKFLOWS.length
+    && configuredSet.size === DEFAULT_WORKFLOWS.length
+    && DEFAULT_WORKFLOWS.every((name) => configuredSet.has(name));
+  assert.equal(
+    exactCanonicalSet,
+    true,
+    `REQUIRED_RELEASE_WORKFLOWS must contain exactly: ${DEFAULT_WORKFLOWS.join(', ')}`,
+  );
+  return [...DEFAULT_WORKFLOWS];
+}
+
+function acceptedCanonicalWorkflowRun(runs, workflow, sha) {
+  const candidates = runs.filter((run) => run.name === workflow.name
+    && run.path === workflow.path
+    && run.head_sha === sha);
+  for (const candidate of candidates) {
+    assert.ok(
+      Number.isSafeInteger(Number(candidate.run_number)) && Number(candidate.run_number) > 0,
+      `canonical workflow run_number is invalid: ${workflow.name}`,
+    );
+    assert.ok(
+      Number.isSafeInteger(Number(candidate.run_attempt)) && Number(candidate.run_attempt) > 0,
+      `canonical workflow run_attempt is invalid: ${workflow.name}`,
+    );
+  }
+  candidates.sort((a, b) => Number(b.run_number) - Number(a.run_number)
+    || Number(b.run_attempt) - Number(a.run_attempt));
+  const latest = candidates[0];
+  assert.ok(
+    latest,
+    `required GitHub workflow has no exact-SHA run at canonical path: ${workflow.name} (${workflow.path})`,
+  );
+  assert.equal(latest.status, 'completed', `latest exact-SHA workflow run is not complete: ${workflow.name}`);
+  assert.equal(latest.conclusion, 'success', `latest exact-SHA workflow run is not successful: ${workflow.name}`);
+  return latest;
+}
+
 function secretSafeText(value, label, reviewerToken) {
   const text = String(value || '');
   const forbidden = [
@@ -151,7 +307,14 @@ function secretSafeText(value, label, reviewerToken) {
   return text;
 }
 
-function parseReleaseEvidence({ statusPath, outputPath, expectedShaPath, deployedStatePath, reviewerToken }) {
+function parseReleaseEvidence({
+  statusPath,
+  outputPath,
+  expectedShaPath,
+  deployedStatePath,
+  reviewerToken,
+  requirePublicHead = true,
+}) {
   for (const [label, file] of [
     ['release status', statusPath],
     ['release output', outputPath],
@@ -198,6 +361,14 @@ function parseReleaseEvidence({ statusPath, outputPath, expectedShaPath, deploye
   execFileSync('git', ['merge-base', '--is-ancestor', expectedSha, head], {
     cwd: ROOT, stdio: ['ignore', 'ignore', 'pipe'],
   });
+  if (requirePublicHead) {
+    assert.equal(git('status', '--porcelain', '--untracked-files=no'), '', 'capture must start from a clean tracked worktree');
+    execFileSync('git', ['fetch', '--quiet', 'origin', 'main'], {
+      cwd: ROOT, stdio: ['ignore', 'ignore', 'pipe'],
+    });
+    const remoteMain = exactSha(git('rev-parse', 'origin/main'), 'origin/main');
+    assert.equal(head, remoteMain, 'submission HEAD at capture must equal public origin/main');
+  }
   return {
     expectedSha,
     head,
@@ -240,15 +411,20 @@ async function githubReleaseGate(sha) {
     { headers, timeoutMs: 60_000 },
   );
   const runs = Array.isArray(runsResult.body.workflow_runs) ? runsResult.body.workflow_runs : [];
-  const required = String(process.env.REQUIRED_RELEASE_WORKFLOWS || DEFAULT_WORKFLOWS.join(','))
-    .split(',').map((name) => name.trim()).filter(Boolean);
+  const required = canonicalReleaseWorkflows();
   const accepted = [];
   for (const name of required) {
-    const candidates = runs.filter((run) => run.name === name && run.head_sha === sha)
-      .sort((a, b) => Number(b.run_attempt || 0) - Number(a.run_attempt || 0));
-    const successful = candidates.find((run) => run.status === 'completed' && run.conclusion === 'success');
-    assert.ok(successful, `required GitHub workflow is not green for exact SHA: ${name}`);
-    accepted.push({ name, runNumber: successful.run_number, url: successful.html_url });
+    const workflow = CANONICAL_RELEASE_WORKFLOWS.find((candidate) => candidate.name === name);
+    assert.ok(workflow, `canonical workflow metadata is missing: ${name}`);
+    const latest = acceptedCanonicalWorkflowRun(runs, workflow, sha);
+    accepted.push({
+      name,
+      path: workflow.path,
+      workflowBoundSha: sha,
+      runNumber: latest.run_number,
+      runAttempt: latest.run_attempt,
+      url: latest.html_url,
+    });
   }
   return { commitUrl: commit.body.html_url, workflows: accepted };
 }
@@ -449,7 +625,7 @@ async function renderProof(context, file, evidence) {
     .grid{display:grid;grid-template-columns:1fr 1fr;gap:22px}.card{border:1px solid #2b3644;border-radius:18px;background:rgba(17,25,37,.96);padding:25px 27px;min-height:225px}.card h2{margin:0 0 17px;font-size:23px;color:#dce7f2}.label{color:#8392a5;font:700 13px ui-monospace,monospace;letter-spacing:.1em;text-transform:uppercase;margin-top:13px}.value{font-size:20px;margin-top:6px}.value code,.sha{font:700 17px ui-monospace,monospace;color:#a7f3d0;word-break:break-all}.ci-row{display:grid;grid-template-columns:26px 1fr 125px 78px;gap:9px;align-items:center;border-top:1px solid #263140;padding:11px 0;font-size:16px}.ci-row:first-of-type{border-top:0}.ok{color:#34d399;font-size:21px}.ci-row code{color:#a7f3d0}.checks{display:grid;grid-template-columns:1fr 1fr;gap:11px}.check{background:#0b121c;border:1px solid #263140;border-radius:11px;padding:12px 14px}.check b{display:block;color:#6ee7b7;font-size:15px}.check span{display:block;color:#aab7c5;font:14px ui-monospace,monospace;margin-top:5px}.foot{margin-top:20px;display:flex;justify-content:space-between;color:#7f8d9c;font:13px ui-monospace,monospace}.redacted{color:#fbbf24}
   </style></head><body><main id="proof"><header class="head"><div><div class="eyebrow">Release provenance · exercised runtime · sanitized</div><h1 class="title">Alibaba Cloud + Qwen — exact release proof</h1></div><div class="badge">ALL GATES VERIFIED</div></header>
   <section class="grid">
-    <article class="card"><h2>1 · Exact source and deployment identity</h2><div class="label">Deploy-controller application SHA</div><div class="value sha">${evidence.deployedSha}</div><div class="label">Later docs/media submission HEAD</div><div class="value sha">${evidence.head}</div><div class="label">Binding</div><div class="value">Exact checkout + exact deploy + terminal success markers; evidence hashes retained privately.</div></article>
+    <article class="card"><h2>1 · Exact source and deployment identity</h2><div class="label">Deploy-controller application SHA</div><div class="value sha">${evidence.deployedSha}</div><div class="label">Public source HEAD at capture</div><div class="value sha">${evidence.head}</div><div class="label">Binding</div><div class="value">Exact checkout + exact deploy + terminal success markers; evidence hashes retained privately.</div></article>
     <article class="card"><h2>2 · Immutable GitHub gates</h2>${rows}</article>
     <article class="card"><h2>3 · Alibaba ECS context</h2><div class="label">Provider / region / service</div><div class="value">Alibaba Cloud ECS · ${FIXED_REGION} · Archon Autopilot</div><div class="label">Public application edge</div><div class="value">HTTPS reverse proxy → loopback-only backend</div><div class="label">Sensitive cloud identity</div><div class="value redacted">Instance, resource and administrative principal identifiers intentionally redacted</div></article>
     <article class="card"><h2>4 · Fresh live runtime canaries</h2><div class="checks">
@@ -477,26 +653,57 @@ async function renderThumbnail(context, pendingFile, file, decisionModel) {
   await page.close();
 }
 
-async function rejectCapturePending(baseUrl, reviewerToken, vendorPrefixes) {
-  try {
-    const body = (await fetchJson(`${baseUrl}/pending?limit=500&offset=0`, { headers: bearer(reviewerToken) })).body;
-    const prefixes = vendorPrefixes.filter(Boolean);
-    const captured = (body.pending || []).filter((item) => {
+function normalizedCapturePrefixes(vendorPrefixes) {
+  const prefixes = [...new Set(vendorPrefixes.map((value) => String(value || '').trim()).filter(Boolean))];
+  assert.ok(prefixes.length > 0, 'capture cleanup requires at least one exact run prefix');
+  return prefixes;
+}
+
+async function matchingCapturePending(baseUrl, reviewerToken, vendorPrefixes, requester = fetchJson) {
+  const prefixes = normalizedCapturePrefixes(vendorPrefixes);
+  const matches = [];
+  const limit = 500;
+  let offset = 0;
+  let pages = 0;
+  while (true) {
+    pages += 1;
+    assert.ok(pages <= 2_001, 'capture cleanup pagination exceeded the bounded queue range');
+    const response = await requester(
+      `${baseUrl}/pending?limit=${limit}&offset=${offset}`,
+      { headers: bearer(reviewerToken) },
+    );
+    const pending = Array.isArray(response.body?.pending) ? response.body.pending : [];
+    for (const item of pending) {
       const vendor = String(item.invoice?.vendor || '');
-      return prefixes.some((prefix) => vendor.startsWith(prefix));
-    });
-    for (const item of captured) {
-      await fetchJson(`${baseUrl}/reject/${encodeURIComponent(item.id)}`, {
-        method: 'POST',
-        headers: { ...bearer(reviewerToken), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason: 'Final-media synthetic canary cleanup; nothing executed.' }),
-      });
+      if (prefixes.some((prefix) => vendor.startsWith(prefix))) matches.push(item);
     }
-    return captured.length;
-  } catch (error) {
-    process.stderr.write(`[cleanup] capture-only PENDING cleanup failed: ${error.message}\n`);
-    return -1;
+    const nextOffset = response.body?.page?.nextOffset;
+    if (nextOffset == null) break;
+    assert.ok(Number.isInteger(nextOffset) && nextOffset > offset, 'capture cleanup queue returned an invalid nextOffset');
+    offset = nextOffset;
   }
+  return { matches, pages };
+}
+
+async function cleanupAndVerifyCapturePending(baseUrl, reviewerToken, vendorPrefixes, requester = fetchJson) {
+  const before = await matchingCapturePending(baseUrl, reviewerToken, vendorPrefixes, requester);
+  for (const item of before.matches) {
+    assert.ok(typeof item.id === 'string' && item.id.length > 0, 'capture cleanup found a PENDING item without an id');
+    await requester(`${baseUrl}/reject/${encodeURIComponent(item.id)}`, {
+      method: 'POST',
+      headers: { ...bearer(reviewerToken), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'Final-media synthetic canary cleanup; nothing executed.' }),
+    });
+  }
+  const after = await matchingCapturePending(baseUrl, reviewerToken, vendorPrefixes, requester);
+  assert.equal(after.matches.length, 0, 'authenticated post-cleanup query found run-prefix PENDING residue');
+  return {
+    rejected: before.matches.length,
+    remaining: 0,
+    pendingCleanupZero: true,
+    pagesScannedBefore: before.pages,
+    pagesScannedAfter: after.pages,
+  };
 }
 
 function sanitizeCandidates(files) {
@@ -517,29 +724,203 @@ function buildGalleryVariants(finalCandidates, galleryCandidates) {
   if (result.status !== 0) fail(`gallery variant renderer failed: ${String(result.stderr || result.stdout).trim()}`);
 }
 
-function promote(filesByName) {
-  fs.mkdirSync(FINAL_DIR, { recursive: true });
-  for (const name of FINAL_NAMES) {
-    const source = filesByName[name];
-    assert.ok(source && fs.existsSync(source), `promotion candidate missing: ${name}`);
-    const destination = insideRepo(path.join(FINAL_DIR, name), `final ${name}`);
-    const temporary = `${destination}.promoting`;
-    fs.copyFileSync(source, temporary);
-    fs.renameSync(temporary, destination);
+function writeJsonAtomic(file, value) {
+  const temporary = `${file}.next`;
+  fs.writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+  fs.renameSync(temporary, file);
+}
+
+function rollbackPromotionTransaction(entries, transactionDir) {
+  const errors = [];
+  for (const entry of [...entries].reverse()) {
+    try {
+      if (entry.hadOriginal) {
+        if (fs.existsSync(entry.backup)) {
+          fs.rmSync(entry.destination, { force: true });
+          fs.renameSync(entry.backup, entry.destination);
+        } else if (!fs.existsSync(entry.destination)) {
+          throw new Error(`missing canonical file and rollback backup for ${path.relative(ROOT, entry.destination)}`);
+        }
+      } else {
+        fs.rmSync(entry.destination, { force: true });
+      }
+    } catch (error) {
+      errors.push(error.message);
+    }
+  }
+  if (errors.length === 0) fs.rmSync(transactionDir, { recursive: true, force: true });
+  if (errors.length > 0) fail(`promotion rollback requires operator recovery: ${errors.join('; ')}`);
+}
+
+function recoverPromotionTransaction(transactionDir, allowedDestinations = CANONICAL_OUTPUT_PATHS) {
+  const journalPath = path.join(transactionDir, 'transaction.json');
+  if (!fs.existsSync(journalPath)) return;
+  const journal = JSON.parse(fs.readFileSync(journalPath, 'utf8'));
+  const entries = (journal.entries || []).map((entry) => {
+    assert.equal(entry.backup, path.basename(entry.backup), 'recovery backup must be one transaction-local filename');
+    assert.match(entry.backup, /^backup-\d{2,}$/, 'recovery backup filename is invalid');
+    assert.equal(typeof entry.hadOriginal, 'boolean', 'recovery hadOriginal must be boolean');
+    const destination = insideRepo(path.join(ROOT, entry.destination), 'recovery destination');
+    if (allowedDestinations) assert.ok(allowedDestinations.has(destination), `recovery destination is not canonical: ${entry.destination}`);
+    return {
+      ...entry,
+      destination,
+      backup: insideRepo(path.join(transactionDir, entry.backup), 'recovery backup'),
+    };
+  });
+  if (journal.state === 'committed') {
+    try {
+      fs.rmSync(transactionDir, { recursive: true, force: true });
+    } catch (error) {
+      process.stderr.write(`[promote] prior committed transaction scratch cleanup deferred: ${error.message}\n`);
+    }
+    return;
+  }
+  if (journal.state !== 'committing') fail(`unknown promotion transaction state: ${journal.state}`);
+  rollbackPromotionTransaction(entries, transactionDir);
+}
+
+function recoverInterruptedPromotions() {
+  if (!fs.existsSync(PRIVATE_ROOT)) return;
+  for (const entry of fs.readdirSync(PRIVATE_ROOT, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name === 'release') continue;
+    const transactionDir = path.join(PRIVATE_ROOT, entry.name, 'promotion-transaction');
+    if (fs.existsSync(path.join(transactionDir, 'transaction.json'))) recoverPromotionTransaction(transactionDir);
   }
 }
 
-function promoteGallery(filesByName) {
-  const galleryDir = insideRepo(path.join(ROOT, 'demo', 'gallery'), 'gallery output directory');
-  fs.mkdirSync(galleryDir, { recursive: true });
-  for (const name of Object.keys(GALLERY_MAP)) {
-    const source = filesByName[name];
-    assert.ok(source && fs.existsSync(source), `gallery promotion candidate missing: ${name}`);
-    const destination = insideRepo(path.join(galleryDir, name), `gallery ${name}`);
-    const temporary = `${destination}.promoting`;
-    fs.copyFileSync(source, temporary);
-    fs.renameSync(temporary, destination);
+function transactionalPromote(rawEntries, transactionDir, { failAfterInstall = -1 } = {}) {
+  assert.ok(rawEntries.length > 0, 'promotion transaction has no entries');
+  fs.rmSync(transactionDir, { recursive: true, force: true });
+  fs.mkdirSync(transactionDir, { recursive: true });
+  const seen = new Set();
+  const entries = rawEntries.map((raw, index) => {
+    const source = insideRepo(raw.source, 'promotion source', { mustExist: true });
+    const destination = insideRepo(raw.destination, 'promotion destination');
+    assert.ok(!seen.has(destination), `duplicate promotion destination: ${path.relative(ROOT, destination)}`);
+    seen.add(destination);
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    const staged = path.join(transactionDir, `stage-${String(index).padStart(2, '0')}`);
+    const backup = path.join(transactionDir, `backup-${String(index).padStart(2, '0')}`);
+    fs.copyFileSync(source, staged);
+    assert.equal(sha256(staged), sha256(source), `staged promotion hash mismatch: ${path.basename(destination)}`);
+    return {
+      source,
+      destination,
+      staged,
+      backup,
+      hadOriginal: fs.existsSync(destination),
+      expectedSha256: sha256(source),
+    };
+  });
+  const journalPath = path.join(transactionDir, 'transaction.json');
+  const journal = (state) => ({
+    schemaVersion: 1,
+    state,
+    entries: entries.map((entry) => ({
+      destination: path.relative(ROOT, entry.destination).replaceAll('\\', '/'),
+      backup: path.basename(entry.backup),
+      hadOriginal: entry.hadOriginal,
+      expectedSha256: entry.expectedSha256,
+    })),
+  });
+  writeJsonAtomic(journalPath, journal('committing'));
+  try {
+    let installed = 0;
+    for (const entry of entries) {
+      if (entry.hadOriginal) fs.renameSync(entry.destination, entry.backup);
+      fs.renameSync(entry.staged, entry.destination);
+      installed += 1;
+      if (failAfterInstall === installed) throw new Error('synthetic promotion fault');
+    }
+    for (const entry of entries) {
+      assert.equal(sha256(entry.destination), entry.expectedSha256, `canonical promotion hash mismatch: ${path.basename(entry.destination)}`);
+    }
+    writeJsonAtomic(journalPath, journal('committed'));
+  } catch (error) {
+    rollbackPromotionTransaction(entries, transactionDir);
+    throw error;
   }
+  try {
+    fs.rmSync(transactionDir, { recursive: true, force: true });
+  } catch (error) {
+    process.stderr.write(`[promote] committed transaction scratch cleanup deferred: ${error.message}\n`);
+  }
+}
+
+function pngArtifactRecord(file, destination, dimensions, extra = {}) {
+  return {
+    path: path.relative(ROOT, destination).replaceAll('\\', '/'),
+    sha256: sha256(file),
+    bytes: fs.statSync(file).size,
+    dimensions: { width: dimensions[0], height: dimensions[1] },
+    format: 'PNG',
+    mode: 'RGB',
+    metadataKeys: [],
+    ...extra,
+  };
+}
+
+function buildReviewManifest({ release, baseUrl, proofEvidence, live, vision, normalItem, securityItem, github, models, cleanup, files, galleryFiles }) {
+  const finalMedia = Object.fromEntries(FINAL_NAMES.map((name) => [
+    name,
+    pngArtifactRecord(files[name], path.join(FINAL_DIR, name), FINAL_DIMENSIONS[name]),
+  ]));
+  const gallery = Object.fromEntries(Object.entries(GALLERY_MAP).map(([name, source]) => [
+    name,
+    pngArtifactRecord(galleryFiles[name], path.join(GALLERY_DIR, name), [1500, 1000], { source, crop: 'none' }),
+  ]));
+  return {
+    schemaVersion: 2,
+    status: 'passed',
+    project: FIXED_PROJECT,
+    capturedAt: proofEvidence.capturedAt,
+    publicUrl: baseUrl,
+    exactDeployedApplicationSha: release.expectedSha,
+    submissionHeadAtCapture: release.head,
+    releaseEvidence: {
+      statusSha256: release.statusSha256,
+      outputSha256: release.outputSha256,
+      attempt: release.statusAttempt,
+    },
+    models,
+    gates: {
+      exactDeploymentEvidence: true,
+      publicSourceHeadAtCapture: true,
+      githubWorkflowsGreenForDeployedSha: true,
+      workflowBoundSha: release.expectedSha,
+      publicHealthReady: true,
+      authenticatedDeepEmbeddingProbe: true,
+      unauthenticatedQueueDenied: true,
+      decisionStoppedAtPending: true,
+      visionModelExercised: true,
+      hostileInputStoppedAtPending: true,
+      correctionBehaviorVerified: true,
+      metadataStripped: true,
+      transactionalPromotion: true,
+      pendingCleanupZero: cleanup.pendingCleanupZero,
+    },
+    cleanup: {
+      rejectedPending: cleanup.rejected,
+      matchingPendingAfter: cleanup.remaining,
+      pendingCleanupZero: cleanup.pendingCleanupZero,
+      pagesScannedBefore: cleanup.pagesScannedBefore,
+      pagesScannedAfter: cleanup.pagesScannedAfter,
+    },
+    canaries: {
+      health: { status: live.health.status, store: live.health.store },
+      ready: { status: live.ready.status, database: live.ready.checks.database.mode, incompatibleRows: live.ready.checks.memoryEmbeddingModel.incompatibleRows },
+      deep: { status: live.deep.status, model: live.deep.qwen.model, dimensions: live.deep.qwen.dimensions },
+      decision: { model: normalItem.proposed.modelId, status: normalItem.status, traceTools: normalItem.trace.map((step) => step.tool) },
+      vision: { model: vision.model, pages: vision.pages, sourceType: vision.sourceType },
+      security: { model: securityItem.proposed.modelId, status: securityItem.status, warningVisible: true },
+      correction: { rebill: 'flag_for_review', control: 'draft_payment', stored: true },
+    },
+    githubWorkflows: github.workflows,
+    artifacts: { finalMedia, gallery },
+    reviewerCredentialStored: false,
+    vendorIdentifiersStored: false,
+  };
 }
 
 async function selfTest() {
@@ -547,11 +928,193 @@ async function selfTest() {
   assert.throws(() => insideRepo(path.resolve(ROOT, '..', 'escape'), 'escape'), /inside this repository/);
   assert.equal(exactSha('a'.repeat(40), 'sha'), 'a'.repeat(40));
   assert.throws(() => exactSha('abc', 'sha'), /40-character/);
+  assert.deepEqual(canonicalReleaseWorkflows(undefined), DEFAULT_WORKFLOWS);
+  assert.deepEqual(canonicalReleaseWorkflows(DEFAULT_WORKFLOWS.join(',')), DEFAULT_WORKFLOWS);
+  assert.deepEqual(canonicalReleaseWorkflows([...DEFAULT_WORKFLOWS].reverse().join(',')), DEFAULT_WORKFLOWS);
+  assert.throws(() => canonicalReleaseWorkflows('CI'), /must contain exactly/);
+  assert.throws(
+    () => canonicalReleaseWorkflows('CI,CodeQL,CodeQL'),
+    /must contain exactly/,
+  );
+  assert.throws(
+    () => canonicalReleaseWorkflows('CI,CodeQL,Production Image Supply Chain,Unreviewed Gate'),
+    /must contain exactly/,
+  );
+  const workflowSha = 'b'.repeat(40);
+  const ciWorkflow = { name: 'CI', path: '.github/workflows/ci.yml' };
+  const canonicalAttemptOne = {
+    name: 'CI', path: ciWorkflow.path, head_sha: workflowSha, run_number: 42, run_attempt: 1,
+    status: 'completed', conclusion: 'success', updated_at: '2026-07-16T10:00:00Z',
+  };
+  const canonicalAttemptTwo = {
+    ...canonicalAttemptOne, run_attempt: 2, updated_at: '2026-07-16T10:05:00Z',
+  };
+  const spoofedSameName = {
+    ...canonicalAttemptTwo, path: '.github/workflows/spoof-ci.yml', run_number: 999,
+  };
+  const wrongShaCanonicalPath = {
+    ...canonicalAttemptTwo, head_sha: 'c'.repeat(40), run_number: 1_000,
+  };
+  assert.equal(
+    acceptedCanonicalWorkflowRun(
+      [spoofedSameName, wrongShaCanonicalPath, canonicalAttemptOne, canonicalAttemptTwo],
+      ciWorkflow,
+      workflowSha,
+    ),
+    canonicalAttemptTwo,
+    'a duplicate workflow name or wrong SHA must not outrank the canonical path latest attempt',
+  );
+  assert.throws(
+    () => acceptedCanonicalWorkflowRun([spoofedSameName], ciWorkflow, workflowSha),
+    /canonical path/,
+    'a same-name workflow at the wrong path must not satisfy the release gate',
+  );
+  assert.throws(
+    () => acceptedCanonicalWorkflowRun(
+      [canonicalAttemptOne, { ...canonicalAttemptTwo, conclusion: 'failure' }],
+      ciWorkflow,
+      workflowSha,
+    ),
+    /latest exact-SHA workflow run is not successful/,
+    'an earlier successful attempt must not hide a failed latest attempt',
+  );
   assert.throws(() => secretSafeText('Authorization: Bearer secret-token-value-123456', 'fixture', ''), /credential-like/);
+  assert.equal(trustedAutopilotOrigin(DEFAULT_URL), DEFAULT_URL);
+  assert.equal(trustedAutopilotOrigin(`${DEFAULT_URL}/`), DEFAULT_URL);
+  assert.throws(() => trustedAutopilotOrigin('https://attacker.example'), /pinned reviewer-token origin/);
+  assert.throws(() => trustedAutopilotOrigin(`${DEFAULT_URL}.attacker.example`), /pinned reviewer-token origin/);
   assert.deepEqual(FINAL_NAMES.length, 6);
   assert.deepEqual(Object.keys(GALLERY_MAP).length, 5);
-  const fixtureDir = insideRepo(path.join(ROOT, '.artifacts', 'media-pipeline-self-test', 'release'), 'self-test fixture directory');
+  const fixtureRoot = insideRepo(path.join(ROOT, '.artifacts', 'media-pipeline-self-test'), 'self-test fixture root');
+  fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  const fixtureDir = path.join(fixtureRoot, 'release');
   fs.mkdirSync(fixtureDir, { recursive: true });
+  const credentialPath = path.join(fixtureRoot, 'reviewer-credential.json');
+  fs.writeFileSync(credentialPath, `${JSON.stringify({ token: 'x'.repeat(40) })}\n`, { mode: 0o600 });
+  assert.equal(tokenFromExplicitCredentialFile(credentialPath), 'x'.repeat(40));
+
+  const malformedSecret = 'SYNTHETIC_SECRET_MUST_NEVER_REACH_DIAGNOSTICS';
+  const malformedCredentialPath = path.join(fixtureRoot, 'reviewer-credential-malformed.json');
+  fs.writeFileSync(malformedCredentialPath, `{"token":${malformedSecret}}\n`, { mode: 0o600 });
+  let malformedError;
+  try { tokenFromExplicitCredentialFile(malformedCredentialPath); } catch (error) { malformedError = error; }
+  assert.ok(malformedError, 'malformed reviewer credential fixture must fail');
+  assert.equal(malformedError.message, 'reviewer credential file is not valid JSON');
+  assert.equal(malformedError.message.includes(malformedSecret), false, 'credential bytes must never appear in parser diagnostics');
+
+  if (typeof process.getuid === 'function') {
+    const permissiveCredentialPath = path.join(fixtureRoot, 'reviewer-credential-permissive.json');
+    fs.writeFileSync(permissiveCredentialPath, `${JSON.stringify({ token: 'p'.repeat(40) })}\n`, { mode: 0o644 });
+    fs.chmodSync(permissiveCredentialPath, 0o644);
+    assert.throws(
+      () => tokenFromExplicitCredentialFile(permissiveCredentialPath),
+      /must not be accessible by group or other users/,
+    );
+  }
+
+  if (os.platform() !== 'win32' && Number.isInteger(fs.constants.O_NONBLOCK)) {
+    const fifoPath = path.join(fixtureRoot, 'reviewer-credential-fifo.json');
+    const mkfifo = spawnSync('mkfifo', ['--', fifoPath], { cwd: ROOT, encoding: 'utf8' });
+    if (mkfifo.status === 0) {
+      const fifoStartedAt = Date.now();
+      assert.throws(
+        () => tokenFromExplicitCredentialFile(fifoPath),
+        /descriptor must reference a regular file/,
+      );
+      assert.ok(Date.now() - fifoStartedAt < 1_000, 'FIFO credential rejection must not block');
+    } else {
+      assert.match(
+        `${mkfifo.stderr || ''}${mkfifo.error?.message || ''}`,
+        /operation not supported|not supported/i,
+        'mkfifo must succeed unless the mounted filesystem explicitly lacks FIFO support',
+      );
+    }
+  }
+
+  const pathSwapAfterOpenPath = path.join(fixtureRoot, 'reviewer-credential-path-swap-after-open.json');
+  const pathSwapOriginalPath = path.join(fixtureRoot, 'reviewer-credential-path-swap-original.json');
+  const pathSwapReplacementPath = path.join(fixtureRoot, 'reviewer-credential-path-swap-replacement.json');
+  fs.writeFileSync(pathSwapAfterOpenPath, `${JSON.stringify({ token: 'o'.repeat(40) })}\n`, { mode: 0o600 });
+  fs.writeFileSync(pathSwapReplacementPath, `${JSON.stringify({ token: 'a'.repeat(48) })}\n`, { mode: 0o600 });
+  const realFstatSync = fs.fstatSync;
+  let pathSwapAfterOpenTriggered = false;
+  fs.fstatSync = function swapCredentialPathAfterOpen(descriptor, ...rest) {
+    const stats = realFstatSync.call(fs, descriptor, ...rest);
+    if (!pathSwapAfterOpenTriggered) {
+      pathSwapAfterOpenTriggered = true;
+      fs.renameSync(pathSwapAfterOpenPath, pathSwapOriginalPath);
+      fs.renameSync(pathSwapReplacementPath, pathSwapAfterOpenPath);
+    }
+    return stats;
+  };
+  try {
+    assert.throws(
+      () => tokenFromExplicitCredentialFile(pathSwapAfterOpenPath),
+      /pathname or contents changed after open/,
+      'a pathname replacement after descriptor open must never supply reviewer credentials',
+    );
+  } finally {
+    fs.fstatSync = realFstatSync;
+  }
+  assert.equal(pathSwapAfterOpenTriggered, true, 'credential post-open pathname race fixture did not execute');
+
+  const rewriteBeforeReadPath = path.join(fixtureRoot, 'reviewer-credential-rewrite-before-read.json');
+  fs.writeFileSync(rewriteBeforeReadPath, `${JSON.stringify({ token: 'c'.repeat(40) })}\n`, { mode: 0o600 });
+  const realReadFileSync = fs.readFileSync;
+  let rewriteBeforeReadTriggered = false;
+  fs.readFileSync = function rewriteCredentialImmediatelyBeforeDescriptorRead(candidate, ...rest) {
+    if (!rewriteBeforeReadTriggered && typeof candidate === 'number') {
+      rewriteBeforeReadTriggered = true;
+      const writer = fs.openSync(rewriteBeforeReadPath, 'w');
+      try { fs.writeSync(writer, `${JSON.stringify({ token: 'mutated-before-read'.repeat(4) })}\n`); }
+      finally { fs.closeSync(writer); }
+    }
+    return realReadFileSync.call(fs, candidate, ...rest);
+  };
+  try {
+    let rejection;
+    try { tokenFromExplicitCredentialFile(rewriteBeforeReadPath); } catch (error) { rejection = error; }
+    assert.ok(rejection, 'a same-inode rewrite after pathname validation must never supply reviewer credentials');
+    assert.match(rejection.message, /changed after its descriptor was opened/);
+  } finally {
+    fs.readFileSync = realReadFileSync;
+  }
+  assert.equal(rewriteBeforeReadTriggered, true, 'credential same-inode pre-read rewrite fixture did not execute');
+
+  const lateHardlinkPath = path.join(fixtureRoot, 'reviewer-credential-late-hardlink.json');
+  const lateHardlinkAlias = path.join(fixtureRoot, 'reviewer-credential-late-hardlink-alias.json');
+  fs.writeFileSync(lateHardlinkPath, `${JSON.stringify({ token: 'd'.repeat(40) })}\n`, { mode: 0o600 });
+  let lateHardlinkTriggered = false;
+  fs.readFileSync = function addHardlinkImmediatelyBeforeDescriptorRead(candidate, ...rest) {
+    if (!lateHardlinkTriggered && typeof candidate === 'number') {
+      lateHardlinkTriggered = true;
+      fs.linkSync(lateHardlinkPath, lateHardlinkAlias);
+    }
+    return realReadFileSync.call(fs, candidate, ...rest);
+  };
+  try {
+    let rejection;
+    try { tokenFromExplicitCredentialFile(lateHardlinkPath); } catch (error) { rejection = error; }
+    assert.ok(rejection, 'a hard link added during the descriptor-read window must fail closed');
+    assert.match(rejection.message, /changed after its descriptor was opened|gained a hard link/);
+  } finally {
+    fs.readFileSync = realReadFileSync;
+    fs.rmSync(lateHardlinkAlias, { force: true });
+  }
+  assert.equal(lateHardlinkTriggered, true, 'credential late-hardlink fixture did not execute');
+
+  const credentialLink = path.join(fixtureRoot, 'reviewer-credential-link.json');
+  try {
+    fs.symlinkSync(credentialPath, credentialLink, 'file');
+    assert.throws(
+      () => tokenFromExplicitCredentialFile(credentialLink),
+      /ELOOP|too many symbolic links|must remain non-symlinked|path must be canonical/,
+    );
+  } catch (error) {
+    if (os.platform() !== 'win32' || error?.code !== 'EPERM') throw error;
+    fs.linkSync(credentialPath, credentialLink);
+    assert.throws(() => tokenFromExplicitCredentialFile(credentialLink), /exactly one hard link/);
+  }
   const deployStatePath = path.join(ROOT, 'deploy', 'DEPLOY_STATE.md');
   const stateText = fs.readFileSync(deployStatePath, 'utf8');
   const deployedMatch = stateText.match(/[0-9a-f]{40}/);
@@ -585,25 +1148,128 @@ async function selfTest() {
     statusPath, outputPath, expectedShaPath: expectedPath,
     deployedStatePath: deployStatePath,
     reviewerToken: 'not-the-real-reviewer-credential',
+    requirePublicHead: false,
   });
   assert.equal(parsed.expectedSha, deployed);
-  log('[self-test] media pipeline pure guards passed');
+
+  const queue = [
+    { id: 'capture-1', invoice: { vendor: 'SELF-RUN-ONE' } },
+    ...Array.from({ length: 499 }, (_, index) => ({ id: `unrelated-${index}`, invoice: { vendor: `OTHER-${index}` } })),
+    { id: 'capture-2', invoice: { vendor: 'SELF-RUN-TWO' } },
+  ];
+  const queueRequester = async (rawUrl, options = {}) => {
+    const url = new URL(rawUrl);
+    if (url.pathname === '/pending') {
+      const limit = Number(url.searchParams.get('limit'));
+      const offset = Number(url.searchParams.get('offset'));
+      const page = queue.slice(offset, offset + limit);
+      return { body: { pending: page, page: { nextOffset: page.length === limit ? offset + page.length : null } } };
+    }
+    if (url.pathname.startsWith('/reject/')) {
+      assert.equal(options.method, 'POST');
+      const id = decodeURIComponent(url.pathname.slice('/reject/'.length));
+      const index = queue.findIndex((item) => item.id === id);
+      assert.ok(index >= 0, 'self-test cleanup rejected an unknown item');
+      queue.splice(index, 1);
+      return { body: { status: 'rejected' } };
+    }
+    throw new Error(`unexpected self-test URL ${url.pathname}`);
+  };
+  const cleaned = await cleanupAndVerifyCapturePending('https://self.test', 'x'.repeat(32), ['SELF-RUN-'], queueRequester);
+  assert.deepEqual(
+    {
+      rejected: cleaned.rejected,
+      remaining: cleaned.remaining,
+      pendingCleanupZero: cleaned.pendingCleanupZero,
+      pagesScannedBefore: cleaned.pagesScannedBefore,
+    },
+    { rejected: 2, remaining: 0, pendingCleanupZero: true, pagesScannedBefore: 2 },
+  );
+  assert.equal(queue.length, 499, 'cleanup must leave unrelated PENDING items untouched');
+  assert.ok(queue.every((item) => item.id.startsWith('unrelated-')), 'cleanup removed or retained the wrong PENDING item');
+
+  const failingQueue = [{ id: 'capture-fail', invoice: { vendor: 'SELF-FAIL-ONE' } }];
+  const failingRequester = async (rawUrl) => {
+    const url = new URL(rawUrl);
+    if (url.pathname === '/pending') return { body: { pending: failingQueue, page: { nextOffset: null } } };
+    throw new Error('synthetic cleanup transport failure');
+  };
+  await assert.rejects(
+    cleanupAndVerifyCapturePending('https://self.test', 'x'.repeat(32), ['SELF-FAIL-'], failingRequester),
+    /synthetic cleanup transport failure/,
+  );
+
+  const residueQueue = [{ id: 'capture-residue', invoice: { vendor: 'SELF-RESIDUE-ONE' } }];
+  const residueRequester = async (rawUrl) => {
+    const url = new URL(rawUrl);
+    if (url.pathname === '/pending') return { body: { pending: residueQueue, page: { nextOffset: null } } };
+    return { body: { status: 'ignored' } };
+  };
+  await assert.rejects(
+    cleanupAndVerifyCapturePending('https://self.test', 'x'.repeat(32), ['SELF-RESIDUE-'], residueRequester),
+    /post-cleanup query found run-prefix PENDING residue/,
+  );
+
+  const promotionRoot = path.join(fixtureRoot, 'promotion');
+  const sourceOne = path.join(promotionRoot, 'source-one');
+  const sourceTwo = path.join(promotionRoot, 'source-two');
+  const destinationOne = path.join(promotionRoot, 'canonical-one');
+  const destinationTwo = path.join(promotionRoot, 'canonical-two');
+  fs.mkdirSync(promotionRoot, { recursive: true });
+  fs.writeFileSync(sourceOne, 'new-one\n');
+  fs.writeFileSync(sourceTwo, 'new-two\n');
+  fs.writeFileSync(destinationOne, 'old-one\n');
+  fs.writeFileSync(destinationTwo, 'old-two\n');
+  const promotionEntries = [
+    { source: sourceOne, destination: destinationOne },
+    { source: sourceTwo, destination: destinationTwo },
+  ];
+  assert.throws(
+    () => transactionalPromote(promotionEntries, path.join(promotionRoot, 'failed-transaction'), { failAfterInstall: 1 }),
+    /synthetic promotion fault/,
+  );
+  assert.equal(fs.readFileSync(destinationOne, 'utf8'), 'old-one\n', 'failed promotion must restore the first reviewed final');
+  assert.equal(fs.readFileSync(destinationTwo, 'utf8'), 'old-two\n', 'failed promotion must preserve untouched reviewed finals');
+  transactionalPromote(promotionEntries, path.join(promotionRoot, 'successful-transaction'));
+  assert.equal(fs.readFileSync(destinationOne, 'utf8'), 'new-one\n');
+  assert.equal(fs.readFileSync(destinationTwo, 'utf8'), 'new-two\n');
+
+  const recoveryDir = path.join(promotionRoot, 'interrupted-transaction');
+  fs.mkdirSync(recoveryDir, { recursive: true });
+  const recoveryDestination = path.join(promotionRoot, 'recovery-canonical');
+  const recoveryBackup = path.join(recoveryDir, 'backup-00');
+  fs.writeFileSync(recoveryDestination, 'interrupted-new\n');
+  fs.writeFileSync(recoveryBackup, 'reviewed-old\n');
+  fs.writeFileSync(path.join(recoveryDir, 'transaction.json'), `${JSON.stringify({
+    schemaVersion: 1,
+    state: 'committing',
+    entries: [{
+      destination: path.relative(ROOT, recoveryDestination).replaceAll('\\', '/'),
+      backup: 'backup-00',
+      hadOriginal: true,
+      expectedSha256: sha256(recoveryDestination),
+    }],
+  })}\n`);
+  recoverPromotionTransaction(recoveryDir, null);
+  assert.equal(fs.readFileSync(recoveryDestination, 'utf8'), 'reviewed-old\n', 'interrupted transaction recovery must restore reviewed final');
+  assert.equal(fs.existsSync(recoveryDir), false, 'recovered transaction scratch must be removed');
+
+  log('[self-test] source, PENDING-cleanup-zero, rollback, and interrupted-transaction guards passed');
 }
 
 async function main() {
   if (process.argv.includes('--self-test')) return selfTest();
+  // Recover a hard-interrupted prior promotion before the clean-public-HEAD gate;
+  // otherwise its canonical partials would make the worktree dirty and strand the
+  // rollback journal that knows how to restore the reviewed set.
+  recoverInterruptedPromotions();
   const dotenv = parseEnvFile(path.join(ROOT, '.env'));
   const explicitCredentialPath = argumentValue('--reviewer-credential-file') || process.env.REVIEWER_CREDENTIAL_FILE || '';
   const fileToken = tokenFromExplicitCredentialFile(explicitCredentialPath);
   const reviewerToken = String(process.env.AUTOPILOT_REVIEWER_TOKEN || fileToken || process.env.REVIEWER_TOKEN || dotenv.REVIEWER_TOKEN || '').trim();
   if (reviewerToken.length < 32) fail('Reviewer credential is missing or too short; load it from the project-local .env without printing it');
 
-  const baseUrl = String(process.env.AUTOPILOT_URL || DEFAULT_URL).replace(/\/$/, '');
-  const parsedUrl = new URL(baseUrl);
-  assert.equal(parsedUrl.protocol, 'https:', 'AUTOPILOT_URL must use HTTPS');
-  assert.equal(parsedUrl.username, '', 'AUTOPILOT_URL must not contain credentials');
-  assert.equal(parsedUrl.password, '', 'AUTOPILOT_URL must not contain credentials');
-  assert.equal(parsedUrl.search, '', 'AUTOPILOT_URL must not contain a query string');
+  const baseUrl = trustedAutopilotOrigin(process.env.AUTOPILOT_URL || DEFAULT_URL);
   const models = {
     decision: String(process.env.EXPECTED_DECISION_MODEL || dotenv.QWEN_MODEL || 'qwen-plus').trim(),
     embedding: String(process.env.EXPECTED_EMBEDDING_MODEL || dotenv.QWEN_EMBED_MODEL || 'text-embedding-v4').trim(),
@@ -651,14 +1317,14 @@ async function main() {
   const context = await browser.newContext({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 1, colorScheme: 'dark' });
   const page = await context.newPage();
   page.setDefaultTimeout(240_000);
-  await page.addInitScript((token) => sessionStorage.setItem('archonReviewerToken', token), reviewerToken);
 
-  let cleanupCount = -1;
+  let cleanup = null;
   let normalItem;
   let securityItem;
   let correctionVendor = '';
+  let proofEvidence;
   try {
-    await page.goto(`${baseUrl}/`, { waitUntil: 'networkidle', timeout: 90_000 });
+    await installReviewerSessionOnPinnedTopFrame(page, baseUrl, reviewerToken);
     await page.keyboard.press('Escape').catch(() => {});
     await page.locator('#count').waitFor({ state: 'visible' });
     await page.locator('#reviewerToken').evaluate((input) => {
@@ -785,7 +1451,7 @@ async function main() {
     });
     log('[capture] hostile-document warning + PENDING frame ready');
 
-    const proofEvidence = {
+    proofEvidence = {
       deployedSha: release.expectedSha,
       head: release.head,
       workflows: github.workflows,
@@ -804,49 +1470,36 @@ async function main() {
 
     sanitizeCandidates(Object.values(files));
     buildGalleryVariants(files, galleryFiles);
-    for (const file of Object.values(files)) {
+    for (const file of [...Object.values(files), ...Object.values(galleryFiles)]) {
       secretSafeText(fs.readFileSync(file), `PNG ${path.basename(file)}`, reviewerToken);
       assert.ok(fs.statSync(file).size > 30_000, `PNG is implausibly small: ${path.basename(file)}`);
     }
-    promote(files);
-    promoteGallery(galleryFiles);
-    const manifest = {
-      schemaVersion: 1,
-      project: FIXED_PROJECT,
-      capturedAt: proofEvidence.capturedAt,
-      publicUrl: baseUrl,
-      deployedSha: release.expectedSha,
-      submissionHead: release.head,
-      releaseEvidence: {
-        statusSha256: release.statusSha256,
-        outputSha256: release.outputSha256,
-        attempt: release.statusAttempt,
-      },
-      models,
-      canaries: {
-        health: { status: live.health.status, store: live.health.store },
-        ready: { status: live.ready.status, database: live.ready.checks.database.mode, incompatibleRows: live.ready.checks.memoryEmbeddingModel.incompatibleRows },
-        deep: { status: live.deep.status, model: live.deep.qwen.model, dimensions: live.deep.qwen.dimensions },
-        decision: { model: normalItem.proposed.modelId, status: normalItem.status, traceTools: normalItem.trace.map((step) => step.tool) },
-        vision,
-        security: { model: securityItem.proposed.modelId, status: securityItem.status, warningVisible: true },
-        correction: { rebill: 'flag_for_review', control: 'draft_payment', stored: true },
-      },
-      githubWorkflows: github.workflows,
-      outputs: Object.fromEntries(FINAL_NAMES.map((name) => [name, { sha256: sha256(path.join(FINAL_DIR, name)), bytes: fs.statSync(path.join(FINAL_DIR, name)).size }])),
-      galleryOutputs: Object.fromEntries(Object.keys(GALLERY_MAP).map((name) => {
-        const file = path.join(ROOT, 'demo', 'gallery', name);
-        return [name, { sha256: sha256(file), bytes: fs.statSync(file).size, source: GALLERY_MAP[name], dimensions: '1500x1000', crop: 'none' }];
-      })),
-      reviewerCredentialStored: false,
-    };
-    fs.writeFileSync(path.join(runDir, 'capture-manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
-    log(`[promote] ${FINAL_NAMES.length} final artifacts + ${Object.keys(GALLERY_MAP).length} no-crop gallery variants promoted`);
   } finally {
-    cleanupCount = await rejectCapturePending(baseUrl, reviewerToken, [vendorPrefix, correctionVendor]);
-    await browser.close().catch(() => {});
-    log(`[cleanup] rejected ${cleanupCount} capture-only PENDING item(s); decided audit evidence intentionally retained`);
+    try {
+      cleanup = await cleanupAndVerifyCapturePending(baseUrl, reviewerToken, [vendorPrefix, correctionVendor]);
+      log(`[cleanup] rejected ${cleanup.rejected} capture-only PENDING item(s); authenticated post-cleanup residue=0`);
+    } finally {
+      await browser.close().catch(() => {});
+    }
   }
+
+  assert.ok(proofEvidence && normalItem && securityItem, 'capture evidence was incomplete before manifest creation');
+  assert.equal(cleanup?.pendingCleanupZero, true, 'pendingCleanupZero gate did not pass');
+  const manifest = buildReviewManifest({
+    release, baseUrl, proofEvidence, live, vision, normalItem, securityItem, github, models, cleanup, files, galleryFiles,
+  });
+  const manifestCandidate = path.join(runDir, 'CAPTURE_REVIEW.json');
+  fs.writeFileSync(manifestCandidate, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+  secretSafeText(fs.readFileSync(manifestCandidate, 'utf8'), 'CAPTURE_REVIEW.json', reviewerToken);
+  fs.copyFileSync(manifestCandidate, path.join(runDir, 'capture-manifest.json'));
+
+  const promotionEntries = [
+    ...FINAL_NAMES.map((name) => ({ source: files[name], destination: path.join(FINAL_DIR, name) })),
+    ...Object.keys(GALLERY_MAP).map((name) => ({ source: galleryFiles[name], destination: path.join(GALLERY_DIR, name) })),
+    { source: manifestCandidate, destination: REVIEW_MANIFEST_PATH },
+  ];
+  transactionalPromote(promotionEntries, path.join(runDir, 'promotion-transaction'));
+  log(`[promote] ${FINAL_NAMES.length} final artifacts + ${Object.keys(GALLERY_MAP).length} gallery variants + CAPTURE_REVIEW.json committed transactionally`);
 }
 
 main().catch((error) => {

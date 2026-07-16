@@ -1,0 +1,508 @@
+{
+  "schemaVersion": 1,
+  "protocolId": "autopilot-synthetic-impact-v1",
+  "observationKind": "synthetic workflow-model records",
+  "collection": {
+    "sourceCommit": "4107731bd1ef215bdc1109e56d173cbb60b693f2",
+    "sourceIdentity": {
+      "gitTree": "e56a51c9643adfacd4d86a36e37c9dde1c3a2f92",
+      "replaySourcePaths": [
+        ".gitattributes",
+        "src",
+        "eval/lib.ts",
+        "eval/dataset.ts",
+        "eval/artifact-safety.ts",
+        "eval/promotion-environment.ts",
+        "eval/protocol-provenance.ts",
+        "impact/analyze.mjs",
+        "impact/provenance.mjs",
+        "impact/protocol.json",
+        "impact/cases.json",
+        "package.json",
+        "package-lock.json",
+        "tsconfig.json"
+      ]
+    },
+    "runtime": "Node.js 24.18.0",
+    "agentRunner": "eval/lib.ts runScenario",
+    "mode": "offline",
+    "modelSeam": "FakeQwenChatClient",
+    "networkUsed": false,
+    "manualArm": "Developer application of the fixed manual checklist; no human participant.",
+    "assistedArm": "Agent actions and traces frozen from deterministic offline replay; human review tasks remain modeled.",
+    "excluded": [
+      "Wall-clock replay latency, because it measures local deterministic test execution rather than human active review.",
+      "System queue time and downstream sink execution.",
+      "Any wage, invoice-volume, headcount, ROI, or production assumption."
+    ],
+    "immutabilityRule": "Changing a case, task sequence, task weight, action, or replay observation requires a new protocol version and regenerated results."
+  },
+  "observations": [
+    {
+      "caseId": "s01",
+      "manual": {
+        "action": "draft_journal_entry",
+        "decisionBasis": "Required fields reconcile and no completed vendor history exists, so the checklist selects a new-vendor accrual.",
+        "humanTasks": [
+          "read_invoice",
+          "normalize_fields",
+          "check_required_fields",
+          "reconcile_amounts",
+          "retrieve_vendor_history",
+          "choose_policy_route",
+          "record_rationale"
+        ]
+      },
+      "assisted": {
+        "action": "draft_journal_entry",
+        "humanTasks": [
+          "review_normalized_invoice",
+          "inspect_agent_evidence",
+          "confirm_policy_route",
+          "approve_or_defer"
+        ],
+        "replay": {
+          "reportedModelId": "qwen-plus",
+          "rawModelAction": "draft_journal_entry",
+          "stopReason": "terminal_action",
+          "readAnalyzeSteps": 2,
+          "traceTools": [
+            "recall_vendor_history",
+            "validate_invoice",
+            "proposal_argument_guard"
+          ],
+          "policyOverride": true
+        }
+      }
+    },
+    {
+      "caseId": "s05",
+      "manual": {
+        "action": "draft_payment",
+        "decisionBasis": "Required fields reconcile, history is clean, and no duplicate, amount, or currency exception is present.",
+        "humanTasks": [
+          "read_invoice",
+          "normalize_fields",
+          "check_required_fields",
+          "reconcile_amounts",
+          "retrieve_vendor_history",
+          "check_duplicate",
+          "compare_amount_and_currency",
+          "choose_policy_route",
+          "record_rationale"
+        ]
+      },
+      "assisted": {
+        "action": "draft_payment",
+        "humanTasks": [
+          "review_normalized_invoice",
+          "inspect_agent_evidence",
+          "confirm_policy_route",
+          "approve_or_defer"
+        ],
+        "replay": {
+          "reportedModelId": "qwen-plus",
+          "rawModelAction": "draft_payment",
+          "stopReason": "terminal_action",
+          "readAnalyzeSteps": 3,
+          "traceTools": [
+            "recall_vendor_history",
+            "validate_invoice",
+            "compute_variance_vs_history",
+            "proposal_argument_guard"
+          ],
+          "policyOverride": true
+        }
+      }
+    },
+    {
+      "caseId": "s08",
+      "manual": {
+        "action": "draft_vendor_reply",
+        "decisionBasis": "The required tax identifier is missing, so the checklist queries the vendor before posting or paying.",
+        "humanTasks": [
+          "read_invoice",
+          "normalize_fields",
+          "check_required_fields",
+          "reconcile_amounts",
+          "retrieve_vendor_history",
+          "choose_policy_route",
+          "record_rationale"
+        ]
+      },
+      "assisted": {
+        "action": "draft_vendor_reply",
+        "humanTasks": [
+          "review_normalized_invoice",
+          "inspect_agent_evidence",
+          "inspect_exception_detail",
+          "confirm_policy_route",
+          "approve_or_defer"
+        ],
+        "replay": {
+          "reportedModelId": "qwen-plus",
+          "rawModelAction": "draft_vendor_reply",
+          "stopReason": "terminal_action",
+          "readAnalyzeSteps": 2,
+          "traceTools": [
+            "recall_vendor_history",
+            "validate_invoice"
+          ],
+          "policyOverride": false
+        }
+      }
+    },
+    {
+      "caseId": "s11",
+      "manual": {
+        "action": "draft_vendor_reply",
+        "decisionBasis": "Subtotal and tax do not reconcile to the stated total, so the checklist queries the vendor.",
+        "humanTasks": [
+          "read_invoice",
+          "normalize_fields",
+          "check_required_fields",
+          "reconcile_amounts",
+          "retrieve_vendor_history",
+          "choose_policy_route",
+          "record_rationale"
+        ]
+      },
+      "assisted": {
+        "action": "draft_vendor_reply",
+        "humanTasks": [
+          "review_normalized_invoice",
+          "inspect_agent_evidence",
+          "inspect_exception_detail",
+          "confirm_policy_route",
+          "approve_or_defer"
+        ],
+        "replay": {
+          "reportedModelId": "qwen-plus",
+          "rawModelAction": "draft_vendor_reply",
+          "stopReason": "terminal_action",
+          "readAnalyzeSteps": 2,
+          "traceTools": [
+            "recall_vendor_history",
+            "validate_invoice"
+          ],
+          "policyOverride": false
+        }
+      }
+    },
+    {
+      "caseId": "s13",
+      "manual": {
+        "action": "flag_for_review",
+        "decisionBasis": "The completed history contains the same vendor reference, so duplicate risk routes to specialist review.",
+        "humanTasks": [
+          "read_invoice",
+          "normalize_fields",
+          "check_required_fields",
+          "reconcile_amounts",
+          "retrieve_vendor_history",
+          "check_duplicate",
+          "compare_amount_and_currency",
+          "choose_policy_route",
+          "record_rationale"
+        ]
+      },
+      "assisted": {
+        "action": "flag_for_review",
+        "humanTasks": [
+          "review_normalized_invoice",
+          "inspect_agent_evidence",
+          "inspect_exception_detail",
+          "confirm_policy_route",
+          "approve_or_defer"
+        ],
+        "replay": {
+          "reportedModelId": "qwen-plus",
+          "rawModelAction": "flag_for_review",
+          "stopReason": "terminal_action",
+          "readAnalyzeSteps": 3,
+          "traceTools": [
+            "recall_vendor_history",
+            "check_duplicate",
+            "validate_invoice"
+          ],
+          "policyOverride": false
+        }
+      }
+    },
+    {
+      "caseId": "s14",
+      "manual": {
+        "action": "flag_for_review",
+        "decisionBasis": "Vendor, amount, and date match completed history despite a changed reference, so the checklist flags a suspected duplicate.",
+        "humanTasks": [
+          "read_invoice",
+          "normalize_fields",
+          "check_required_fields",
+          "reconcile_amounts",
+          "retrieve_vendor_history",
+          "check_duplicate",
+          "compare_amount_and_currency",
+          "choose_policy_route",
+          "record_rationale"
+        ]
+      },
+      "assisted": {
+        "action": "flag_for_review",
+        "humanTasks": [
+          "review_normalized_invoice",
+          "inspect_agent_evidence",
+          "inspect_exception_detail",
+          "confirm_policy_route",
+          "approve_or_defer"
+        ],
+        "replay": {
+          "reportedModelId": "qwen-plus",
+          "rawModelAction": "flag_for_review",
+          "stopReason": "terminal_action",
+          "readAnalyzeSteps": 3,
+          "traceTools": [
+            "recall_vendor_history",
+            "check_duplicate",
+            "validate_invoice"
+          ],
+          "policyOverride": false
+        }
+      }
+    },
+    {
+      "caseId": "s15",
+      "manual": {
+        "action": "flag_for_review",
+        "decisionBasis": "The amount is far outside completed vendor history, so the checklist selects specialist review.",
+        "humanTasks": [
+          "read_invoice",
+          "normalize_fields",
+          "check_required_fields",
+          "reconcile_amounts",
+          "retrieve_vendor_history",
+          "check_duplicate",
+          "compare_amount_and_currency",
+          "choose_policy_route",
+          "record_rationale"
+        ]
+      },
+      "assisted": {
+        "action": "flag_for_review",
+        "humanTasks": [
+          "review_normalized_invoice",
+          "inspect_agent_evidence",
+          "inspect_exception_detail",
+          "confirm_policy_route",
+          "approve_or_defer"
+        ],
+        "replay": {
+          "reportedModelId": "qwen-plus",
+          "rawModelAction": "flag_for_review",
+          "stopReason": "terminal_action",
+          "readAnalyzeSteps": 3,
+          "traceTools": [
+            "recall_vendor_history",
+            "validate_invoice",
+            "compute_variance_vs_history"
+          ],
+          "policyOverride": false
+        }
+      }
+    },
+    {
+      "caseId": "s17",
+      "manual": {
+        "action": "flag_for_review",
+        "decisionBasis": "Duplicate risk and a missing field collide; the safer duplicate-review route wins under the fixed precedence policy.",
+        "humanTasks": [
+          "read_invoice",
+          "normalize_fields",
+          "check_required_fields",
+          "reconcile_amounts",
+          "retrieve_vendor_history",
+          "check_duplicate",
+          "compare_amount_and_currency",
+          "choose_policy_route",
+          "record_rationale"
+        ]
+      },
+      "assisted": {
+        "action": "flag_for_review",
+        "humanTasks": [
+          "review_normalized_invoice",
+          "inspect_agent_evidence",
+          "inspect_exception_detail",
+          "confirm_policy_route",
+          "approve_or_defer"
+        ],
+        "replay": {
+          "reportedModelId": "qwen-plus",
+          "rawModelAction": "flag_for_review",
+          "stopReason": "terminal_action",
+          "readAnalyzeSteps": 3,
+          "traceTools": [
+            "recall_vendor_history",
+            "check_duplicate",
+            "validate_invoice"
+          ],
+          "policyOverride": false
+        }
+      }
+    },
+    {
+      "caseId": "s18",
+      "manual": {
+        "action": "draft_vendor_reply",
+        "decisionBasis": "The recurring-vendor invoice is missing its tax identifier, so the checklist queries before payment.",
+        "humanTasks": [
+          "read_invoice",
+          "normalize_fields",
+          "check_required_fields",
+          "reconcile_amounts",
+          "retrieve_vendor_history",
+          "check_duplicate",
+          "compare_amount_and_currency",
+          "choose_policy_route",
+          "record_rationale"
+        ]
+      },
+      "assisted": {
+        "action": "draft_vendor_reply",
+        "humanTasks": [
+          "review_normalized_invoice",
+          "inspect_agent_evidence",
+          "inspect_exception_detail",
+          "confirm_policy_route",
+          "approve_or_defer"
+        ],
+        "replay": {
+          "reportedModelId": "qwen-plus",
+          "rawModelAction": "draft_vendor_reply",
+          "stopReason": "terminal_action",
+          "readAnalyzeSteps": 2,
+          "traceTools": [
+            "recall_vendor_history",
+            "validate_invoice"
+          ],
+          "policyOverride": false
+        }
+      }
+    },
+    {
+      "caseId": "s19",
+      "manual": {
+        "action": "flag_for_review",
+        "decisionBasis": "The amount anomaly outranks an otherwise eligible recurring-vendor payment route.",
+        "humanTasks": [
+          "read_invoice",
+          "normalize_fields",
+          "check_required_fields",
+          "reconcile_amounts",
+          "retrieve_vendor_history",
+          "check_duplicate",
+          "compare_amount_and_currency",
+          "choose_policy_route",
+          "record_rationale"
+        ]
+      },
+      "assisted": {
+        "action": "flag_for_review",
+        "humanTasks": [
+          "review_normalized_invoice",
+          "inspect_agent_evidence",
+          "inspect_exception_detail",
+          "confirm_policy_route",
+          "approve_or_defer"
+        ],
+        "replay": {
+          "reportedModelId": "qwen-plus",
+          "rawModelAction": "flag_for_review",
+          "stopReason": "terminal_action",
+          "readAnalyzeSteps": 3,
+          "traceTools": [
+            "recall_vendor_history",
+            "validate_invoice",
+            "compute_variance_vs_history"
+          ],
+          "policyOverride": false
+        }
+      }
+    },
+    {
+      "caseId": "s21",
+      "manual": {
+        "action": "flag_for_review",
+        "decisionBasis": "The invoice changes currency from completed history, so the checklist defers it for specialist verification.",
+        "humanTasks": [
+          "read_invoice",
+          "normalize_fields",
+          "check_required_fields",
+          "reconcile_amounts",
+          "retrieve_vendor_history",
+          "check_duplicate",
+          "compare_amount_and_currency",
+          "choose_policy_route",
+          "record_rationale"
+        ]
+      },
+      "assisted": {
+        "action": "flag_for_review",
+        "humanTasks": [
+          "review_normalized_invoice",
+          "inspect_agent_evidence",
+          "inspect_exception_detail",
+          "confirm_policy_route",
+          "approve_or_defer"
+        ],
+        "replay": {
+          "reportedModelId": "qwen-plus",
+          "rawModelAction": "flag_for_review",
+          "stopReason": "terminal_action",
+          "readAnalyzeSteps": 2,
+          "traceTools": [
+            "recall_vendor_history",
+            "validate_invoice"
+          ],
+          "policyOverride": false
+        }
+      }
+    },
+    {
+      "caseId": "s22",
+      "manual": {
+        "action": "draft_vendor_reply",
+        "decisionBasis": "No payable total can be parsed, so the checklist queries the vendor rather than posting or paying.",
+        "humanTasks": [
+          "read_invoice",
+          "normalize_fields",
+          "check_required_fields",
+          "reconcile_amounts",
+          "retrieve_vendor_history",
+          "choose_policy_route",
+          "record_rationale"
+        ]
+      },
+      "assisted": {
+        "action": "draft_vendor_reply",
+        "humanTasks": [
+          "review_normalized_invoice",
+          "inspect_agent_evidence",
+          "inspect_exception_detail",
+          "confirm_policy_route",
+          "approve_or_defer"
+        ],
+        "replay": {
+          "reportedModelId": "qwen-plus",
+          "rawModelAction": "draft_vendor_reply",
+          "stopReason": "terminal_action",
+          "readAnalyzeSteps": 2,
+          "traceTools": [
+            "recall_vendor_history",
+            "validate_invoice"
+          ],
+          "policyOverride": false
+        }
+      }
+    }
+  ]
+}

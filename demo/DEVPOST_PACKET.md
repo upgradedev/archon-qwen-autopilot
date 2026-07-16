@@ -232,7 +232,7 @@ public repository intentionally does not guess or retain them.
 | Code repository | <https://github.com/upgradedev/archon-qwen-autopilot> |
 | Alibaba/Qwen code file | <https://github.com/upgradedev/archon-qwen-autopilot/blob/main/src/qwen/client.ts> |
 | Architecture Diagram upload | [`final-media/judge-architecture.jpg`](./final-media/judge-architecture.jpg) |
-| Alibaba Deployment Screenshot upload | [`gallery/autopilot-05-alibaba-qwen-proof.png`](./gallery/autopilot-05-alibaba-qwen-proof.png), only after the exact-release capture manifest passes. |
+| Alibaba Deployment Screenshot upload | [`gallery/autopilot-05-alibaba-qwen-proof.png`](./gallery/autopilot-05-alibaba-qwen-proof.png), only after tracked [`gallery/CAPTURE_REVIEW.json`](./gallery/CAPTURE_REVIEW.json) passes, proves zero matching PENDING capture residue (audit history remains), and its SHA-256 matches the upload. |
 | Published Blog or Social Post | `[PUBLIC_BLOG_OR_SOCIAL_URL]`, only after signed-out verification. |
 | AI tools leveraged | **Qwen Cloud models (qwen-plus, qwen-vl-max, text-embedding-v4), OpenAI Codex, and Anthropic Claude.** |
 | Learning level | **Significant** |
@@ -251,6 +251,10 @@ public repository intentionally does not guess or retain them.
 - [ ] Final video is public, signed-out accessible, and `<3:00`.
 - [ ] Working app and private tester flow pass signed out.
 - [ ] Gallery contains only fresh sanitized current-release captures.
+- [ ] `demo/gallery/CAPTURE_REVIEW.json` is tracked, `status=passed`, binds the exact
+  deployed SHA/public source HEAD at capture, records `pendingCleanupZero=true` with
+  zero matching **PENDING** capture residue (not zero audit history), and hashes every
+  uploaded current-release PNG.
 - [ ] `[FINAL_DEPLOYED_APP_SHA]` and `[FINAL_SUBMISSION_SHA]` are labelled separately
   if docs/media commits follow the deployed application release.
 - [ ] Exact final CI, CodeQL, and image/SBOM runs are green for the submission SHA.

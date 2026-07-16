@@ -4,7 +4,8 @@
 // `readiness` job does), with NO DashScope key and NO DATABASE_URL, so every check runs
 // on the deterministic offline Fakes. It asserts the three things the gate promises:
 //   1. it runs to completion and EXITS 0 (the gate passed);
-//   2. it emits a well-formed readiness.json with automatable completion ≥ 95%;
+//   2. it emits a well-formed readiness.json with automatable completion ≥ 95%
+//      and zero failed automatable checks;
 //   3. the four rubric criteria are all present, and the honest `user-gated` items
 //      (final playback, hosted video, live-box redeploy) are surfaced, not auto-claimed.
 //
@@ -18,11 +19,28 @@ import { readFileSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 
+import {
+  passesReadinessGate,
+  READINESS_GATE_THRESHOLD_PCT,
+} from "../../scripts/readiness-policy.js";
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..", "..");
 const OUT = join(ROOT, "readiness.json");
 
-test("readiness gate runs offline, exits 0, and reports ≥95% automatable completion", () => {
+test("readiness policy requires both the weighted floor and zero failed checks", () => {
+  assert.equal(READINESS_GATE_THRESHOLD_PCT, 95);
+  assert.equal(passesReadinessGate(95, 0), true, "the exact floor passes when every check passes");
+  assert.equal(passesReadinessGate(100, 0), true, "a clean perfect report passes");
+  assert.equal(passesReadinessGate(94.9, 0), false, "a clean report below the floor fails");
+  assert.equal(passesReadinessGate(95, 1), false, "a failed check cannot hide at the exact floor");
+  assert.equal(passesReadinessGate(100, 1), false, "even a rounded 100% cannot hide a failed check");
+  assert.equal(passesReadinessGate(Number.NaN, 0), false, "a non-finite score fails closed");
+  assert.equal(passesReadinessGate(101, 0), false, "an out-of-range score fails closed");
+  assert.equal(passesReadinessGate(100, -1), false, "an invalid failure count fails closed");
+});
+
+test("readiness gate runs offline, exits 0, and reports a clean ≥95% result", () => {
   rmSync(OUT, { force: true }); // ensure we assert on a freshly-written report
 
   const env = { ...process.env };
@@ -43,6 +61,11 @@ test("readiness gate runs offline, exits 0, and reports ≥95% automatable compl
   assert.ok(report.automatableCompletionPct >= 95, `automatable completion ${report.automatableCompletionPct}% must be ≥95%`);
   assert.equal(report.gatePass, true, "the gate must report gatePass=true offline");
   assert.equal(report.gateThresholdPct, 95, "the gate threshold is pinned at 95%");
+  assert.deepEqual(
+    report.gatePolicy,
+    { requiresZeroFailedAutomatableChecks: true },
+    "the report must publish the zero-failure release policy",
+  );
   assert.equal(report.totals.failed, 0, "no automatable check may be failing offline");
 
   // All four rubric criteria are present with their rubric weights.

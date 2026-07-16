@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import {
   mkdir,
@@ -361,7 +361,10 @@ export async function preflightPromotionEnvironment(
 
   let work: string;
   try {
-    work = await mkdtemp(join(temporaryRoot, `promotion-environment-${process.pid}-${randomUUID()}-`));
+    // mkdtemp already appends six unpredictable characters atomically. Keep the
+    // trusted repository-local prefix deliberately short so nested Windows
+    // worktrees do not turn an otherwise safe preflight into a MAX_PATH failure.
+    work = await mkdtemp(join(temporaryRoot, `promotion-${process.pid}-`));
   } catch {
     throw new PromotionEnvironmentError("promotion_temp_invalid");
   }
@@ -428,7 +431,7 @@ export async function preflightPromotionEnvironment(
 
   let liveRoot: string;
   try {
-    liveRoot = await mkdtemp(join(temporaryRoot, `promotion-live-${process.pid}-${randomUUID()}-`));
+    liveRoot = await mkdtemp(join(temporaryRoot, `live-${process.pid}-`));
   } catch {
     throw new PromotionEnvironmentError("promotion_temp_invalid");
   }
