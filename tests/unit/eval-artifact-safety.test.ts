@@ -26,7 +26,6 @@ import {
   PROMOTION_PROGRESS_ROOT_STATUS,
   promotionGate,
   PROMOTION_MODELS,
-  promotionReleaseSnapshot,
   scheduledExperimentComplete,
   stabilityFingerprint,
   summarizeDecision,
@@ -1027,22 +1026,33 @@ test("database bootstrap accepts only the dedicated autopilot runtime identity a
     DATABASE_URL: `postgresql://autopilot_app:${password}@db:5432/autopilot`,
     AUTOPILOT_APP_DB_PASSWORD: password,
     MEMORY_DATABASE_NAME: "memoryagent",
+    BOOTSTRAP_APPLY_SCHEMA: "0",
   }), {
     migrationUrl: "postgresql://bootstrap:admin-secret@db:5432/postgres",
     runtimeUrl: `postgresql://autopilot_app:${password}@db:5432/autopilot`,
     appPassword: password,
     otherDatabase: "memoryagent",
+    applySchema: false,
   });
   assert.throws(() => bootstrapConfig({
     MIGRATION_DATABASE_URL: `postgresql://autopilot_app:${password}@db:5432/postgres`,
     DATABASE_URL: `postgresql://autopilot_app:${password}@db:5432/autopilot`,
     AUTOPILOT_APP_DB_PASSWORD: password,
     MEMORY_DATABASE_NAME: "memoryagent",
+    BOOTSTRAP_APPLY_SCHEMA: "0",
   }), /bootstrap\/admin role/);
   assert.throws(() => bootstrapConfig({
     MIGRATION_DATABASE_URL: "postgresql://bootstrap:admin-secret@db:5432/postgres",
     DATABASE_URL: `postgresql://memoryagent_app:${password}@db:5432/memoryagent`,
     AUTOPILOT_APP_DB_PASSWORD: password,
     MEMORY_DATABASE_NAME: "memoryagent",
+    BOOTSTRAP_APPLY_SCHEMA: "0",
   }), /role autopilot_app and database autopilot/);
+  assert.throws(() => bootstrapConfig({
+    MIGRATION_DATABASE_URL: "postgresql://bootstrap:admin-secret@db:5432/postgres",
+    DATABASE_URL: `postgresql://autopilot_app:${password}@db:5432/autopilot`,
+    AUTOPILOT_APP_DB_PASSWORD: password,
+    MEMORY_DATABASE_NAME: "memoryagent",
+    BOOTSTRAP_APPLY_SCHEMA: "auto",
+  }), /explicitly set to 0.*or 1/);
 });

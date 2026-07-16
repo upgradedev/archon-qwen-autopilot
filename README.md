@@ -353,18 +353,50 @@ Container port `9000` is bound only to
 loopback backend and serves it over HTTPS.
 
 Reproduce / redeploy it with one command on the box — [`deploy/redeploy.sh`](deploy/redeploy.sh)
-is idempotent, schema-first, fail-closed, and runs a health + intake/pending smoke:
+is a host-serialized, bounded release state machine with fail-closed gates and
+automatic rollback for ordinary failures:
 
 ```bash
 ssh -i <key.pem> <deployer>@<ecs-host>
-cd <autopilot-checkout> && git pull --ff-only
-bash deploy/redeploy.sh
+cd <autopilot-checkout>
+git fetch origin main && git switch main && git merge --ff-only origin/main
+EXPECTED_RELEASE=<trusted-40-character-final-main-sha> bash deploy/redeploy.sh
 ```
 
 It attaches to private data and egress networks, uses database `autopilot` with a
 dedicated least-privilege `autopilot_app` runtime role,
 mounts the durable JSONL ledger from the host, builds +
 serves the backend (`9000` → loopback `9100` → HTTPS proxy), and proves the round-trip.
+The release fails before build unless it holds the host-global lock and the trusted
+expected SHA exactly matches both the checked-out `HEAD` and fetched `origin/main`,
+with no hidden Git index flags or untracked/ignored inputs in Docker's reviewed source
+allowlist. It materializes the image context from `git archive EXPECTED_RELEASE`, not
+from the mutable checkout. An ordinary redeploy with a serving release also requires
+the new and serving `schema.sql` bytes to be identical; schema evolution is a separate
+expand/contract release. Runtime and bootstrap credentials stay in non-symlink mode-
+`0600` env files, including short-lived argv-free overrides, so `DATABASE_URL` is not
+placed in a Docker `-e` argument.
+
+Before database work, the controller rejects stale state, captures the serving
+container/image by immutable ID, requires an unchanged runtime DB credential, and
+proves `/ready`. A named, time-bounded bootstrap is reconciled by immutable ID and
+runs serialized, transactional privilege/schema phases; the old release must remain
+DB-ready afterward. The exact built image then passes health, DB readiness, and
+metered Qwen readiness in a non-published, non-mutating staging container while the
+old release keeps serving.
+
+For cutover, the old object is preserved and the loopback-bound final candidate starts with
+restart disabled behind a transaction-specific closed application gate, so ordinary
+business routes remain unavailable. The controller-generated marker is known before
+the gated intake; `GET /pending/:id` must return that exact pending proposal, and a
+separate named DB job transactionally deletes and proves zero matching work-item and
+memory rows. Commit then requires the final container still running with its exact
+contract, `/ready` passing, restart set to `unless-stopped`, the gate opened, and an
+ordinary Bearer-protected queue read succeeding without the bypass. Only then is the
+backup removed. An ordinary failure or handled termination re-closes traffic and
+restores the old immutable object when recovery can be proved. `SIGKILL`, host loss,
+or Docker-daemon outage remains an explicit operator-reconciliation boundary; no
+automatic rollback/traffic-state promise is made across that boundary.
 Port 9100 must **not** be public. The authoritative runbook is
 [`deploy/DEPLOY_STATE.md`](deploy/DEPLOY_STATE.md).
 
@@ -442,6 +474,7 @@ entered in the header; it is kept only in that browser tab's `sessionStorage`.
 | `POST /extract/document` | Configured Qwen vision extraction only (no loop), plus an owner/source-bound single-use process ticket, security and relevance blocks. The unchanged follow-up uses the paid slot; edits use ordinary quota. Nothing executes. **Rate-limited.** |
 | `GET /sample-document` | The bundled sample invoice ([`demo/sample-invoice.png`](demo/sample-invoice.png)) — a real image the UI's **"Use sample document"** button uploads so the whole vision path is one-click reproducible. |
 | `GET /pending` | **Bearer-protected.** Pending plus explicitly visible `executing` items awaiting reconciliation. |
+| `GET /pending/:id` | **Bearer-protected.** Read one exact proposal only while it is pending; avoids queue-order assumptions for reviewers and release canaries. |
 | `GET /decided` | **Bearer-protected.** Approved/rejected history, newest first, including tool+args amendment audit. |
 | `GET /impact-metrics` | **Bearer-protected.** Machine-measured retained-work-item proposal latency, read/analyze steps, catches and human touches; explicitly not an ROI or labor study. |
 | `POST /approve/:id` | **Bearer-protected.** Atomically claims a pending item, validates args, then executes once. |
@@ -501,7 +534,7 @@ workflow-entitlement bound.
 Both caps are env-tunable for a judging window.
 The limiter is checked **after** payload/file validation, so an invalid request or an
 unsupported/oversize document never burns budget. Validation, the approval gate, and
-every read endpoint (`/pending`, `/decided`, `/skills`, `/health`) are **not charged
+every read endpoint (`/pending`, `/pending/:id`, `/decided`, `/skills`, `/health`) is **not charged
 to this daily provider-workflow quota**. They are still covered by the coarse
 whole-HTTP per-minute abuse guard.
 

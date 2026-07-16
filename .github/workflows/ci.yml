@@ -118,12 +118,13 @@ jobs:
       - name: Submission smoke static contract (zero network)
         run: npm run smoke:submission -- --check
 
-  # Stage 2b-db — production bootstrap proof against a real PostgreSQL cluster.
-  # The bootstrap/admin DSN exists only in this one-shot job. The serving identity
-  # is a separate autopilot_app DSN, and scripts/bootstrap-db.ts verifies exact
-  # role flags, ownership, schema/table/sequence grants, and denial of CONNECT to
-  # the neighbouring Memory database. Running it twice also proves redeploy-safe
-  # idempotency rather than validating only a fresh cluster.
+  # Stage 2b-db — adversarial production-bootstrap proof against real PostgreSQL.
+  # The bootstrap/admin DSN exists only in this one-shot job. Beyond a clean-path
+  # run, this job seeds hostile table/sequence grants, snapshots the neighbouring
+  # Memory ACLs, and forces a late transactional failure after role/database
+  # mutations. The assertions prove least privilege, neighbour non-interference,
+  # rollback, recovery, required schema-mode selection (first=1/redeploy=0), and
+  # redeploy idempotency instead of only fresh-cluster success.
   database-isolation:
     needs: secret-scan
     runs-on: ubuntu-24.04
@@ -154,24 +155,13 @@ jobs:
           cache: npm
       - name: Install deps
         run: npm ci
-      - name: Create neighbouring Memory role/database prerequisite
-        run: |
-          node --input-type=module <<'NODE'
-          import pg from "pg";
-          const { Client } = pg;
-          const admin = new Client({ connectionString: process.env.MIGRATION_DATABASE_URL });
-          await admin.connect();
-          try {
-            await admin.query("CREATE ROLE memoryagent_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS");
-            await admin.query("CREATE DATABASE memoryagent OWNER postgres");
-          } finally {
-            await admin.end();
-          }
-          NODE
-      - name: Bootstrap and verify dedicated runtime identity
-        run: npm run db:bootstrap
-      - name: Re-run bootstrap to prove redeploy idempotency
-        run: npm run db:bootstrap
+      - name: Adversarial bootstrap, least-privilege, rollback, and recovery proof
+        env:
+          # The test itself also requires CI=true and localhost-only DSNs before
+          # it permits any role/database mutation.
+          CI: "true"
+          AUTOPILOT_EPHEMERAL_DB_PROOF: localhost-disposable-cluster
+        run: node tests/deploy/database-bootstrap-adversarial.mjs
 
   # Stage 2c-docs — documentation-drift fitness functions. A DISTINCT job so it shows
   # as its own check: it asserts the README's claims (model ids, HTTP endpoints, the

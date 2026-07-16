@@ -47,26 +47,70 @@ archon-autopilot (container :9000, read-only root)
 Prerequisites on the ECS host:
 
 - the shared pgvector service plus private data and egress networks;
-- `<autopilot-checkout>/.env` (gitignored, mode `0600`) containing only runtime
+- `<autopilot-checkout>/.env` (gitignored, regular/non-symlink, exact mode `0600`) containing only runtime
   settings: dedicated `DATABASE_URL`, DashScope key and reviewer token;
-- `<autopilot-checkout>/.env.migration` (gitignored, mode `0600`) containing the
+- `<autopilot-checkout>/.env.migration` (gitignored, regular/non-symlink, exact mode `0600`) containing the
   bootstrap-only admin DSN and `AUTOPILOT_APP_DB_PASSWORD`; this file is passed only
   to the one-shot bootstrap container, never the application runtime;
+- the trusted 40-character commit SHA of the final merged `main`, obtained from the
+  release/CI record rather than recomputed from an arbitrary host checkout;
 - TLS reverse proxy routing the Autopilot hostname to `127.0.0.1:9100`.
 
 Release:
 
 ```bash
 cd <autopilot-checkout>
-git pull --ff-only
-bash deploy/redeploy.sh
+git fetch origin main
+git switch main
+git merge --ff-only origin/main
+EXPECTED_RELEASE=<trusted-40-character-final-main-sha> bash deploy/redeploy.sh
 ```
 
-The script creates/rotates the dedicated role, migrates as bootstrap admin, applies
-least-privilege grants, proves cross-database denial, then builds/replaces the runtime.
-It attaches both networks, mounts the durable ledger, runs `/health`, network-free
-`/ready` and authenticated/metered `/ready/deep`, and
-performs an authenticated intake→pending smoke with cleanup.
+The script first acquires a host-global exclusive lock (shared by every checkout), proves
+`HEAD == origin/main == EXPECTED_RELEASE`, rejects tracked or non-ignored untracked
+changes, ignored untracked files admitted by Docker's reviewed source allowlist,
+and hidden assume-unchanged/skip-worktree index flags, then validates both env-file
+types and exact permissions. Before build or database mutation it requires a reliable
+Docker inventory, refuses stale rollback state, captures the serving container and
+image by immutable ID, requires the runtime `DATABASE_URL` to be unchanged, and proves
+the old release is DB-ready. Database credential rotation is deliberately a separate
+two-phase operation, not an ordinary redeploy.
+
+The controller creates the build context from `git archive EXPECTED_RELEASE`, records
+Docker's immutable `sha256` image ID, and embeds that revision at image level. With a
+serving release, ordinary redeploy requires the committed `schema.sql` to be byte-for-
+byte identical to the schema inside that release; schema evolution uses a separately
+reviewed expand/contract release. Runtime values are copied into short-lived mode-
+`0600` env files under `.git` and passed with `--env-file`, not credential-bearing
+Docker `-e` arguments. The bootstrap runs as a named, bounded, restart-disabled job:
+its Docker timeout is reconciled by immutable ID, a PostgreSQL advisory lock refuses
+concurrent DB bootstrap, and its role/ACL and schema/grant phases fail closed inside
+transactions (apart from PostgreSQL's necessarily out-of-transaction first database
+creation). Cross-database denial and the old release's post-bootstrap `/ready` must pass.
+
+Before cutover, the exact image/config runs in a non-published staging container. It
+performs only `/health`, network-free `/ready`, and authenticated/metered `/ready/deep`
+probes—no production-DB intake—while the old release keeps serving. The controller
+then arms a transaction-specific closed application gate before stopping anything,
+preserves the old container by immutable ID, and starts the loopback-bound candidate
+with restart disabled. Health endpoints remain probeable, but ordinary business
+traffic receives `503` unless it carries the controller's per-transaction bypass.
+
+The host creates a high-entropy vendor marker before gated intake and requires the
+returned ID/vendor/status through the exact protected `GET /pending/:id` route. An
+independent named DB cleanup job deletes within a transaction and proves zero matching
+work-item and vendor-memory rows. Commit requires that cleanup proof, the final exact
+container still running, `/ready` passing, restart updated to `unless-stopped`, the
+release gate opened, and an ordinary Bearer-protected `/pending?limit=1` read succeeding
+without the bypass. Only after that commit does the controller remove the old object.
+
+An ordinary error, hangup, interrupt, or termination first re-closes the application
+gate, quiets the candidate, independently cleans any smoke residue, and only then
+restarts/reconciles the old immutable object when `/ready` can be proved. An uncatchable
+`SIGKILL`, host loss, or Docker-daemon outage can interrupt that sequence—including
+after the gate-open point—so automatic traffic closure or rollback is not promised;
+inspect and explicitly reconcile any candidate, backup, cleanup job, and release-gate
+directory before retrying.
 
 Post-release external checks:
 

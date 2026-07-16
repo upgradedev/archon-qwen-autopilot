@@ -4,6 +4,8 @@
 
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { mkdir, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { buildServer, configuredTrustProxy, reviewedInvoiceDigest, type ServerDeps } from "../../src/server.js";
 import { FakeEmbedder } from "../../src/memory/embeddings.js";
@@ -281,13 +283,24 @@ test("withReviewFlags flags a below-threshold confidence for review, and leaves 
   assert.equal(inferred.requiresCarefulReview, true);
 });
 
-test("GET /pending carries the advisory lowConfidence review flag on each item", async () => {
-  await app.inject({ method: "POST", url: "/intake", headers: AUTH, payload: { invoice: sampleInvoice } });
+test("GET /pending and exact-item lookup carry the advisory review flags", async () => {
+  const intake = await app.inject({ method: "POST", url: "/intake", headers: AUTH, payload: { invoice: sampleInvoice } });
+  const id = intake.json().id as string;
   const res = await app.inject({ method: "GET", url: "/pending", headers: AUTH });
   assert.equal(res.statusCode, 200);
-  const items = res.json().pending as Array<{ lowConfidence: unknown }>;
+  const items = res.json().pending as Array<{ id: string; lowConfidence: unknown }>;
   assert.ok(items.length >= 1);
   for (const it of items) assert.equal(typeof it.lowConfidence, "boolean", "every pending item exposes lowConfidence");
+
+  const exact = await app.inject({ method: "GET", url: `/pending/${id}`, headers: AUTH });
+  assert.equal(exact.statusCode, 200);
+  assert.equal(exact.json().pending.id, id, "the canary can prove its own exact item without queue-order assumptions");
+  assert.equal(typeof exact.json().pending.lowConfidence, "boolean");
+  assert.equal((await app.inject({ method: "GET", url: `/pending/${id}` })).statusCode, 401);
+  assert.equal(
+    (await app.inject({ method: "GET", url: "/pending/00000000-0000-4000-8000-000000000000", headers: AUTH })).statusCode,
+    404
+  );
 });
 
 test("CORS is same-origin by default and reflects only an exact configured allowlist origin", async () => {
@@ -377,6 +390,70 @@ test("reviewer APIs return 503 when REVIEWER_TOKEN is unconfigured; public healt
   } finally {
     await local.close();
   }
+});
+
+test("deployment cutover gate is fail-closed, probe-only, re-closeable, and bypasses only with its exact secret", async () => {
+  const gateDir = resolve(".artifacts", `server-release-gate-${process.pid}`);
+  const symlinkTarget = resolve(".artifacts", `server-release-gate-target-${process.pid}`);
+  const gateToken = "deployment-gate-test-token-000000000000000000000001";
+  await rm(gateDir, { recursive: true, force: true });
+  await rm(symlinkTarget, { force: true });
+  await mkdir(gateDir, { recursive: true });
+  await writeFile(resolve(gateDir, "contract"), "archon-release-gate-v1\n", "utf8");
+  await writeFile(resolve(gateDir, "closed"), "closed\n", "utf8");
+  const local = await buildServer(deps({ deploymentGateDir: gateDir, deploymentGateToken: gateToken }));
+  await local.ready();
+  try {
+    assert.equal((await local.inject({ method: "GET", url: "/health" })).statusCode, 200);
+    assert.equal((await local.inject({ method: "GET", url: "/health?deployment=probe" })).statusCode, 200);
+    assert.equal((await local.inject({ method: "POST", url: "/health" })).statusCode, 503, "probe bypass is method-bounded");
+    assert.equal((await local.inject({ method: "GET", url: "/ready" })).statusCode, 200);
+    assert.equal((await local.inject({ method: "GET", url: "/pending", headers: AUTH })).statusCode, 503);
+    assert.equal((await local.inject({ method: "GET", url: "/" })).statusCode, 503);
+    assert.equal((await local.inject({ method: "POST", url: "/intake", payload: { invoice: sampleInvoice } })).statusCode, 503);
+    assert.equal((await local.inject({
+      method: "GET",
+      url: "/pending",
+      headers: { ...AUTH, "x-archon-deployment-gate": "wrong-token" },
+    })).statusCode, 503);
+    assert.equal((await local.inject({
+      method: "GET",
+      url: "/pending",
+      headers: { ...AUTH, "x-archon-deployment-gate": gateToken },
+    })).statusCode, 200);
+
+    await unlink(resolve(gateDir, "closed"));
+    assert.equal((await local.inject({ method: "GET", url: "/pending", headers: AUTH })).statusCode, 200);
+    await writeFile(resolve(gateDir, "contract"), "archon-release-gate-v1\nextra\n", "utf8");
+    assert.equal((await local.inject({ method: "GET", url: "/pending", headers: AUTH })).statusCode, 503);
+    await writeFile(resolve(gateDir, "contract"), "archon-release-gate-v1\n", "utf8");
+    await writeFile(resolve(gateDir, "closed"), "closed\n", "utf8");
+    assert.equal((await local.inject({ method: "GET", url: "/pending", headers: AUTH })).statusCode, 503);
+    await unlink(resolve(gateDir, "closed"));
+    await writeFile(resolve(gateDir, "unexpected"), "fail closed\n", "utf8");
+    assert.equal((await local.inject({ method: "GET", url: "/pending", headers: AUTH })).statusCode, 503);
+    if (process.platform !== "win32") {
+      await unlink(resolve(gateDir, "unexpected"));
+      await writeFile(symlinkTarget, "archon-release-gate-v1\n", "utf8");
+      await unlink(resolve(gateDir, "contract"));
+      await symlink(symlinkTarget, resolve(gateDir, "contract"), "file");
+      assert.equal(
+        (await local.inject({ method: "GET", url: "/pending", headers: AUTH })).statusCode,
+        503,
+        "a symlinked release contract must stay fail-closed",
+      );
+    }
+  } finally {
+    await local.close();
+    await rm(gateDir, { recursive: true, force: true });
+    await rm(symlinkTarget, { force: true });
+  }
+});
+
+test("deployment cutover gate rejects partial, relative, and weak configuration", async () => {
+  await assert.rejects(() => buildServer(deps({ deploymentGateDir: resolve(".artifacts", "gate"), deploymentGateToken: null })), /configured together/);
+  await assert.rejects(() => buildServer(deps({ deploymentGateDir: "relative/gate", deploymentGateToken: "x".repeat(40) })), /must be absolute/);
+  await assert.rejects(() => buildServer(deps({ deploymentGateDir: resolve(".artifacts", "gate"), deploymentGateToken: "weak" })), /32–256/);
 });
 
 test("production startup fails closed when REVIEWER_TOKEN is absent from real configuration", async () => {
@@ -1283,16 +1360,16 @@ test("approval UI has a strict hash-based CSP with no inline-attribute escape ha
   assert.doesNotMatch(res.body, /<[^>]+\son[a-z]+=/i, "UI markup has no inline event handlers");
 });
 
-test("structured logger redacts bearer and reviewer-token fields", async () => {
+test("structured logger redacts bearer, reviewer-token, and deployment-gate fields", async () => {
   let logs = "";
   const local = await buildServer(deps({ loggerStream: { write: (message) => { logs += message; } } }));
   await local.ready();
   try {
     const secret = "super-secret-reviewer-token-value";
     local.log.info({
-      req: { headers: { authorization: `Bearer ${secret}`, "x-reviewer-token": secret } },
-      request: { headers: { authorization: `Bearer ${secret}`, "x-reviewer-token": secret } },
-      headers: { authorization: `Bearer ${secret}`, "x-reviewer-token": secret },
+      req: { headers: { authorization: `Bearer ${secret}`, "x-reviewer-token": secret, "x-archon-deployment-gate": secret } },
+      request: { headers: { authorization: `Bearer ${secret}`, "x-reviewer-token": secret, "x-archon-deployment-gate": secret } },
+      headers: { authorization: `Bearer ${secret}`, "x-reviewer-token": secret, "x-archon-deployment-gate": secret },
       authorization: `Bearer ${secret}`,
       reviewerToken: secret,
       token: secret,

@@ -71,33 +71,88 @@ Run on the ECS host from the final repository checkout:
 
 ```bash
 cd <autopilot-checkout>
-git pull --ff-only
-bash deploy/redeploy.sh
+git fetch origin main
+git switch main
+git merge --ff-only origin/main
+EXPECTED_RELEASE=<trusted-40-character-final-main-sha> bash deploy/redeploy.sh
 ```
 
-Optional `--no-smoke` skips only the intake/pending round-trip; it still runs health
-and readiness probes. A normal release should not skip the smoke.
+`EXPECTED_RELEASE` is mandatory, lowercase, and exactly 40 hexadecimal characters.
+Copy it from the final merged-main release/CI record; do not derive it from whatever
+revision happens to be checked out on the host. The script independently requires
+both `HEAD` and the fetched `refs/remotes/origin/main` to match it, rejects
+assume-unchanged/skip-worktree index flags, and requires every reviewed Docker build
+input to be clean, including ignored untracked files within the admitted source tree.
+
+`--no-smoke` is an emergency diagnostic weakening: it omits the mutating intake,
+exact-item assertion, and independent zero-residual cleanup canary. Non-mutating
+staging/final readiness and the gate-open protected read still run, but a deployment
+using this flag is not valid evidence for the end-to-end release-smoke claim.
 
 `deploy/redeploy.sh` performs, in order:
 
-1. Verify Docker/curl, repository path, both networks, production Qwen/reviewer
-   settings, dedicated runtime DSN, and mode-0600 migration env separation.
-2. Provision `/var/lib/archon-autopilot/ledger` as a private persistent directory for
-   the image's uid/gid 1000.
-3. Build the final backend image.
-4. In a one-shot container, create/rotate `autopilot_app`, create `autopilot` if
-   absent, migrate as admin, grant least privilege, and prove the runtime role cannot
-   connect to `memoryagent`.
-5. Replace `archon-autopilot` with:
+1. Verify Docker/Git/`flock`/GNU `timeout`, acquire the host-global exclusive release
+   lock shared by all checkouts, and prove the exact expected release and complete
+   clean Docker build inputs,
+   both networks, production Qwen/reviewer settings, dedicated runtime DSN, and
+   regular non-symlink runtime/migration env files with exact mode `0600`.
+2. Obtain a reliable Docker inventory and refuse stale rollback state before build or
+   database mutation. If a release is serving, capture its container and image by
+   immutable ID, require it to be running with the exact unchanged `DATABASE_URL`,
+   and prove its network-free `/ready`. Ordinary redeploy never rotates that credential.
+3. Provision `/var/lib/archon-autopilot/ledger`, materialize a private build context
+   with `git archive EXPECTED_RELEASE`, and—when an old release exists—require its
+   embedded `schema.sql` to be byte-identical. Build under a hard timeout, capture the
+   resulting `sha256` image ID, and require the image-level OCI revision to equal the
+   expected release. Schema evolution is a separate expand/contract release.
+4. Verify the compiled Alibaba Model Studio endpoint contract. Put validated runtime
+   and DB values in short-lived mode-`0600` env files and pass them via `--env-file`;
+   no credential-bearing `-e DATABASE_URL=...` value enters Docker's argv.
+5. Run bootstrap as a named, restart-disabled job with a bounded Docker wait. Reconcile
+   timeout/error outcomes by immutable ID so it cannot continue mutating after failure.
+   A PostgreSQL advisory lock refuses concurrent bootstrap; role/password/membership/
+   ownership/ACL and schema/grant phases each fail closed transactionally, while only
+   initial `CREATE DATABASE` necessarily occurs outside a transaction. Prove exact
+   least privilege, cross-database denial, and the old release's post-bootstrap `/ready`.
+6. Start the exact image in a non-published, restart-disabled staging container while
+   the old release serves. Verify immutable image/revision, security/env/mount/network
+   contract, `/health`, `/ready`, and `/ready/deep`, make no intake/DB writes, then
+   remove and prove the staging object absent.
+7. Create and close a transaction-specific, root-owned application gate before any
+   serving-state mutation. Revalidate the old identity, stop/preserve it under the
+   rollback name, then start the final candidate with restart policy `no` behind the
+   closed gate:
    - `--network <memoryagent>_data`, then connect `<memoryagent>_edge`;
    - `-p 127.0.0.1:9100:9000`;
    - read-only root, `/tmp` tmpfs, all Linux capabilities dropped, and
      `no-new-privileges`;
    - durable ledger host bind mount;
-   - explicit `DATABASE_URL`, `PORT`, and `LEDGER_JSONL_PATH` overrides after `.env`.
-6. Poll `/health`, network-free `/ready`, and authenticated/metered `/ready/deep`.
-7. Submit a dedicated authenticated smoke invoice, read `/pending` with the private Bearer token,
-   then delete only the smoke vendor's work-item/memory rows.
+   - short-lived env-file overrides after `.env`, plus a read-only gate mount.
+   The gate leaves only `/health`, `/ready`, and `/ready/deep` ordinarily probeable;
+   a missing, unreadable, malformed, closed, or unexpectedly populated gate directory
+   makes every other route return `503` except for the controller's secret bypass.
+8. Re-verify the final immutable contract and run bounded in-container health/readiness
+   probes. Unless explicitly skipped, generate the vendor marker on the host before
+   intake, submit through the closed-gate bypass, and require its exact ID/vendor/
+   pending status from Bearer-protected `GET /pending/:id`.
+9. In a separate named DB job, transactionally delete the exact smoke work item and
+   at most its vendor-memory row, then query and require zero matching residual rows.
+10. Set `unless-stopped`, re-verify the exact running contract and `/ready`, require
+    cleanup complete, atomically open the release gate, and prove an ordinary
+    Bearer-protected `/pending?limit=1` read without the bypass. Re-verify the final
+    running contract, mark the candidate authoritative, then remove the stopped backup
+    by immutable ID.
+
+For an ordinary error, `HUP`, `INT`, or `TERM`, rollback re-closes the gate, quiets the
+candidate, independently cleans and proves zero smoke residue, then starts the old
+container by immutable ID, proves `/ready`, and reconciles its production name. The
+handler ignores a second handled termination while recovery is in progress. An
+uncatchable `SIGKILL`, host loss, or Docker-daemon outage can interrupt recovery or
+occur just after gate-open, so neither automatic traffic closure nor rollback is
+promised across that boundary. Inspect and explicitly reconcile every candidate,
+backup, bootstrap/cleanup job, and release-gate directory before retrying. Database
+credential rotation and schema evolution remain separate, explicitly reviewed
+operations rather than exceptions to ordinary-redeploy invariants.
 
 Useful overrides are documented in the script header: `APP_DIR`, `IMAGE`, `CONTAINER`,
 `HOST_PORT`, `DATA_NETWORK`, `EDGE_NETWORK`, `MIGRATION_ENV_FILE`, `BASE_URL`, `PUBLIC_BASE_URL`,
@@ -112,8 +167,13 @@ curl -fsS http://127.0.0.1:9100/health
 curl -fsS http://127.0.0.1:9100/ready
 docker inspect archon-autopilot --format '{{json .NetworkSettings.Networks}}'
 docker inspect archon-autopilot --format '{{json .HostConfig.PortBindings}}'
+docker inspect archon-autopilot --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
 test -d /var/lib/archon-autopilot/ledger
 ```
+
+The revision label must equal the same trusted `EXPECTED_RELEASE` supplied to the
+deploy command. Never publish raw `docker inspect` output containing infrastructure
+identifiers; retain it only as private release evidence and expose a redacted proof.
 
 From outside the host:
 
@@ -122,9 +182,10 @@ curl -fsS https://autopilot.43.106.13.19.sslip.io/health
 curl -fsS https://autopilot.43.106.13.19.sslip.io/ready
 ```
 
-For an authenticated queue smoke, load the token without printing it and call the
-public HTTPS `/pending` endpoint. Never paste the token into shell history, logs,
-screenshots, or public documentation.
+For an authenticated queue check, load the token without printing it. `GET /pending`
+lists the queue; `GET /pending/:id` reads one exact still-pending item without a queue-
+order assumption. Never paste the token into shell history, logs, screenshots, or
+public documentation.
 
 ## Network/security invariant
 

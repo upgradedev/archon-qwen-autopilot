@@ -16,6 +16,43 @@ import { Pool, type PoolClient, type QueryResultRow } from "pg";
 
 let pool: Pool | null = null;
 
+export interface DatabasePoolConfig {
+  max: number;
+  connectionTimeoutMillis: number;
+  query_timeout: number;
+  statement_timeout: number;
+}
+
+function exactBoundedInteger(
+  env: NodeJS.ProcessEnv,
+  name: string,
+  fallback: number,
+  minimum: number,
+  maximum: number
+): number {
+  const raw = env[name];
+  if (raw === undefined || raw === "") return fallback;
+  if (!/^(0|[1-9][0-9]*)$/.test(raw)) throw new Error(`${name} must be a canonical integer`);
+  const parsed = Number(raw);
+  if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new Error(`${name} must be between ${minimum} and ${maximum}`);
+  }
+  return parsed;
+}
+
+export function resolveDatabasePoolConfig(env: NodeJS.ProcessEnv = process.env): DatabasePoolConfig {
+  const config = {
+    max: exactBoundedInteger(env, "PGPOOL_MAX", 5, 1, 50),
+    connectionTimeoutMillis: exactBoundedInteger(env, "PG_CONNECT_TIMEOUT_MS", 10_000, 100, 120_000),
+    query_timeout: exactBoundedInteger(env, "PG_QUERY_TIMEOUT_MS", 30_000, 100, 300_000),
+    statement_timeout: exactBoundedInteger(env, "PG_STATEMENT_TIMEOUT_MS", 30_000, 100, 300_000),
+  };
+  if (config.statement_timeout > config.query_timeout) {
+    throw new Error("PG_STATEMENT_TIMEOUT_MS must not exceed PG_QUERY_TIMEOUT_MS");
+  }
+  return config;
+}
+
 export function hasDatabase(): boolean {
   return Boolean(process.env.DATABASE_URL);
 }
@@ -26,10 +63,16 @@ export function getPool(): Pool {
   if (!connectionString) {
     throw new Error("DATABASE_URL is not set (point it at your pgvector database).");
   }
+  const bounded = resolveDatabasePoolConfig();
   pool = new Pool({
     connectionString,
-    max: Number(process.env.PGPOOL_MAX ?? 5),
+    max: bounded.max,
     application_name: "archon-qwen-autopilot",
+    // Bound both connection establishment and server/client query execution so
+    // readiness and live requests cannot hold a deployment gate indefinitely.
+    connectionTimeoutMillis: bounded.connectionTimeoutMillis,
+    query_timeout: bounded.query_timeout,
+    statement_timeout: bounded.statement_timeout,
   });
   return pool;
 }
