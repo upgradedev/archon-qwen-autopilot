@@ -1,7 +1,8 @@
 # Sanitized final media only
 
-Tracked Devpost-ready screenshots belong here after metadata/secret review. Raw
-recordings and originals belong in ignored `demo/.private-captures/` or `.artifacts/`.
+Tracked Devpost-ready screenshots belong here after metadata/secret review. Untouched
+private masters belong in ignored `demo/private-originals/`; working captures and
+build scratch belong in ignored `demo/.private-captures/` or `.artifacts/`.
 Obsolete pre-auth UI captures were removed; only explicitly promoted files in this
 directory can become gallery evidence.
 

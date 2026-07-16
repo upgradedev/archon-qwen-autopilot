@@ -61,6 +61,8 @@ page so a human can inspect every field and consent to the rules.
 | Alibaba/Qwen code proof | https://github.com/upgradedev/archon-qwen-autopilot/blob/main/src/qwen/client.ts |
 | Architecture diagram link | https://github.com/upgradedev/archon-qwen-autopilot/blob/main/docs/judge-architecture.svg |
 | Architecture gallery upload | `demo/final-media/judge-architecture.jpg` |
+| Devpost project thumbnail | `demo/thumbnail.png` (1500×1000, 3:2) |
+| Editable thumbnail source | `demo/thumbnail.svg` |
 | Public demo video | `[PUBLIC_VIDEO_URL]` |
 | Optional public build-journey post | `[PUBLIC_BLOG_OR_SOCIAL_URL]` |
 
@@ -109,7 +111,25 @@ Use this only if Devpost exposes a separate short-summary field:
 
 > This is a standalone Track-4 accounts-payable orchestration product. Its core is a business-workflow state machine: ambiguous invoice intake, bounded tool use, durable PENDING work, authenticated human decisions, exact-argument execution, uncertain-outcome recovery, and post-decision audit/feedback. Persistent vendor history is one read-only evidence adapter; it is not the product lifecycle or the submitted track objective.
 
-## 6 · Gallery order, captions, and alt text
+## 6 · Project thumbnail
+
+Upload [`thumbnail.png`](thumbnail.png) as the Devpost project thumbnail. Its editable
+source is [`thumbnail.svg`](thumbnail.svg).
+
+- Canvas: exactly **1500×1000** pixels (**3:2**).
+- Card-size message: **invoice → Qwen reads → recalls history → proposes → human gate**.
+- Alt text: **Archon Autopilot workflow showing an untrusted invoice flowing through
+  Qwen document reading, persistent vendor-history recall, a pending action proposal,
+  and an authenticated human gate.**
+- Rights/provenance: an original in-repository vector composed only from authored SVG
+  geometry, text, gradients, and a system-font stack. It embeds no third-party image,
+  logo, font, script, or remote resource and contains no metric or performance claim.
+
+The PNG dimensions and the SVG's self-contained structure are gated in
+`tests/docs/docs-consistency.test.ts`. Do not replace either file with an externally
+sourced design unless the rights sign-off and the dimension check are repeated.
+
+## 7 · Gallery order, captions, and alt text
 
 Upload only reviewed, sanitized final files. Recommended order:
 
@@ -147,7 +167,7 @@ Upload only reviewed, sanitized final files. Recommended order:
 Never upload a screenshot until the filename, pixels, metadata, visible model IDs,
 and visible SHA all pass the final-media review.
 
-## 7 · Private testing instructions
+## 8 · Private testing instructions
 
 Paste this block only into the tester-only/private instructions field. Replace the
 two bracketed values directly in Devpost; do not save them in Git.
@@ -174,7 +194,7 @@ Before saving, test these instructions in a signed-out browser with no cached to
 Keep the credential, database, TLS, Qwen quota, and judge reserve active free of charge
 through **2026-08-11 2:00 PM PDT**.
 
-## 8 · Video and optional blog fields
+## 9 · Video and optional blog fields
 
 **Video URL:** `[PUBLIC_VIDEO_URL]`
 
@@ -189,13 +209,15 @@ The blog/social field is optional for entry eligibility but required for conside
 for the Blog Post bonus. Prefer the full build-journey article in [`BLOG.md`](BLOG.md)
 over a short post because the bonus is judged on thoroughness and potential impact.
 
-## 9 · Final draft-only stop gate
+## 10 · Final draft-only stop gate
 
 - [ ] Project name, tagline, Track 4, English description, and story render correctly.
 - [ ] Repository is Public and Devpost/GitHub visibly detects MIT in the repository
   About/header area.
 - [ ] Alibaba proof links directly to `src/qwen/client.ts`.
 - [ ] Architecture is both uploaded and linked.
+- [ ] `demo/thumbnail.png` is uploaded as the project thumbnail and remains legible in
+  Devpost's card/grid preview without cropping the title, workflow, or Human Gate.
 - [ ] Final video is public, signed-out accessible, and `<3:00`.
 - [ ] Working app and private tester flow pass signed out.
 - [ ] Gallery contains only fresh sanitized current-release captures.

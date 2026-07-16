@@ -84,8 +84,9 @@ demo/final-media/autopilot-security-pending.png
 demo/final-media/autopilot-alibaba-proof.png
 ```
 
-Raw takes belong only in ignored `demo/.private-captures/` or `.artifacts/`. Do not
-overwrite a reviewed final with a raw capture.
+Untouched masters belong only in ignored `demo/private-originals/`; working raw takes
+belong in ignored `demo/.private-captures/` or `.artifacts/`. Do not overwrite a
+reviewed final with a raw capture.
 
 ## Render and mechanical acceptance
 

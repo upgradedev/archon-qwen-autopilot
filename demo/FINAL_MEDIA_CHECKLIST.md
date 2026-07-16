@@ -50,7 +50,8 @@ visible in at least one shot.
   actual decider canary and one document extraction. Keep the token hidden. Do not
   reuse a cross-entry proof clip.
 
-Store raw/original captures only under ignored `demo/.private-captures/` or
+Store untouched private masters under ignored `demo/private-originals/`, working
+captures under ignored `demo/.private-captures/`, and build scratch under ignored
 `.artifacts/`. Store selected sanitized finals under tracked `demo/final-media/` with
 descriptive names. Strip metadata and verify no pixels reveal credentials. Never use
 OS temp folders for project media.
@@ -119,6 +120,8 @@ signed-out publication checks.
 
 - [ ] Open [`DEVPOST_PACKET.md`](DEVPOST_PACKET.md) and resolve only its human-owned
   placeholders directly in the draft/publication accounts.
+- [ ] Upload the original 1500×1000 `demo/thumbnail.png` and inspect Devpost's small
+  card/grid crop; the title, Qwen workflow, and Human Gate must stay legible.
 - [ ] Select **Track 4 — Autopilot Agent**.
 - [ ] Paste [`SUBMISSION.md`](SUBMISSION.md) / [`PROJECT_STORY.md`](PROJECT_STORY.md)
   into the matching fields and remove Markdown that Devpost does not render.

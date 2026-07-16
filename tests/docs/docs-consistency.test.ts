@@ -536,6 +536,25 @@ test("CHECK 6 · media: proof narration separates deployed application SHA from 
   );
 });
 
+test("CHECK 6 · media: Devpost thumbnail is exact 3:2, original, and self-contained", () => {
+  const svgPath = join(ROOT, "demo", "thumbnail.svg");
+  const pngPath = join(ROOT, "demo", "thumbnail.png");
+  const packet = readFileSync(join(ROOT, "demo", "DEVPOST_PACKET.md"), "utf8");
+  const svg = readFileSync(svgPath, "utf8");
+  const png = readFileSync(pngPath);
+
+  assert.match(svg, /<svg\b[^>]*\bwidth="1500"[^>]*\bheight="1000"[^>]*\bviewBox="0 0 1500 1000"/i);
+  assert.doesNotMatch(svg, /<(?:image|script|foreignObject)\b/i, "thumbnail SVG must use authored vector primitives only");
+  assert.doesNotMatch(svg, /\b(?:href|xlink:href)\s*=/i, "thumbnail SVG must embed no external asset");
+  assert.doesNotMatch(svg, /url\(\s*['"]?https?:/i, "thumbnail SVG must load no remote resource");
+
+  assert.deepEqual([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10], "thumbnail must be PNG");
+  assert.equal(png.readUInt32BE(16), 1500, "thumbnail PNG width must be 1500");
+  assert.equal(png.readUInt32BE(20), 1000, "thumbnail PNG height must be 1000");
+  assert.match(packet, /demo\/thumbnail\.png[^\n]*1500×1000[^\n]*3:2/i);
+  assert.match(packet, /original in-repository vector/i, "packet must preserve thumbnail rights provenance");
+});
+
 test("CHECK 7 · supply chain: immutable Actions + hash-locked demo-video Python graph", () => {
   const NODE_VERSION = "24.18.0";
   const NPM_VERSION = "11.16.0";

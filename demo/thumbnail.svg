@@ -1,0 +1,193 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="1000" viewBox="0 0 1500 1000" role="img" aria-labelledby="title desc">
+  <title id="title">Archon Autopilot — Qwen proposes, humans decide</title>
+  <desc id="desc">A dark professional workflow showing an untrusted invoice flowing through Qwen document reading, persistent vendor-history recall, a pending action proposal, and an authenticated human gate.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#070a12"/>
+      <stop offset="0.5" stop-color="#0b1020"/>
+      <stop offset="1" stop-color="#10162b"/>
+    </linearGradient>
+    <radialGradient id="blueGlow" cx="0.24" cy="0.38" r="0.62">
+      <stop offset="0" stop-color="#2f81f7" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#2f81f7" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="greenGlow" cx="0.9" cy="0.54" r="0.45">
+      <stop offset="0" stop-color="#3ddc97" stop-opacity="0.17"/>
+      <stop offset="1" stop-color="#3ddc97" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="qwenCard" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#172d59"/>
+      <stop offset="1" stop-color="#101a32"/>
+    </linearGradient>
+    <linearGradient id="historyCard" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#25224c"/>
+      <stop offset="1" stop-color="#14192e"/>
+    </linearGradient>
+    <linearGradient id="proposalCard" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3a2b19"/>
+      <stop offset="1" stop-color="#181a27"/>
+    </linearGradient>
+    <linearGradient id="gateCard" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#123629"/>
+      <stop offset="1" stop-color="#101d22"/>
+    </linearGradient>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
+      <path d="M 48 0 L 0 0 0 48" fill="none" stroke="#7aa2e3" stroke-opacity="0.055" stroke-width="1"/>
+    </pattern>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="20" stdDeviation="24" flood-color="#000000" flood-opacity="0.42"/>
+    </filter>
+    <filter id="softGlow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="9" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L12,6 L0,12 Z" fill="#60a5fa"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L12,6 L0,12 Z" fill="#3ddc97"/>
+    </marker>
+  </defs>
+
+  <rect width="1500" height="1000" fill="url(#background)"/>
+  <rect width="1500" height="1000" fill="url(#blueGlow)"/>
+  <rect width="1500" height="1000" fill="url(#greenGlow)"/>
+  <rect width="1500" height="1000" fill="url(#grid)"/>
+  <path d="M0 790 C380 690 510 975 920 850 C1190 768 1290 805 1500 715 L1500 1000 L0 1000 Z" fill="#0a0f1d" fill-opacity="0.7"/>
+
+  <!-- Header -->
+  <g font-family="Inter, Segoe UI, Arial, sans-serif">
+    <rect x="72" y="64" width="278" height="45" rx="22.5" fill="#12223f" stroke="#3b82f6" stroke-opacity="0.68"/>
+    <circle cx="97" cy="86.5" r="6" fill="#60a5fa" filter="url(#softGlow)"/>
+    <text x="116" y="93" fill="#b9d7ff" font-size="18" font-weight="700" letter-spacing="1.5">TRACK 4 · AUTOPILOT AGENT</text>
+
+    <text x="72" y="177" fill="#f8fafc" font-size="66" font-weight="800" letter-spacing="-1.8">ARCHON AUTOPILOT</text>
+    <text x="75" y="225" fill="#aebbd0" font-size="28" font-weight="450">Qwen judgment. Human-controlled money.</text>
+
+    <g transform="translate(1116 66)">
+      <rect width="312" height="62" rx="31" fill="#0e1828" stroke="#3ddc97" stroke-opacity="0.68"/>
+      <circle cx="34" cy="31" r="16" fill="#123b2d" stroke="#57e4aa"/>
+      <path d="M27 31 l5 5 10-12" fill="none" stroke="#76f0bb" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="62" y="38" fill="#d9ffed" font-size="19" font-weight="750" letter-spacing="0.7">PENDING → HUMAN DECISION</text>
+    </g>
+  </g>
+
+  <!-- Main workflow rail -->
+  <g filter="url(#shadow)">
+    <!-- Invoice -->
+    <g transform="translate(64 328)">
+      <rect width="206" height="320" rx="30" fill="#101725" stroke="#334155" stroke-width="2"/>
+      <rect x="20" y="20" width="166" height="36" rx="18" fill="#1d2737"/>
+      <circle cx="41" cy="38" r="5" fill="#f87171"/>
+      <text x="56" y="44" fill="#d7dfeb" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15" font-weight="750" letter-spacing="1.1">UNTRUSTED</text>
+      <g transform="translate(50 81)">
+        <path d="M6 0 H78 L112 34 V145 H6 Z" fill="#162235" stroke="#8da2bf" stroke-width="3"/>
+        <path d="M78 0 V34 H112" fill="none" stroke="#8da2bf" stroke-width="3"/>
+        <path d="M28 61 H88 M28 82 H88 M28 103 H70" stroke="#7ea6d8" stroke-width="6" stroke-linecap="round" opacity="0.78"/>
+        <circle cx="91" cy="124" r="25" fill="#351d25" stroke="#fb7185" stroke-width="3"/>
+        <path d="M91 111 V127 M91 137 V139" stroke="#fecdd3" stroke-width="5" stroke-linecap="round"/>
+      </g>
+      <text x="103" y="266" fill="#f1f5f9" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="23" font-weight="800" text-anchor="middle">INVOICE</text>
+      <text x="103" y="294" fill="#8291a8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15" text-anchor="middle">PDF · IMAGE · JSON</text>
+    </g>
+
+    <!-- Qwen reads -->
+    <g transform="translate(329 328)">
+      <rect width="250" height="320" rx="30" fill="url(#qwenCard)" stroke="#4c9cff" stroke-width="3"/>
+      <text x="26" y="47" fill="#80baff" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="800" letter-spacing="1.8">01 · QWEN</text>
+      <g transform="translate(61 79)">
+        <path d="M0 56 C30 16 98 16 128 56 C98 96 30 96 0 56 Z" fill="#122445" stroke="#79b6ff" stroke-width="4"/>
+        <circle cx="64" cy="56" r="28" fill="#204d88" stroke="#b6dbff" stroke-width="4"/>
+        <circle cx="64" cy="56" r="10" fill="#e8f4ff"/>
+        <path d="M64 0 V-17 M9 12 L-3 0 M119 12 L131 0" stroke="#60a5fa" stroke-width="4" stroke-linecap="round" opacity="0.9"/>
+      </g>
+      <text x="125" y="235" fill="#ffffff" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="30" font-weight="850" text-anchor="middle">READS</text>
+      <text x="125" y="270" fill="#c3d5ed" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18" font-weight="600" text-anchor="middle">documents + fields</text>
+      <rect x="53" y="289" width="144" height="4" rx="2" fill="#60a5fa" opacity="0.72"/>
+    </g>
+
+    <!-- Recall history -->
+    <g transform="translate(639 328)">
+      <rect width="250" height="320" rx="30" fill="url(#historyCard)" stroke="#8b7cff" stroke-width="2.5"/>
+      <text x="26" y="47" fill="#b8acff" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="800" letter-spacing="1.8">02 · MEMORY</text>
+      <g transform="translate(53 82)">
+        <ellipse cx="72" cy="20" rx="65" ry="20" fill="#3a3470" stroke="#b1a7ff" stroke-width="3"/>
+        <path d="M7 20 V111 C7 122 36 132 72 132 C108 132 137 122 137 111 V20" fill="#25244d" stroke="#9288e8" stroke-width="3"/>
+        <path d="M7 57 C7 68 36 78 72 78 C108 78 137 68 137 57 M7 93 C7 104 36 114 72 114 C108 114 137 104 137 93" fill="none" stroke="#776fc8" stroke-width="3"/>
+        <circle cx="120" cy="110" r="26" fill="#152f35" stroke="#56d6c9" stroke-width="3"/>
+        <path d="M108 110 h24 M120 98 v24" stroke="#8af4e8" stroke-width="4" stroke-linecap="round"/>
+      </g>
+      <text x="125" y="235" fill="#ffffff" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="29" font-weight="850" text-anchor="middle">RECALLS</text>
+      <text x="125" y="270" fill="#d0cbf7" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18" font-weight="600" text-anchor="middle">vendor history</text>
+      <text x="125" y="296" fill="#837eb4" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15" text-anchor="middle">persistent · pgvector</text>
+    </g>
+
+    <!-- Proposal -->
+    <g transform="translate(949 328)">
+      <rect width="250" height="320" rx="30" fill="url(#proposalCard)" stroke="#eab95e" stroke-width="2.5"/>
+      <text x="26" y="47" fill="#f6ca78" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="800" letter-spacing="1.8">03 · ACTION</text>
+      <g transform="translate(42 80)">
+        <rect width="166" height="136" rx="19" fill="#171d2b" stroke="#d8a94f" stroke-width="3"/>
+        <rect x="18" y="18" width="86" height="19" rx="9.5" fill="#332817"/>
+        <circle cx="30" cy="27.5" r="5" fill="#fbbf24"/>
+        <text x="42" y="33" fill="#fde6ad" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="13" font-weight="800">PENDING</text>
+        <path d="M21 59 H145 M21 83 H122 M21 107 H137" stroke="#8290a8" stroke-width="7" stroke-linecap="round" opacity="0.72"/>
+        <circle cx="145" cy="114" r="27" fill="#3b2c12" stroke="#fbbf24" stroke-width="3"/>
+        <path d="M145 101 V116 L155 122" fill="none" stroke="#ffe19a" stroke-width="4" stroke-linecap="round"/>
+      </g>
+      <text x="125" y="235" fill="#ffffff" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="28" font-weight="850" text-anchor="middle">PROPOSES</text>
+      <text x="125" y="270" fill="#edd7ac" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18" font-weight="600" text-anchor="middle">one pending action</text>
+      <text x="125" y="296" fill="#a48d66" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15" text-anchor="middle">nothing executes</text>
+    </g>
+
+    <!-- Human gate -->
+    <g transform="translate(1259 304)">
+      <rect width="177" height="368" rx="34" fill="url(#gateCard)" stroke="#49e29e" stroke-width="4"/>
+      <rect x="25" y="24" width="127" height="34" rx="17" fill="#113d2c"/>
+      <text x="88.5" y="47" fill="#8df4c2" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="14" font-weight="850" text-anchor="middle" letter-spacing="1.4">AUTHENTICATED</text>
+      <g transform="translate(42 83)">
+        <path d="M46 0 C72 0 92 20 92 46 C92 75 72 98 46 112 C20 98 0 75 0 46 C0 20 20 0 46 0 Z" fill="#154a35" stroke="#7bf0ba" stroke-width="4"/>
+        <circle cx="46" cy="36" r="17" fill="#b9f8d8"/>
+        <path d="M18 79 C22 59 34 51 46 51 C58 51 70 59 74 79" fill="#b9f8d8"/>
+        <circle cx="72" cy="83" r="25" fill="#0d2019" stroke="#6cf0b0" stroke-width="3"/>
+        <path d="M61 83 l8 8 15-20" fill="none" stroke="#95ffd0" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </g>
+      <text x="88.5" y="237" fill="#ffffff" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="30" font-weight="900" text-anchor="middle">HUMAN</text>
+      <text x="88.5" y="273" fill="#ffffff" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="30" font-weight="900" text-anchor="middle">GATE</text>
+      <path d="M34 302 H143" stroke="#2d7255" stroke-width="2"/>
+      <text x="88.5" y="330" fill="#bff7d9" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16" font-weight="700" text-anchor="middle">APPROVE · AMEND</text>
+      <text x="88.5" y="354" fill="#86bb9f" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15" text-anchor="middle">OR REJECT</text>
+    </g>
+  </g>
+
+  <!-- Flow arrows -->
+  <g fill="none" stroke="#60a5fa" stroke-width="6" stroke-linecap="round" marker-end="url(#arrow)">
+    <path d="M278 488 H315"/>
+    <path d="M589 488 H625"/>
+    <path d="M899 488 H935"/>
+  </g>
+  <path d="M1209 488 H1244" fill="none" stroke="#3ddc97" stroke-width="7" stroke-linecap="round" marker-end="url(#arrowGreen)" filter="url(#softGlow)"/>
+
+  <!-- Consequence boundary -->
+  <g transform="translate(72 738)" font-family="Inter, Segoe UI, Arial, sans-serif">
+    <rect width="1356" height="170" rx="32" fill="#0c1321" stroke="#2b3b52" stroke-width="2"/>
+    <g transform="translate(31 26)">
+      <rect width="620" height="118" rx="25" fill="#17151d" stroke="#ef5b68" stroke-opacity="0.78"/>
+      <circle cx="60" cy="59" r="34" fill="#361b24" stroke="#fb7185" stroke-width="3"/>
+      <rect x="45" y="50" width="30" height="28" rx="6" fill="none" stroke="#fecdd3" stroke-width="4"/>
+      <path d="M51 50 V42 C51 30 69 30 69 42 V50" fill="none" stroke="#fecdd3" stroke-width="4" stroke-linecap="round"/>
+      <text x="113" y="52" fill="#ffffff" font-size="25" font-weight="850">MODEL STOPS AT PENDING</text>
+      <text x="113" y="83" fill="#b9a4ad" font-size="17" font-weight="600">NO APPROVE · NO PAY · NO EXECUTE TOOL</text>
+    </g>
+    <g transform="translate(705 26)">
+      <rect width="620" height="118" rx="25" fill="#101d1a" stroke="#3ddc97" stroke-opacity="0.72"/>
+      <circle cx="60" cy="59" r="34" fill="#123a2b" stroke="#57e4aa" stroke-width="3"/>
+      <path d="M43 59 l11 11 24-31" fill="none" stroke="#a7f3d0" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="113" y="52" fill="#ffffff" font-size="25" font-weight="850">HUMAN AUTHORIZES CONSEQUENCE</text>
+      <text x="113" y="83" fill="#9ec9b3" font-size="17" font-weight="600">APPROVED ARGS = EXECUTED ARGS</text>
+    </g>
+  </g>
+
+  <text x="750" y="956" fill="#6f819c" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="17" font-weight="650" text-anchor="middle" letter-spacing="2.4">BOUNDED WHERE JUDGMENT HELPS · HUMAN-CONTROLLED WHERE MONEY MOVES</text>
+</svg>
