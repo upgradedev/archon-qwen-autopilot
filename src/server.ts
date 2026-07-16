@@ -27,7 +27,8 @@ import multipart from "@fastify/multipart";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { createHash, timingSafeEqual } from "node:crypto";
-import { lstat, readFile, readdir } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { open, readFile, readdir } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import { isIP } from "node:net";
 import { hasDatabase, query } from "./db/client.js";
@@ -291,6 +292,7 @@ const DEPLOYMENT_GATE_HEADER = "x-archon-deployment-gate";
 const DEPLOYMENT_GATE_PROBE_PATHS = new Set(["/health", "/ready", "/ready/deep"]);
 
 async function deploymentGateOpen(directory: string): Promise<boolean> {
+  let contract: Awaited<ReturnType<typeof open>> | undefined;
   try {
     // One directory read gives a fail-closed view: exactly the attested contract
     // file means open; the closed marker or any unexpected entry means closed.
@@ -299,11 +301,19 @@ async function deploymentGateOpen(directory: string): Promise<boolean> {
     const entries = await readdir(directory);
     if (entries.length !== 1 || entries[0] !== "contract") return false;
     const contractPath = join(directory, "contract");
-    const metadata = await lstat(contractPath);
-    if (!metadata.isFile() || metadata.isSymbolicLink()) return false;
-    return await readFile(contractPath, "utf8") === DEPLOYMENT_GATE_CONTRACT;
+    // Open once and perform both the type check and content read through that
+    // immutable descriptor. O_NOFOLLOW rejects a swapped symlink on the Linux
+    // production runtime; descriptor-relative fstat/read removes the check/use
+    // race even if the directory entry is replaced after open().
+    const noFollow = typeof fsConstants.O_NOFOLLOW === "number" ? fsConstants.O_NOFOLLOW : 0;
+    contract = await open(contractPath, fsConstants.O_RDONLY | noFollow);
+    const metadata = await contract.stat();
+    if (!metadata.isFile()) return false;
+    return await contract.readFile({ encoding: "utf8" }) === DEPLOYMENT_GATE_CONTRACT;
   } catch {
     return false;
+  } finally {
+    await contract?.close().catch(() => {});
   }
 }
 

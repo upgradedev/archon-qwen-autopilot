@@ -4,7 +4,7 @@
 
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdir, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { buildServer, configuredTrustProxy, reviewedInvoiceDigest, type ServerDeps } from "../../src/server.js";
@@ -394,8 +394,10 @@ test("reviewer APIs return 503 when REVIEWER_TOKEN is unconfigured; public healt
 
 test("deployment cutover gate is fail-closed, probe-only, re-closeable, and bypasses only with its exact secret", async () => {
   const gateDir = resolve(".artifacts", `server-release-gate-${process.pid}`);
+  const symlinkTarget = resolve(".artifacts", `server-release-gate-target-${process.pid}`);
   const gateToken = "deployment-gate-test-token-000000000000000000000001";
   await rm(gateDir, { recursive: true, force: true });
+  await rm(symlinkTarget, { force: true });
   await mkdir(gateDir, { recursive: true });
   await writeFile(resolve(gateDir, "contract"), "archon-release-gate-v1\n", "utf8");
   await writeFile(resolve(gateDir, "closed"), "closed\n", "utf8");
@@ -430,9 +432,21 @@ test("deployment cutover gate is fail-closed, probe-only, re-closeable, and bypa
     await unlink(resolve(gateDir, "closed"));
     await writeFile(resolve(gateDir, "unexpected"), "fail closed\n", "utf8");
     assert.equal((await local.inject({ method: "GET", url: "/pending", headers: AUTH })).statusCode, 503);
+    if (process.platform !== "win32") {
+      await unlink(resolve(gateDir, "unexpected"));
+      await writeFile(symlinkTarget, "archon-release-gate-v1\n", "utf8");
+      await unlink(resolve(gateDir, "contract"));
+      await symlink(symlinkTarget, resolve(gateDir, "contract"), "file");
+      assert.equal(
+        (await local.inject({ method: "GET", url: "/pending", headers: AUTH })).statusCode,
+        503,
+        "a symlinked release contract must stay fail-closed",
+      );
+    }
   } finally {
     await local.close();
     await rm(gateDir, { recursive: true, force: true });
+    await rm(symlinkTarget, { force: true });
   }
 });
 
