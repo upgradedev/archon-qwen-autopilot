@@ -1665,6 +1665,9 @@ async function main() {
     const extractedNormal = JSON.parse(await page.locator('#invoiceInput').inputValue());
     const extractedNormalVendor = String(extractedNormal.vendor || extractedNormal.supplier || '');
     assert.ok(extractedNormalVendor.startsWith(vendorPrefix), 'vision extraction did not preserve the synthetic live vendor prefix');
+    // Capture the extraction panel while the upload review is still the visible
+    // application state. Processing intentionally hides it in favor of #processView.
+    await rawElementShot(page.locator('#extractReview'), path.join(rawDir, 'live-extraction-review.png'));
     await page.locator('#processBtn').click();
     await waitForText(page.locator('#processView'), /awaiting your approval|Duplicate risk held/, 300_000);
     normalItem = await findPending(baseUrl, reviewerToken, extractedNormalVendor);
@@ -1672,7 +1675,6 @@ async function main() {
     const normalCard = page.locator('#queue .card').filter({ hasText: extractedNormalVendor }).first();
     await normalCard.waitFor({ state: 'visible' });
     await normalCard.locator('.toggle').first().click().catch(() => {});
-    await rawElementShot(page.locator('#extractReview'), path.join(rawDir, 'live-extraction-review.png'));
     await rawElementShot(page.locator('#processView'), path.join(rawDir, 'live-process.png'));
     await rawElementShot(normalCard, path.join(rawDir, 'live-pending-card.png'));
     const extractionHtml = await cloneHtml(page.locator('#extractReview'), 'compact-review');
@@ -1749,15 +1751,17 @@ async function main() {
     const extractedAttack = JSON.parse(await page.locator('#invoiceInput').inputValue());
     const extractedAttackVendor = String(extractedAttack.vendor || extractedAttack.supplier || '');
     assert.ok(extractedAttackVendor.startsWith(vendorPrefix), 'vision extraction did not preserve the synthetic security vendor prefix');
+    const securityReviewText = await page.locator('#extractReview').innerText();
+    assert.match(securityReviewText, /Autonomous execution remains blocked by the human approval gate/i);
+    // As above, persist the visible extraction warning before Process switches
+    // the application to its live evidence-loop panel.
+    await rawElementShot(page.locator('#extractReview'), path.join(rawDir, 'security-extraction-review.png'));
     await page.locator('#processBtn').click();
     await waitForText(page.locator('#processView'), /awaiting your approval|Duplicate risk held/, 300_000);
     securityItem = await findPending(baseUrl, reviewerToken, extractedAttackVendor);
     assertDecisionCanary(securityItem, models.decision, 'security document canary');
     const securityCard = page.locator('#queue .card').filter({ hasText: extractedAttackVendor }).first();
     await securityCard.waitFor({ state: 'visible' });
-    const securityReviewText = await page.locator('#extractReview').innerText();
-    assert.match(securityReviewText, /Autonomous execution remains blocked by the human approval gate/i);
-    await rawElementShot(page.locator('#extractReview'), path.join(rawDir, 'security-extraction-review.png'));
     await rawElementShot(securityCard, path.join(rawDir, 'security-pending-card.png'));
     const securityLeft = await cloneHtml(page.locator('#extractReview'));
     const securityRight = await cardSnippet(page, extractedAttackVendor, 'security');
