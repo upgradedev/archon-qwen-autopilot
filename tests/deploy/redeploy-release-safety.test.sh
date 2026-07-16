@@ -205,6 +205,14 @@ set_env_value() {
   mv "$temporary" "$meta_dir/$id.env"
 }
 
+append_env_file_value() {
+  local id="$1" assignment="$2" key
+  [[ "$assignment" == *=* ]] || return 0
+  key="${assignment%%=*}"
+  [[ "$key" =~ ^[A-Z0-9_]+$ ]] || return 1
+  printf '%s\n' "$assignment" >>"$meta_dir/$id.env"
+}
+
 load_env_file() {
   local id="$1" file="$2" line
   [ -f "$file" ] || return 1
@@ -212,7 +220,10 @@ load_env_file() {
     line="${line%$'\r'}"
     [ -z "$line" ] && continue
     [[ "$line" == \#* ]] && continue
-    set_env_value "$id" "$line"
+    # Docker preserves duplicate keys contributed by separate --env-file
+    # arguments in Config.Env. Keep that runtime behavior visible to the
+    # contract test instead of silently normalizing it in the fake.
+    append_env_file_value "$id" "$line"
   done <"$file"
 }
 
@@ -940,6 +951,33 @@ run_deploy() {
   RUN_STATUS=$?
   set -e
 }
+
+assert_runtime_override_singletons() {
+  local authoritative_key
+  for authoritative_key in \
+    DATABASE_URL \
+    DASHSCOPE_API_KEY \
+    REVIEWER_TOKEN \
+    DASHSCOPE_BASE_URL \
+    PORT \
+    LEDGER_JSONL_PATH \
+    TRUST_PROXY_HOPS \
+    TRUST_PROXY_ADDRESSES \
+    DEPLOYMENT_CONFIG_ATTESTATION
+  do
+    [ "$(grep -c "^${authoritative_key}=" "$FAKE_STATE/meta/$FAKE_CANDIDATE_ID.env" || true)" = 1 ] \
+      || fail "runtime override key $authoritative_key was not materialized exactly once"
+  done
+}
+
+if [ "${RELEASE_SAFETY_TARGET:-}" = "runtime-env-contract" ]; then
+  CASE_ENV=()
+  run_deploy runtime-env-contract "$EXPECTED" 0 0
+  [ "$RUN_STATUS" -eq 0 ] || fail "runtime env contract regression failed; see $RUN_OUTPUT"
+  assert_runtime_override_singletons
+  printf 'Deploy runtime env singleton contract: PASS\n'
+  exit 0
+fi
 : <<'ORPHANED_DUPLICATE'
   container)
     [ "${2:-}" = "ls" ] || exit 2
@@ -1392,6 +1430,7 @@ assert_contains "$FAKE_DOCKER_LOG" "<-p> <127.0.0.1:19100:9000>"
   || fail "final contract lost NODE_ENV=production"
 [ "$(sed -n 's/^HOME=//p' "$FAKE_STATE/meta/$FAKE_CANDIDATE_ID.env")" = "/tmp" ] \
   || fail "final contract lost HOME=/tmp"
+assert_runtime_override_singletons
 
 GATE_TOKEN_VALUE="$(sed -n 's/^DEPLOYMENT_GATE_TOKEN=//p' "$FAKE_STATE/meta/$FAKE_CANDIDATE_ID.env")"
 [ "${#GATE_TOKEN_VALUE}" -eq 64 ] || fail "candidate did not receive the private gate token"
