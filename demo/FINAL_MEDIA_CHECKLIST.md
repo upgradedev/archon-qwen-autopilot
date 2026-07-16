@@ -109,7 +109,8 @@ signed-out publication checks.
 - [ ] Prefer the full [`BLOG.md`](BLOG.md) route and follow
   [`BLOG_PUBLICATION_CHECKLIST.md`](BLOG_PUBLICATION_CHECKLIST.md) for the optional
   bonus judged on thoroughness and potential impact.
-- [ ] Choose a draft from [`POST_DRAFTS.md`](POST_DRAFTS.md).
+- [ ] Follow the operator-only [`POST_PUBLICATION_CHECKLIST.md`](POST_PUBLICATION_CHECKLIST.md),
+  then copy only one fenced public draft from [`POST_DRAFTS.md`](POST_DRAFTS.md).
 - [ ] Attach the hero, trace, and architecture images (no secrets).
 - [ ] Keep the exact scope: offline policy eval, two configurable real transports,
   simulated payment/review, pattern-based advisory scanner.
@@ -123,6 +124,9 @@ signed-out publication checks.
 - [ ] Upload the original 1500×1000 `demo/thumbnail.png` and inspect Devpost's small
   card/grid crop; the title, Qwen workflow, and Human Gate must stay legible.
 - [ ] Select **Track 4 — Autopilot Agent**.
+- [ ] Keep **Built with** product-only: Qwen/model APIs, application runtime,
+  persistence, MCP, Docker, and Alibaba Cloud belong there; Playwright, CodeQL, Syft,
+  and Grype belong in engineering evidence, not tags.
 - [ ] Paste [`SUBMISSION.md`](SUBMISSION.md) / [`PROJECT_STORY.md`](PROJECT_STORY.md)
   into the matching fields and remove Markdown that Devpost does not render.
 - [ ] Add the public GitHub repository and confirm the MIT license is visible.

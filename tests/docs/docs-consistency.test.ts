@@ -13,8 +13,9 @@
 //            a real GitHub-style heading anchor (no silently broken judge navigation).
 //   CHECK 5  Judge-facing SMTP claims stop at awaited transport acceptance and never
 //            imply recipient delivery or recipient-level exactly-once semantics.
-//   CHECK 6  Obsolete pre-auth UI captures stay deleted so media tooling cannot
-//            accidentally promote stale evidence.
+//   CHECK 6  Submission/media copy stays judge-safe: no public self-score, product-
+//            only Built-with tags, isolated operator instructions, canonical thumbnail,
+//            and metadata-free architecture JPEG.
 //   CHECK 7  Workflow actions, Node, container services, k6, and the video renderer
 //            use exact versions plus content digests/hashes where the platform allows.
 //   CHECK 8  Promotion attempt 01 remains explicitly immutable and environment-invalid.
@@ -536,6 +537,46 @@ test("CHECK 6 · media: proof narration separates deployed application SHA from 
   );
 });
 
+test("CHECK 6 · submission copy: internal scoring, Built-with tags, and operator notes stay out of public copy", () => {
+  const memo = readFileSync(join(ROOT, "demo", "JUDGE_REVIEW.md"), "utf8");
+  assert.match(memo, /internal readiness memo[^\n]*not submission copy/i);
+  assert.doesNotMatch(memo, /\b\d+(?:\.\d+)?\s*\/\s*10\b/i, "internal memo must not publish a self-score");
+  assert.doesNotMatch(memo, /target weighted score|promise of placement/i);
+
+  const readme = readFileSync(join(ROOT, "README.md"), "utf8");
+  assert.match(readme, /JUDGE_REVIEW\.md[^\n]*internal evidence\/readiness memo, not submission copy/i);
+
+  const packet = readFileSync(join(ROOT, "demo", "DEVPOST_PACKET.md"), "utf8");
+  const builtWith = packet.match(/\*\*Technologies \/ built with\*\*\s*>\s*([^\n]+)/i)?.[1] ?? "";
+  assert.ok(builtWith.length > 0, "Devpost Built-with value is missing");
+  for (const evidenceTool of ["Playwright", "CodeQL", "Syft", "Grype"]) {
+    assert.doesNotMatch(builtWith, new RegExp(`\\b${evidenceTool}\\b`, "i"), `${evidenceTool} is evidence, not a product tag`);
+  }
+  assert.match(packet, /Playwright, CodeQL, Syft, and Grype are retained\s+engineering evidence/i);
+
+  const postCopy = readFileSync(join(ROOT, "demo", "POST_DRAFTS.md"), "utf8");
+  const publicBlocks = [...postCopy.matchAll(/```text\s*\r?\n([\s\S]*?)```/g)].map((match) => match[1]!);
+  assert.equal(publicBlocks.length, 4, "every destination must have one isolated public-copy block");
+  const operatorPhrases = [
+    /before publishing/i,
+    /replace \[PUBLIC_VIDEO_URL\]/i,
+    /copy (?:the )?exact final totals/i,
+    /do not include the reviewer token/i,
+    /paste (?:its|the) exact/i,
+    /must have green/i,
+  ];
+  for (const block of publicBlocks) {
+    for (const pattern of operatorPhrases) {
+      assert.doesNotMatch(block, pattern, `operator instruction leaked into public post copy (${pattern})`);
+    }
+  }
+
+  const operatorChecklist = readFileSync(join(ROOT, "demo", "POST_PUBLICATION_CHECKLIST.md"), "utf8");
+  assert.match(operatorChecklist, /operator only/i);
+  assert.match(operatorChecklist, /never paste any part of it/i);
+  assert.match(operatorChecklist, /replace\s+`\[PUBLIC_VIDEO_URL\]`/i);
+});
+
 test("CHECK 6 · media: Devpost thumbnail is exact 3:2, original, and self-contained", () => {
   const svgPath = join(ROOT, "demo", "thumbnail.svg");
   const pngPath = join(ROOT, "demo", "thumbnail.png");
@@ -544,6 +585,8 @@ test("CHECK 6 · media: Devpost thumbnail is exact 3:2, original, and self-conta
   const png = readFileSync(pngPath);
 
   assert.match(svg, /<svg\b[^>]*\bwidth="1500"[^>]*\bheight="1000"[^>]*\bviewBox="0 0 1500 1000"/i);
+  assert.match(svg, /Qwen proposes\. Human decides\./);
+  assert.doesNotMatch(svg, /human-controlled money/i);
   assert.doesNotMatch(svg, /<(?:image|script|foreignObject)\b/i, "thumbnail SVG must use authored vector primitives only");
   assert.doesNotMatch(svg, /\b(?:href|xlink:href)\s*=/i, "thumbnail SVG must embed no external asset");
   assert.doesNotMatch(svg, /url\(\s*['"]?https?:/i, "thumbnail SVG must load no remote resource");
@@ -553,6 +596,54 @@ test("CHECK 6 · media: Devpost thumbnail is exact 3:2, original, and self-conta
   assert.equal(png.readUInt32BE(20), 1000, "thumbnail PNG height must be 1000");
   assert.match(packet, /demo\/thumbnail\.png[^\n]*1500×1000[^\n]*3:2/i);
   assert.match(packet, /original in-repository vector/i, "packet must preserve thumbnail rights provenance");
+});
+
+test("CHECK 6 · media: canonical architecture JPEG has no public metadata segments", () => {
+  const jpeg = readFileSync(join(ROOT, "demo", "final-media", "judge-architecture.jpg"));
+  assert.deepEqual([...jpeg.subarray(0, 2)], [0xff, 0xd8], "architecture asset must be JPEG");
+
+  const metadataMarkers = new Set([
+    0xe1, 0xe2, 0xe3, 0xe4, 0xe5, 0xe6, 0xe7, 0xe8,
+    0xe9, 0xea, 0xeb, 0xec, 0xed, 0xef, 0xfe,
+  ]);
+  const observedMetadata: number[] = [];
+  const sofMarkers = new Set([
+    0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7,
+    0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf,
+  ]);
+  let width = 0;
+  let height = 0;
+  let offset = 2;
+  let sawScan = false;
+  while (offset < jpeg.length) {
+    assert.equal(jpeg[offset], 0xff, `invalid JPEG marker at ${offset}`);
+    while (offset < jpeg.length && jpeg[offset] === 0xff) offset += 1;
+    const marker = jpeg[offset++]!;
+    if (marker === 0xd9) break;
+    if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue;
+    const length = jpeg.readUInt16BE(offset);
+    assert.ok(length >= 2 && offset + length <= jpeg.length, "invalid JPEG segment");
+    if (metadataMarkers.has(marker)) observedMetadata.push(marker);
+    if (sofMarkers.has(marker)) {
+      height = jpeg.readUInt16BE(offset + 3);
+      width = jpeg.readUInt16BE(offset + 5);
+    }
+    if (marker === 0xda) {
+      sawScan = true;
+      break;
+    }
+    offset += length;
+  }
+  assert.ok(sawScan, "architecture JPEG has no scan data");
+  assert.deepEqual({ width, height }, { width: 1600, height: 900 });
+  assert.deepEqual(observedMetadata, [], "architecture JPEG retains EXIF/XMP/ICC/IPTC/comment metadata");
+  for (const signature of ["Exif", "ICC_PROFILE", "Photoshop 3.0", "Lavc"]) {
+    assert.equal(jpeg.includes(Buffer.from(signature)), false, `architecture JPEG contains ${signature} metadata`);
+  }
+
+  const renderer = readFileSync(join(ROOT, "scripts", "render-submission-assets.mjs"), "utf8");
+  assert.match(renderer, /--write\|--check/);
+  assert.match(renderer, /entropy-coded image data changed while stripping metadata/i);
 });
 
 test("CHECK 7 · supply chain: immutable Actions + hash-locked demo-video Python graph", () => {

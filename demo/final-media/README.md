@@ -26,5 +26,23 @@ Final expected artifacts:
   safety limit. The hosted
   Public video URL, not this repository file, is used in Devpost.
 
+## Reproducible authored-asset pass
+
+The canonical thumbnail and architecture raster are maintained together:
+
+```powershell
+node scripts/render-submission-assets.mjs --write
+node scripts/render-submission-assets.mjs --check
+```
+
+The script uses the lockfile-selected Playwright Chromium to render
+`demo/thumbnail.svg` at exactly 1500×1000. It then removes EXIF/XMP/ICC/IPTC/comment
+JPEG segments from `judge-architecture.jpg` without recompressing or changing its
+entropy-coded image data. `--check` fails if the PNG differs from its SVG render or
+the JPG still contains a removable metadata segment. If Chromium is not provisioned,
+install the lockfile-selected browser with `PLAYWRIGHT_BROWSERS_PATH` pointed at an
+ignored project-local `.artifacts/ms-playwright` directory; do not store submission
+masters in that scratch directory.
+
 These files do not exist until the **new exact-current-source** post-deploy capture
 pass; never substitute historical release media or media from another entry.

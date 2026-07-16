@@ -49,7 +49,11 @@ page so a human can inspect every field and consent to the rules.
 
 **Technologies / built with**
 
-> Qwen Cloud, qwen-plus, qwen-vl-max, text-embedding-v4, DashScope OpenAI-compatible API, TypeScript, Node.js, Fastify, PostgreSQL, pgvector, Model Context Protocol (MCP), Docker, Alibaba Cloud ECS, Playwright, CodeQL, Syft, Grype
+> Qwen Cloud, qwen-plus, qwen-vl-max, text-embedding-v4, DashScope OpenAI-compatible API, TypeScript, Node.js, Fastify, PostgreSQL, pgvector, Model Context Protocol (MCP), Docker, Alibaba Cloud ECS
+
+Keep this field product-only. Playwright, CodeQL, Syft, and Grype are retained
+engineering evidence described in the testing/security sections; they are not product
+technologies or Devpost **Built with** tags.
 
 ## 2 · Required public links and files
 
@@ -114,7 +118,8 @@ Use this only if Devpost exposes a separate short-summary field:
 ## 6 · Project thumbnail
 
 Upload [`thumbnail.png`](thumbnail.png) as the Devpost project thumbnail. Its editable
-source is [`thumbnail.svg`](thumbnail.svg).
+source is [`thumbnail.svg`](thumbnail.svg). Rebuild and byte-check the canonical raster
+with `node scripts/render-submission-assets.mjs --write` followed by `--check`.
 
 - Canvas: exactly **1500×1000** pixels (**3:2**).
 - Card-size message: **invoice → Qwen reads → recalls history → proposes → human gate**.

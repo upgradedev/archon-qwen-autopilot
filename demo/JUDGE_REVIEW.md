@@ -1,4 +1,8 @@
-# Archon Autopilot — strict release-candidate judge review
+# Archon Autopilot — internal release-readiness memo
+
+> **Internal readiness memo — not submission copy.** This document is a skeptical
+> evidence/gap review for the team. It deliberately does not assign a competition
+> score, estimate placement, or speak on behalf of the independent judges.
 
 **Review date:** 2026-07-16
 
@@ -20,19 +24,18 @@ and screenshots explain the workflow within three minutes without exposing the
 reviewer credential. Historical release `321b6c5…` is not final provenance after
 later runtime changes.
 
-## Rubric assessment
+## Rubric readiness review
 
-| Criterion | Target after final gates | Evidence | What prevents a perfect score |
-|---|---:|---|---|
-| **Innovation & AI Creativity (30%)** | **9.2/10** | Bounded Qwen function-calling loop; model catalog separated into five read/analyze and four proposal skills; human gate doubles as a correction signal that changes a later decision; injection resistance comes from unreachable execution rather than trusting a classifier. | The offline `22/22` is a deterministic policy result, not live-model accuracy; no multi-agent/A2A layer, by deliberate design. |
-| **Technical Depth & Engineering (30%)** | **9.4/10** | Authenticated HTTP/UI exclusively owns decisions; a four-tool MCP surface shares intake/memory but is limited to proposal/read operations; Qwen vision + embeddings + chat; pgvector memory; strict auth; production quotas; atomic claims; explicit uncertain-outcome recovery; durable restart-safe ledger; Node/real-pgvector/browser/adversarial gates; ≥80% coverage in every dimension. | The frozen vision benchmark is synthetic rather than representative real-world traffic; the local MCP surface can still read proposal/vendor state and must be access-controlled at the process boundary; SMTP cannot promise recipient-level exactly once. |
-| **Problem Value & Impact (25%)** | **8.9/10** | Solves a real AP bottleneck while retaining human control; duplicate/anomaly checks use cross-session evidence; configurable SMTP and durable JSONL ledger create real post-approval effects. | Payment rail and specialist case system remain simulated; no production time-saved or error-rate study is claimed. |
-| **Presentation (15%) — artifacts** | **9.1/10** | Strong README, architecture, judge guide, evidence matrix, honest eval method, Devpost copy, story, blog, and reproducible commands. | Final public hosted video, refreshed screenshots, and published post are human-owned and must still be supplied. |
+| Criterion | Internal readiness status | Evidence | Remaining limitation |
+|---|---|---|---|
+| **Innovation & AI Creativity (30%)** | **Strong differentiator** | Bounded Qwen function-calling loop; model catalog separated into five read/analyze and four proposal skills; human gate doubles as a correction signal that changes a later decision; injection resistance comes from unreachable execution rather than trusting a classifier. | The offline `22/22` is a deterministic policy result, not live-model accuracy; no multi-agent/A2A layer, by deliberate design. |
+| **Technical Depth & Engineering (30%)** | **Strong engineering evidence** | Authenticated HTTP/UI exclusively owns decisions; a four-tool MCP surface shares intake/memory but is limited to proposal/read operations; Qwen vision + embeddings + chat; pgvector memory; strict auth; production quotas; atomic claims; explicit uncertain-outcome recovery; durable restart-safe ledger; Node/real-pgvector/browser/adversarial gates; ≥80% coverage in every dimension. | The frozen vision benchmark is synthetic rather than representative real-world traffic; the local MCP surface can still read proposal/vendor state and must be access-controlled at the process boundary; SMTP cannot promise recipient-level exactly once. |
+| **Problem Value & Impact (25%)** | **Credible value; impact not yet quantified** | Solves a real AP bottleneck while retaining human control; duplicate/anomaly checks use cross-session evidence; configurable SMTP and durable JSONL ledger create real post-approval effects. | Payment rail and specialist case system remain simulated; no production time-saved or error-rate study is claimed. |
+| **Presentation (15%) — artifacts** | **Prepared; public media still pending** | Strong README, architecture, judge guide, evidence matrix, honest eval method, Devpost copy, story, blog, and reproducible commands. | Final public hosted video, refreshed screenshots, and published post are human-owned and must still be supplied. |
 
-**Target weighted score after exact-current-source deployment and final media:**
-approximately **9.2/10** before judging variance. This is an assessment of the
-implementation's ceiling, not its present submission eligibility or a promise of
-placement.
+The table is a release checklist, not a forecast. Competition scoring and placement
+belong exclusively to the independent judges after they review the final submitted
+media, links, and exact-source evidence.
 
 ## What a judge can verify quickly
 
@@ -144,6 +147,8 @@ No additional product feature is required for a competitive submission. The requ
 sequence is **merge final source → immutable hosted gates → exact-SHA deployment →
 live canaries → sanitized proof → video/screenshots/post → Devpost draft**. Follow
 [`FINAL_MEDIA_CHECKLIST.md`](FINAL_MEDIA_CHECKLIST.md) and
-[`DEVPOST_PACKET.md`](DEVPOST_PACKET.md); use [`POST_DRAFTS.md`](POST_DRAFTS.md); and
+[`DEVPOST_PACKET.md`](DEVPOST_PACKET.md); follow the operator-only
+[`POST_PUBLICATION_CHECKLIST.md`](POST_PUBLICATION_CHECKLIST.md), then use only the
+fenced public copy in [`POST_DRAFTS.md`](POST_DRAFTS.md); and
 keep the claim/evidence wording aligned with
 [`../docs/CLAIM_EVIDENCE_MATRIX.md`](../docs/CLAIM_EVIDENCE_MATRIX.md).
