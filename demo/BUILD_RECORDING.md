@@ -11,9 +11,13 @@ project, a chat attachment, or a desktop scratch file as the only copy.
 
 ## Release identity lock
 
-- Exact application release audited, deployed, and verified on 2026-07-15:
-  **`321b6c5440a365fe346d2c446e141e9c5d33854c`**.
-- Project-contained redacted release evidence records exact checkout, immutable
+- Historical application release audited, deployed, and verified on 2026-07-15:
+  **`321b6c5440a365fe346d2c446e141e9c5d33854c`**. Later public-main commits contain
+  runtime/dependency changes, so this SHA proves the release process but is **not**
+  final-submission provenance.
+- [ ] Record the new exact final application SHA only after it is fetched, clean,
+  built, deployed, and exercised through every gate below.
+- Project-contained redacted historical evidence records exact checkout, immutable
   post-merge CI, production build, schema/bootstrap, least privilege,
   cross-database denial, health/readiness/deep readiness, a live
   `qwen-vl-max` extraction, a real `qwen-plus` multi-step intake→PENDING smoke with
@@ -26,7 +30,7 @@ project, a chat attachment, or a desktop scratch file as the only copy.
 - Never infer a deployed SHA from the public hostname, a local branch name, an image
   tag such as `latest`, or an old successful screenshot.
 
-The expected baseline runtime models for this candidate are:
+The expected baseline runtime models for the final candidate are:
 
 | Role | Expected ID | Where the final proof comes from |
 |---|---|---|
@@ -55,16 +59,16 @@ test -z "$(git status --porcelain)"
 git show -s --format='%H %cI %s' HEAD
 ```
 
-Acceptance:
+Acceptance for the **new final application release**:
 
-- [x] `HEAD` was the exact application release SHA selected above (or a newly
-  documented replacement after a full release cycle).
-- [x] The checkout was clean before build.
-- [x] The immutable GitHub CI run resolves to the same application
+- [ ] `HEAD` is the exact final application release SHA selected after all runtime
+  changes are merged.
+- [ ] The checkout is clean before build.
+- [ ] The immutable GitHub CI run resolves to the same application
   SHA and all required jobs are green.
-- [x] The production Docker build completed from this checkout; the image was not
+- [ ] The production Docker build completes from this checkout; the image is not
   reused from a floating tag or older tree.
-- [x] The release script completed schema/bootstrap, least-privilege and
+- [ ] The release script completes schema/bootstrap, least-privilege and
   cross-database-denial checks before replacing the serving container.
 
 Use [`../deploy/redeploy.sh`](../deploy/redeploy.sh) as the authoritative release
@@ -75,22 +79,22 @@ path. Do not type a reviewer token into a command that will remain in shell hist
 Use a uniquely prefixed synthetic vendor and the actual final HTTPS hostname.
 Acceptance is all-or-nothing:
 
-- [x] Public `/health` returns `200`, `status=ok`, `store=pgvector`, and the exact
+- [ ] Public `/health` returns `200`, `status=ok`, `store=pgvector`, and the exact
   decision + embedding IDs expected above.
-- [x] Public network-free `/ready` returns `200`, `status=ready`, with reviewer auth,
+- [ ] Public network-free `/ready` returns `200`, `status=ready`, with reviewer auth,
   PostgreSQL, Qwen configuration, and embedding-model compatibility healthy.
-- [x] Authenticated, admission-controlled `/ready/deep` returned `200` and a real
+- [ ] Authenticated, admission-controlled `/ready/deep` returns `200` and a real
   embedding probe with the same embedding ID. The request header/token is never
   visible in the captured frame.
-- [x] An authenticated synthetic invoice reached durable `PENDING`; its proposal
+- [ ] An authenticated synthetic invoice reaches durable `PENDING`; its proposal
   carries the final decision model ID and no sink has fired.
-- [x] A fresh sample document extraction carried the final vision model ID and then
+- [ ] A fresh sample document extraction carries the final vision model ID and then
   fed the same bounded loop.
-- [x] An unauthenticated `/pending` request fails closed, while the private reviewer
+- [ ] An unauthenticated `/pending` request fails closed, while the private reviewer
   path works. Do not display the credential.
-- [x] Smoke work items and vendor-memory rows were removed through the approved cleanup
+- [ ] Smoke work items and vendor-memory rows are removed through the approved cleanup
   path after capture; no stale PENDING card is left for judges.
-- [x] Public UI, `/health`, `/ready`, and TLS were tested after the exact deployment.
+- [ ] Public UI, `/health`, `/ready`, and TLS are tested after the exact deployment.
 - [ ] Recheck `/docs`, the private judge path, and the proven vision flow while making
   the sanitized incognito/off-network final capture.
 

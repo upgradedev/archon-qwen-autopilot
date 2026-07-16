@@ -1,7 +1,8 @@
 # Sanitized final media only
 
-Tracked Devpost-ready screenshots belong here after metadata/secret review. Raw
-recordings and originals belong in ignored `demo/.private-captures/` or `.artifacts/`.
+Tracked Devpost-ready screenshots belong here after metadata/secret review. Untouched
+private masters belong in ignored `demo/private-originals/`; working captures and
+build scratch belong in ignored `demo/.private-captures/` or `.artifacts/`.
 Obsolete pre-auth UI captures were removed; only explicitly promoted files in this
 directory can become gallery evidence.
 
@@ -24,6 +25,30 @@ Final expected artifacts:
 - `autopilot-demo.mp4` — reviewed nine-beat render below the 175-second publication
   safety limit. The hosted
   Public video URL, not this repository file, is used in Devpost.
+- `autopilot-demo.en.srt` — exact nine-cue English sidecar measured from the same
+  frame-quantized beat windows as the final video.
+- `autopilot-demo.caption-only.json` — present only for the rights-safe
+  `CAPTION_ONLY=true` build; records no TTS/no third-party music, locally generated
+  silence, fixed 168-second/30-fps timings, readability, 1080p stream probes, and
+  SHA-256 values for the exclusively promoted MP4 and SRT.
 
-These files do not exist until the post-deploy capture pass; never substitute media
-from another entry.
+## Reproducible authored-asset pass
+
+The canonical thumbnail and architecture raster are maintained together:
+
+```powershell
+node scripts/render-submission-assets.mjs --write
+node scripts/render-submission-assets.mjs --check
+```
+
+The script uses the lockfile-selected Playwright Chromium to render
+`demo/thumbnail.svg` at exactly 1500×1000. It then removes EXIF/XMP/ICC/IPTC/comment
+JPEG segments from `judge-architecture.jpg` without recompressing or changing its
+entropy-coded image data. `--check` fails if the PNG differs from its SVG render or
+the JPG still contains a removable metadata segment. If Chromium is not provisioned,
+install the lockfile-selected browser with `PLAYWRIGHT_BROWSERS_PATH` pointed at an
+ignored project-local `.artifacts/ms-playwright` directory; do not store submission
+masters in that scratch directory.
+
+These files do not exist until the **new exact-current-source** post-deploy capture
+pass; never substitute historical release media or media from another entry.

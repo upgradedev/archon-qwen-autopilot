@@ -1,6 +1,10 @@
-# Archon Autopilot — strict final judge review
+# Archon Autopilot — internal release-readiness memo
 
-**Review date:** 2026-07-15
+> **Internal readiness memo — not submission copy.** This document is a skeptical
+> evidence/gap review for the team. It deliberately does not assign a competition
+> score, estimate placement, or speak on behalf of the independent judges.
+
+**Review date:** 2026-07-16
 
 **Entry:** Qwen Cloud Hackathon, Track 4 — Autopilot Agent
 
@@ -14,25 +18,28 @@ memory recall and AP validations, stops at one persisted proposal, and cannot ex
 without an authenticated human decision. The strongest story is the combination of
 agentic depth, structural least agency, and a measurable correction feedback loop.
 
-The engineering package is ready. Presentation is the remaining variable: the final
-recording and screenshots must make the workflow obvious within three minutes and must
-not expose the reviewer credential.
+The public-main engineering gates are green. Two final variables remain: exact-deploy
+the current application source and repeat the live canaries, then make the recording
+and screenshots explain the workflow within three minutes without exposing the
+reviewer credential. Historical release `321b6c5…` is not final provenance after
+later runtime changes.
 
-## Rubric assessment
+## Rubric readiness review
 
-| Criterion | Strict score | Evidence | What prevents a perfect score |
-|---|---:|---|---|
-| **Innovation & AI Creativity (30%)** | **9.2/10** | Bounded Qwen function-calling loop; model catalog separated into five read/analyze and four proposal skills; human gate doubles as a correction signal that changes a later decision; injection resistance comes from unreachable execution rather than trusting a classifier. | The offline `22/22` is a deterministic policy result, not live-model accuracy; no multi-agent/A2A layer, by deliberate design. |
-| **Technical Depth & Engineering (30%)** | **9.4/10** | Authenticated HTTP/UI exclusively owns decisions; a four-tool MCP surface shares intake/memory but is limited to proposal/read operations; Qwen vision + embeddings + chat; pgvector memory; strict auth; production quotas; atomic claims; explicit uncertain-outcome recovery; durable restart-safe ledger; Node/real-pgvector/browser/adversarial gates; ≥80% coverage in every dimension. | The frozen vision benchmark is synthetic rather than representative real-world traffic; the local MCP surface can still read proposal/vendor state and must be access-controlled at the process boundary; SMTP cannot promise recipient-level exactly once. |
-| **Problem Value & Impact (25%)** | **8.9/10** | Solves a real AP bottleneck while retaining human control; duplicate/anomaly checks use cross-session evidence; configurable SMTP and durable JSONL ledger create real post-approval effects. | Payment rail and specialist case system remain simulated; no production time-saved or error-rate study is claimed. |
-| **Presentation (15%) — artifacts** | **9.1/10** | Strong README, architecture, judge guide, evidence matrix, honest eval method, Devpost copy, story, blog, and reproducible commands. | Final public hosted video, refreshed screenshots, and published post are human-owned and must still be supplied. |
+| Criterion | Internal readiness status | Evidence | Remaining limitation |
+|---|---|---|---|
+| **Innovation & AI Creativity (30%)** | **Strong differentiator** | Bounded Qwen function-calling loop; model catalog separated into five read/analyze and four proposal skills; human gate doubles as a correction signal that changes a later decision; injection resistance comes from unreachable execution rather than trusting a classifier. | The offline `22/22` is a deterministic policy result, not live-model accuracy; no multi-agent/A2A layer, by deliberate design. |
+| **Technical Depth & Engineering (30%)** | **Strong engineering evidence** | Authenticated HTTP/UI exclusively owns decisions; a four-tool MCP surface shares intake/memory but is limited to proposal/read operations; Qwen vision + embeddings + chat; pgvector memory; strict auth; production quotas; atomic claims; explicit uncertain-outcome recovery; durable restart-safe ledger; Node/real-pgvector/browser/adversarial gates; ≥80% coverage in every dimension. | The frozen vision benchmark is synthetic rather than representative real-world traffic; the local MCP surface can still read proposal/vendor state and must be access-controlled at the process boundary; SMTP cannot promise recipient-level exactly once. |
+| **Problem Value & Impact (25%)** | **Credible value; impact not yet quantified** | Solves a real AP bottleneck while retaining human control; duplicate/anomaly checks use cross-session evidence; configurable SMTP and durable JSONL ledger create real post-approval effects. | Payment rail and specialist case system remain simulated; no production time-saved or error-rate study is claimed. |
+| **Presentation (15%) — artifacts** | **Prepared; public media still pending** | Strong README, architecture, judge guide, evidence matrix, honest eval method, Devpost copy, story, blog, and reproducible commands. | Final public hosted video, refreshed screenshots, and published post are human-owned and must still be supplied. |
 
-**Weighted artifact score:** approximately **9.2/10** before judging variance. This is
-an assessment of the repository and supplied materials, not a promise of placement.
+The table is a release checklist, not a forecast. Competition scoring and placement
+belong exclusively to the independent judges after they review the final submitted
+media, links, and exact-source evidence.
 
 ## What a judge can verify quickly
 
-1. Upload the real sample PNG and watch `qwen-vl-max` extraction feed the same loop as
+1. Upload the original synthetic sample PNG and watch `qwen-vl-max` extraction feed the same loop as
    JSON intake.
 2. See multiple ordered read/analyze steps stream before exactly one PENDING action.
 3. Expand the full evidence trace and inspect validation, duplicate, and variance
@@ -136,8 +143,12 @@ fail-safe review behavior.
 
 ## Remaining action
 
-No additional product feature is required for a competitive submission. The remaining
-work is the quality of the **video, screenshots, public post, and Devpost assembly**.
-Follow [`FINAL_MEDIA_CHECKLIST.md`](FINAL_MEDIA_CHECKLIST.md); use
-[`POST_DRAFTS.md`](POST_DRAFTS.md); and keep the claim/evidence wording aligned with
+No additional product feature is required for a competitive submission. The required
+sequence is **merge final source → immutable hosted gates → exact-SHA deployment →
+live canaries → sanitized proof → video/screenshots/post → Devpost draft**. Follow
+[`FINAL_MEDIA_CHECKLIST.md`](FINAL_MEDIA_CHECKLIST.md) and
+[`DEVPOST_PACKET.md`](DEVPOST_PACKET.md); follow the operator-only
+[`POST_PUBLICATION_CHECKLIST.md`](POST_PUBLICATION_CHECKLIST.md), then use only the
+fenced public copy in [`POST_DRAFTS.md`](POST_DRAFTS.md); and
+keep the claim/evidence wording aligned with
 [`../docs/CLAIM_EVIDENCE_MATRIX.md`](../docs/CLAIM_EVIDENCE_MATRIX.md).

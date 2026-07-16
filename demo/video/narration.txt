@@ -4,7 +4,7 @@ Every business drowns in incoming invoices — each recorded, validated, checked
 
 It is a Track Four accounts-payable orchestration agent: a bounded qwen-plus tool loop, durable state machine, and authenticated human gate.
 
-A real invoice, sent live over HTTPS. Watch the multi-step loop think.
+An original synthetic invoice document, sent to the live deployment over HTTPS. Watch the multi-step loop gather evidence.
 
 Step one: it recalls the vendor's history from pgvector memory.
 

@@ -1,17 +1,13 @@
 name: Generate Demo Video
 
-# <3-minute narrated submission video for Archon Autopilot (Track 4).
+# <3-minute narrated or rights-safe caption-only video for Archon Autopilot (Track 4).
 # The workflow is intentionally manual and fail-closed: it requires the reviewed,
 # sanitized final captures under demo/final-media. Historical assets under
 # demo/video/assets are never accepted as submission evidence.
-#   2. scripts/build_video.py is the PER-BEAT audio-locked orchestrator: each beat
-#      carries its own narration line; the voiceover for that line is synthesized
-#      (ElevenLabs when ELEVEN_LABS_KEY is set — else an explicitly rights-attested
-#      edge-tts fallback, one
-#      consistent voice), MEASURED, snapped to whole frames, and the beat's VIDEO
-#      duration is set to exactly that length. Audio and video for every beat (and
-#      every "Step N") are built from the SAME number, so they are frame-aligned with
-#      NO drift — the sync bug is gone at the root.
+#   2. scripts/build_video.py is the per-beat orchestrator. Narrated mode retains the
+#      measured rights-attested TTS path. CAPTION_ONLY=true instead locks the reviewed
+#      168-second/30-fps windows, invokes no TTS or third-party music, and generates
+#      digital silence locally. Both modes build video/SRT from the same frame counts.
 #   3. It renders the per-scene slideshow (PIL frames, burned auto-fit captions, NO
 #      black lead-in) and muxes the voiceover from t=0 ->
 #      demo/final-media/autopilot-demo.mp4.
@@ -38,8 +34,13 @@ on:
       promotion_evidence:
         description: "Repo-relative promotion-pass JSON; required only when showing qwen3.7."
         required: false
+      caption_only:
+        description: "Rights-safe path: no TTS/music, fixed captions + SRT, local silence."
+        required: true
+        type: boolean
+        default: false
       voice_rights_attested:
-        description: "I confirm the selected generated voice is authorized for public competition use."
+        description: "Narrated mode only: selected voice is authorized for public competition use."
         required: true
         type: boolean
         default: false
@@ -83,6 +84,7 @@ jobs:
           done
 
       - name: Build the rights-attested narrated video
+        if: ${{ !inputs.caption_only }}
         env:
           XI_API_KEY: ${{ secrets.ELEVEN_LABS_KEY }}
           VOICE_ID: ${{ github.event.inputs.voice_id }}
@@ -110,6 +112,42 @@ jobs:
           DUR=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 demo/final-media/autopilot-demo.mp4)
           python3 -c "d=float('${DUR}'); assert 30 < d < 175, f'duration {d}s out of range'; print(f'final duration OK: {d}s')"
 
+      - name: Build the rights-safe caption-only video
+        if: ${{ inputs.caption_only }}
+        env:
+          CAPTION_ONLY: "true"
+          FONT_SANS: /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+          FONT_SANS_BOLD: /usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf
+          FONT_MONO: /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf
+          ASSETS_DIR: demo/final-media
+          PUBLIC_APP_URL: ${{ github.event.inputs.public_app_url }}
+          VIDEO_MODEL_LABEL: ${{ github.event.inputs.video_model_label }}
+          VIDEO_PROMOTION_EVIDENCE: ${{ github.event.inputs.promotion_evidence }}
+          OUTPUT: demo/final-media/autopilot-demo.mp4
+          SRT_OUTPUT: demo/final-media/autopilot-demo.en.srt
+          CAPTION_MANIFEST_OUTPUT: demo/final-media/autopilot-demo.caption-only.json
+          WORKDIR: .artifacts/video-build
+        run: |
+          set -euo pipefail
+          python scripts/build_video.py
+          test -s demo/final-media/autopilot-demo.mp4
+          test -s demo/final-media/autopilot-demo.en.srt
+          test -s demo/final-media/autopilot-demo.caption-only.json
+          test ! -e .artifacts/video-build/voiceover.mp3
+          jq -e '.mode == "caption-only"
+            and .rights_profile.tts == false
+            and .rights_profile.third_party_music == false
+            and .beats == 9
+            and .fps == 30
+            and .media.video.width == 1920
+            and .media.video.height == 1080
+            and .media.duration_seconds < 175' \
+            demo/final-media/autopilot-demo.caption-only.json >/dev/null
+          test "$(sha256sum demo/final-media/autopilot-demo.mp4 | cut -d' ' -f1)" = \
+            "$(jq -r '.video.sha256' demo/final-media/autopilot-demo.caption-only.json)"
+          test "$(sha256sum demo/final-media/autopilot-demo.en.srt | cut -d' ' -f1)" = \
+            "$(jq -r '.subtitles.sidecar_sha256' demo/final-media/autopilot-demo.caption-only.json)"
+
       - name: Upload demo video
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -117,5 +155,7 @@ jobs:
           path: |
             demo/final-media/autopilot-demo.mp4
             .artifacts/video-build/voiceover.mp3
+            demo/final-media/autopilot-demo.en.srt
+            demo/final-media/autopilot-demo.caption-only.json
           if-no-files-found: error
           retention-days: 14

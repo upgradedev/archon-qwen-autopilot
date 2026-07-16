@@ -22,7 +22,9 @@ are locked in [`VIDEO_SCRIPT.md`](VIDEO_SCRIPT.md).
   are outside the capture region.
 - [ ] The five sanitized renderer inputs exist under `demo/final-media/` with their
   exact required names and have passed metadata/pixel review.
-- [ ] Voice, fonts, architecture art, logos, music, and footage have public-use rights.
+- [ ] Fonts, architecture art, logos, and footage have public-use rights. For
+  narrated mode, voice/music rights are separately confirmed; otherwise select the
+  `CAPTION_ONLY=true` no-TTS/no-third-party-music path.
 
 If any box fails, stop. Do not compensate with narration or an old capture.
 
@@ -84,8 +86,9 @@ demo/final-media/autopilot-security-pending.png
 demo/final-media/autopilot-alibaba-proof.png
 ```
 
-Raw takes belong only in ignored `demo/.private-captures/` or `.artifacts/`. Do not
-overwrite a reviewed final with a raw capture.
+Untouched masters belong only in ignored `demo/private-originals/`; working raw takes
+belong in ignored `demo/.private-captures/` or `.artifacts/`. Do not overwrite a
+reviewed final with a raw capture.
 
 ## Render and mechanical acceptance
 
@@ -94,16 +97,25 @@ From the exact submission checkout, use verified final labels:
 ```powershell
 $env:PUBLIC_APP_URL='https://autopilot.43.106.13.19.sslip.io'
 $env:VIDEO_MODEL_LABEL='qwen-plus · qwen-vl-max · text-embedding-v4'
-$env:VOICE_RIGHTS_ATTESTED='true'
+$env:CAPTION_ONLY='true' # rights-safe: no TTS, no third-party music, local silence
 # Required only if the label contains qwen3.7:
 # $env:VIDEO_PROMOTION_EVIDENCE='eval/results/<same-release-promotion-pass>.json'
 python scripts/build_video.py
 ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 demo/final-media/autopilot-demo.mp4
 ```
 
+For narrated mode, remove `CAPTION_ONLY`, set `VOICE_RIGHTS_ATTESTED=true` only after
+confirming public-use rights, and run the same command. Caption-only mode must finish
+at exactly 168 seconds/30 fps and create `autopilot-demo.en.srt` plus
+`autopilot-demo.caption-only.json` beside the MP4.
+
 - [ ] Renderer reports exactly `9 beats`; final is 1920×1080 H.264/AAC and `<175s`.
-- [ ] Watch once with headphones and once muted with captions/overlays. There is no
-  blank lead-in, clipped word, silent ending, desync, unreadable crop, or stale label.
+- [ ] Watch once with headphones and once muted with captions/overlays. Caption-only
+  mode must contain intentional digital silence and no unexpected sound; narrated
+  mode must contain no clipped word, silent ending, or drift. Neither mode may have
+  a blank lead-in, unreadable crop/caption, or stale label.
+- [ ] Caption-only manifest reports no TTS, no third-party music, nine cues, 30 fps,
+  1920×1080, and a strict duration below 175 seconds; its MP4/SRT hashes match.
 - [ ] Scrub frame-by-frame around token entry, terminal/API proof, browser transitions,
   and end card. No secret or private identifier flashes for a single frame.
 - [ ] Test the MP4 on a second device, then upload to YouTube, Vimeo, or Youku as

@@ -1,20 +1,19 @@
 # Final media + submission checklist
 
-All automatable engineering checks are green. What remains requires a human browser,
-recording voice, public hosting, or publication account. Never show the reviewer token,
+The public-main engineering gates are green. Exact-current-source release proof and
+the media/publication steps below remain human-gated. Never show the reviewer token,
 `.env`, terminal history containing credentials, cloud keys, or a real vendor address.
 
 Run [`BUILD_RECORDING.md`](BUILD_RECORDING.md) first, then use the concise operator
-sheet in [`VIDEO_RECORDING_CHECKLIST.md`](VIDEO_RECORDING_CHECKLIST.md). The audited
-application release `321b6c5440a365fe346d2c446e141e9c5d33854c` was exact-deployed
-and passed production build, database isolation, health/readiness/deep readiness,
-live `qwen-vl-max` extraction, multi-step `qwen-plus` intake→PENDING, authenticated
-rejection with targeted cleanup, and public TLS canaries on 2026-07-15. The final
-media pass only needs to recapture that proven flow visually and sanitize the proof
-composite. A later documentation/media-only submission HEAD may differ and must be
-labelled separately.
+sheet in [`VIDEO_RECORDING_CHECKLIST.md`](VIDEO_RECORDING_CHECKLIST.md). Release
+`321b6c5440a365fe346d2c446e141e9c5d33854c` passed an exact deployment proof on
+2026-07-15, but it is historical after later runtime changes on public `main`.
+**Do not use that release as final-submission provenance.** Exact-deploy the final
+application release, rerun every canary, and capture its new proof before recording.
+A later documentation/media-only submission HEAD may differ, but the deployed
+application SHA and submission SHA must be labelled separately.
 Recheck the [official rules](https://qwencloud-hackathon.devpost.com/rules) immediately
-before submission; this pack was reconciled to them on 2026-07-15.
+before submission; this pack was reconciled to them on 2026-07-16.
 
 ## 1 · Capture these fresh screenshots
 
@@ -51,7 +50,8 @@ visible in at least one shot.
   actual decider canary and one document extraction. Keep the token hidden. Do not
   reuse a cross-entry proof clip.
 
-Store raw/original captures only under ignored `demo/.private-captures/` or
+Store untouched private masters under ignored `demo/private-originals/`, working
+captures under ignored `demo/.private-captures/`, and build scratch under ignored
 `.artifacts/`. Store selected sanitized finals under tracked `demo/final-media/` with
 descriptive names. Strip metadata and verify no pixels reveal credentials. Never use
 OS temp folders for project media.
@@ -61,6 +61,9 @@ OS temp folders for project media.
 Follow the nine judge-first beats in [`VIDEO_SCRIPT.md`](VIDEO_SCRIPT.md). No final
 MP4 is tracked yet; the obsolete `demo/video/assets/ui_*.png` captures were removed
 because they predated the final authenticated UI and were not approved evidence.
+After rendering, use [`VIDEO_PUBLICATION_PACKET.md`](VIDEO_PUBLICATION_PACKET.md) for
+the public title, bounded description, measured chapters, captions, thumbnail, and
+signed-out publication checks.
 
 - [ ] Show **two real configurable sinks**: SMTP vendor reply + restart-safe,
   durable JSONL ledger; payment/review remain simulated.
@@ -85,11 +88,17 @@ because they predated the final authenticated UI and were not approved evidence.
   must read only the explicitly promoted captures under `demo/final-media/`.
 - [ ] If the label contains `qwen3.7`, set `VIDEO_PROMOTION_EVIDENCE` to the exact
   repo-contained counterbalanced artifact and confirm it says `promotion-pass`.
-- [ ] Set `VOICE_RIGHTS_ATTESTED=true` only after confirming that the chosen generated
-  voice/service is licensed or otherwise authorized for this public competition use;
-  otherwise record an owned human voiceover outside the TTS path.
-- [ ] Watch the rendered MP4 from beginning to end with headphones; no clipped audio,
-  unreadable overlays, blank frames, stale numbers, token flashes, or silent ending.
+- [ ] If voice/service rights are not explicitly confirmed, build with
+  `CAPTION_ONLY=true`: fixed 168-second/30-fps beat windows, burned captions, measured
+  English SRT, and locally generated digital silence—no TTS or third-party music.
+- [ ] Use narrated mode only after setting `VOICE_RIGHTS_ATTESTED=true` and confirming
+  that the chosen generated voice/service is licensed or otherwise authorized for
+  this public competition use. Unset `CAPTION_ONLY`; the existing narrated mode is
+  still the default.
+- [ ] Watch the rendered MP4 from beginning to end with headphones and muted. In
+  caption-only mode, require intentional silence and no unexpected sound; in
+  narrated mode, require no clipped audio, silent ending, or drift. In either mode,
+  reject unreadable overlays, blank frames, stale numbers, or token flashes.
 - [ ] Verify duration with `ffprobe`; the automated publication safety gate is
   **strictly below 175 seconds**, leaving margin below the contest's `<3:00` rule.
 - [ ] Host on an accepted **YouTube, Vimeo, or Youku** page set to exact
@@ -100,10 +109,18 @@ because they predated the final authenticated UI and were not approved evidence.
   remove anything whose publication rights are unclear.
 - [ ] Keep the reviewed render in `demo/final-media/`, then use its **Public hosted
   URL**—not a repository blob—as the Devpost video URL.
+- [ ] For caption-only publication, retain and verify
+  `autopilot-demo.en.srt` plus `autopilot-demo.caption-only.json`; require its
+  recorded MP4/SRT hashes, nine cues, rights profile, 1080p stream contract, and
+  `<175s` duration to match the final assets.
 
 ## 3 · Publish one supplied post
 
-- [ ] Choose a draft from [`POST_DRAFTS.md`](POST_DRAFTS.md).
+- [ ] Prefer the full [`BLOG.md`](BLOG.md) route and follow
+  [`BLOG_PUBLICATION_CHECKLIST.md`](BLOG_PUBLICATION_CHECKLIST.md) for the optional
+  bonus judged on thoroughness and potential impact.
+- [ ] Follow the operator-only [`POST_PUBLICATION_CHECKLIST.md`](POST_PUBLICATION_CHECKLIST.md),
+  then copy only one fenced public draft from [`POST_DRAFTS.md`](POST_DRAFTS.md).
 - [ ] Attach the hero, trace, and architecture images (no secrets).
 - [ ] Keep the exact scope: offline policy eval, two configurable real transports,
   simulated payment/review, pattern-based advisory scanner.
@@ -112,7 +129,14 @@ because they predated the final authenticated UI and were not approved evidence.
 
 ## 4 · Assemble Devpost
 
+- [ ] Open [`DEVPOST_PACKET.md`](DEVPOST_PACKET.md) and resolve only its human-owned
+  placeholders directly in the draft/publication accounts.
+- [ ] Upload the original 1500×1000 `demo/thumbnail.png` and inspect Devpost's small
+  card/grid crop; the title, Qwen workflow, and Human Gate must stay legible.
 - [ ] Select **Track 4 — Autopilot Agent**.
+- [ ] Keep **Built with** product-only: Qwen/model APIs, application runtime,
+  persistence, MCP, Docker, and Alibaba Cloud belong there; Playwright, CodeQL, Syft,
+  and Grype belong in engineering evidence, not tags.
 - [ ] Paste [`SUBMISSION.md`](SUBMISSION.md) / [`PROJECT_STORY.md`](PROJECT_STORY.md)
   into the matching fields and remove Markdown that Devpost does not render.
 - [ ] Add the public GitHub repository and confirm the MIT license is visible.
@@ -123,10 +147,14 @@ because they predated the final authenticated UI and were not approved evidence.
 - [ ] Put the reviewer Bearer token only in Devpost's private testing instructions.
 - [ ] Add the optional public post URL.
 - [ ] Test every link and the full judge flow in a signed-out/incognito window.
+- [ ] Complete [`RIGHTS_ELIGIBILITY_SIGNOFF.md`](RIGHTS_ELIGIBILITY_SIGNOFF.md) as the
+  entrant or authorized representative; do not commit personal data or signatures.
 - [ ] Keep the live app, TLS, active private reviewer credential, judge reserve,
   database, and Qwen quota free and available through the end of judging:
   **2026-08-11 2:00 PM PDT**.
-- [ ] Submit before **2026-07-20 2:00 PM PDT** and save the confirmation screenshot.
+- [ ] Save the complete draft before **2026-07-20 2:00 PM PDT**
+  (**2026-07-21 00:00 Europe/Athens**), then stop on the final review page.
+- [ ] **Do not press Submit project without the entrant's explicit final approval.**
 
 ## Final claim lock
 

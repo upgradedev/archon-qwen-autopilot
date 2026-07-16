@@ -1,6 +1,6 @@
 # Archon Autopilot — Devpost submission description
 
-*Paste the body below into the Devpost "description" field. Track 4. ~495 words.*
+*Paste the body below into the Devpost "description" field. Track 4. ~605 words.*
 
 ---
 
@@ -37,9 +37,11 @@ surfaced at the approval gate, while safety does not depend on detecting every p
   attacks in the trace and at the gate. Proven offline — including a
   **poisoned-memory** prior that is genuinely recalled yet still cannot move money
   (`tests/pentest/prompt-injection.test.ts`).
-- **Memory-grounded**: duplicate + anomaly checks read a persistent **pgvector**
-  vendor history; approved outcomes are written back, so recurring vendors get
-  recognized over time.
+- **Correction-aware memory**: duplicate + anomaly checks read persistent **pgvector**
+  vendor history. Human amend/reject outcomes are written back and lifted into the
+  next decision. In the controlled delta, a €5,000 re-bill above a human-corrected
+  €3,000 amount changes `draft_payment → flag_for_review`, while the compliant €3,000
+  control stays a payment proposal. No model weights are updated.
 - **Two deliberately asymmetric surfaces**: HTTP + Approval UI is the exclusive
   authenticated decision path; an **MCP server exposes four proposal/read-only tools**
   (`intake_invoice`, `list_pending`, `recall_vendor`, `list_skills`) and cannot decide
@@ -52,9 +54,20 @@ surfaced at the approval gate, while safety does not depend on detecting every p
 
 `qwen-plus` (function-calling decider) · `text-embedding-v4` (memory) · `qwen-vl-max`
 (reads uploaded invoice PDFs/images via `src/qwen/vision.ts`) — all through the
-OpenAI-compatible DashScope endpoint.
+OpenAI-compatible DashScope endpoint. Low/unknown extraction confidence, unresolved
+field conflicts, or a document payable total inferred because its source total was
+unreadable fail toward human review rather than a payment proposal.
 
 **Differentiator:** an agent that *acts* on memory yet can't move money by design.
+
+**Reuse boundary:** this Track-4 entry carries forward the Archon name and limited
+shared plumbing patterns from the separate MemoryAgent foundation (provider-client,
+pgvector, health, and deployment conventions). It does **not** claim that shared
+plumbing as its judged novelty, and it does not reuse the MemoryAgent entry's
+self-audit/resolution product core. The submitted work is the accounts-payable
+normalizer and validator, bounded Qwen tool loop, durable PENDING state machine,
+authenticated human decision boundary, correction feedback, AP sinks, narrower MCP
+surface, adversarial/evaluation suite, separate demo, and Alibaba deployment.
 
 **Live:** https://autopilot.43.106.13.19.sslip.io · **Track 4** · Repo:
 https://github.com/upgradedev/archon-qwen-autopilot
@@ -63,8 +76,9 @@ https://github.com/upgradedev/archon-qwen-autopilot
 https://github.com/upgradedev/archon-qwen-autopilot/blob/main/docs/judge-architecture.svg
 
 **Eligibility:** first repository commit `8a6359f` on 2026-07-04, after the
-2026-05-26 start; the Track-4 project was materially built during the submission
-period.
+2026-05-26 start; the distinct Track-4 product described above was materially built
+during the submission period. Shared naming and limited plumbing are disclosed, not
+presented as newly authored evidence.
 
 ---
 

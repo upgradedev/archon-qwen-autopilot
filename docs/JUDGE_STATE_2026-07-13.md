@@ -89,4 +89,5 @@ Real-Postgres integration cases skip explicitly, never silently, when a local
    test every public link in an incognito window before submission.
 
 The exact shot list is [`../demo/FINAL_MEDIA_CHECKLIST.md`](../demo/FINAL_MEDIA_CHECKLIST.md),
-and ready-to-publish copy is [`../demo/POST_DRAFTS.md`](../demo/POST_DRAFTS.md).
+and operator handling is [`../demo/POST_PUBLICATION_CHECKLIST.md`](../demo/POST_PUBLICATION_CHECKLIST.md);
+copy only a fenced public draft from [`../demo/POST_DRAFTS.md`](../demo/POST_DRAFTS.md).
