@@ -1,0 +1,26 @@
+# Review routing for the security-critical source and production-image boundary.
+# Enforcement still depends on repository branch/ruleset configuration.
+/.github/CODEOWNERS @upgradedev
+/.gitattributes @upgradedev
+/.dockerignore @upgradedev
+/Dockerfile @upgradedev
+/.github/workflows/ci.yml @upgradedev
+/.github/workflows/codeql.yml @upgradedev
+/.github/workflows/supply-chain.yml @upgradedev
+/.syft.yaml @upgradedev
+/.grype.yaml @upgradedev
+/package.json @upgradedev
+/package-lock.json @upgradedev
+/runtime-packages.lock @upgradedev
+/runtime-apk-inventory.lock @upgradedev
+/runtime-apk-archives.sha256 @upgradedev
+/scripts/codeql-sarif-gate.ts @upgradedev
+/tests/security/codeql-sarif-gate.test.ts @upgradedev
+/tests/docs/docs-consistency.test.ts @upgradedev
+/tests/docs/supply-chain-consistency.test.ts @upgradedev
+/README.md @upgradedev
+/SECURITY.md @upgradedev
+/docs/CLAIM_EVIDENCE_MATRIX.md @upgradedev
+/docs/JUDGE-GUIDE.md @upgradedev
+/docs/SUPPLY_CHAIN.md @upgradedev
+/deploy/redeploy.sh @upgradedev

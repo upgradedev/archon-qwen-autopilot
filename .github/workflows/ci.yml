@@ -83,12 +83,12 @@ jobs:
         run: npm run typecheck
 
       - name: Build (tsc)
-        run: npm run build
+        run: npm run --ignore-scripts build
 
       # This is a release contract, not a redundant compile: Docker's context
       # allowlist must contain every production bootstrap/runtime asset.
       - name: Build the exact production Docker image
-        run: docker build --tag archon-qwen-autopilot:ci .
+        run: DOCKER_BUILDKIT=1 docker build --tag archon-qwen-autopilot:ci .
 
       - name: Apply schema (creates agent_memory vector(1024) + ap_workitems)
         run: npm run db:schema

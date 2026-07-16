@@ -15,3 +15,8 @@
 eval/dataset.sha256 text eol=lf
 eval/vision/manifest.json text eol=lf
 eval/vision/fixtures.sha256 text eol=lf
+runtime-packages.lock text eol=lf
+runtime-apk-inventory.lock text eol=lf
+runtime-apk-archives.sha256 text eol=lf
+.syft.yaml text eol=lf
+.grype.yaml text eol=lf

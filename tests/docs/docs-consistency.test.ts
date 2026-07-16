@@ -165,16 +165,29 @@ function mermaidNodeIds(): Set<string> {
 
 // Approximate GitHub's documented heading-id normalization for the headings used in
 // this repository, including deterministic suffixes for duplicate headings.
+function stripCompleteHtmlTags(value: string): string {
+  let cursor = 0;
+  let plain = "";
+  while (cursor < value.length) {
+    const open = value.indexOf("<", cursor);
+    if (open < 0) return plain + value.slice(cursor);
+    plain += value.slice(cursor, open);
+    const close = value.indexOf(">", open + 1);
+    if (close < 0) return plain + value.slice(open);
+    cursor = close + 1;
+  }
+  return plain;
+}
+
 function markdownAnchors(markdown: string): Set<string> {
   const anchors = new Set<string>();
   const occurrences = new Map<string, number>();
   for (const line of markdown.split(/\r?\n/)) {
     const heading = line.match(/^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/);
     if (!heading) continue;
-    const plain = heading[1]!
+    const plain = stripCompleteHtmlTags(heading[1]!)
       .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
       .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
-      .replace(/<[^>]+>/g, "")
       .replace(/[`*_~]/g, "")
       .trim()
       .toLowerCase();
@@ -190,6 +203,11 @@ function markdownAnchors(markdown: string): Set<string> {
   }
   return anchors;
 }
+
+test("anchor normalization removes nested tag text without exposing a new HTML opener", () => {
+  assert.deepEqual([...markdownAnchors("# Safe <scr<script>ipt> heading")], ["safe-ipt-heading"]);
+  assert.deepEqual([...markdownAnchors("# Preserve unmatched < text")], ["preserve-unmatched--text"]);
+});
 
 // ════════════════════════════════════════════════════════════════════════════════
 // CHECK 1 — README claims ↔ code (documentation drift)
@@ -507,8 +525,10 @@ test("CHECK 6 · media: obsolete pre-auth UI captures remain deleted", () => {
 test("CHECK 7 · supply chain: immutable Actions + hash-locked demo-video Python graph", () => {
   const NODE_VERSION = "24.18.0";
   const NPM_VERSION = "11.16.0";
-  const NODE_IMAGE =
-    "node:24.18.0-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d";
+  const BUILD_NODE_IMAGE =
+    "node:24.18.0-alpine3.24@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd";
+  const RUNTIME_IMAGE =
+    "cgr.dev/chainguard/wolfi-base@sha256:02dab76bd852a70556b5b2002195c8a5fdab77d323c433bf6642aab080489795";
   const PGVECTOR_IMAGE =
     "pgvector/pgvector:0.8.5-pg16-bookworm@sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb";
   const K6_SHA256 = "295d961ebfca306f295f1133068dcd403a8171c87f387928f5f30b0fbcff858a";
@@ -530,12 +550,12 @@ test("CHECK 7 · supply chain: immutable Actions + hash-locked demo-video Python
   const configuredRunners = workflowTexts.flatMap((yaml) =>
     [...yaml.matchAll(/^\s*runs-on:\s*([^\s#]+)/gm)].map((match) => match[1]!),
   );
-  assert.equal(configuredRunners.length, 11, "every workflow job must declare an exact runner image");
+  assert.equal(configuredRunners.length, 13, "every workflow job must declare an exact runner image");
   assert.deepEqual([...new Set(configuredRunners)], ["ubuntu-24.04"]);
   const configuredNodeVersions = workflowTexts.flatMap((yaml) =>
     [...yaml.matchAll(/node-version:\s*["']?([^\s"'#]+)/g)].map((match) => match[1]!),
   );
-  assert.equal(configuredNodeVersions.length, 9, "every setup-node use must declare the exact Node patch");
+  assert.equal(configuredNodeVersions.length, 11, "every setup-node use must declare the exact Node patch");
   assert.deepEqual([...new Set(configuredNodeVersions)], [NODE_VERSION]);
   assert.equal(readFileSync(join(ROOT, ".nvmrc"), "utf8").trim(), `v${NODE_VERSION}`);
 
@@ -550,11 +570,37 @@ test("CHECK 7 · supply chain: immutable Actions + hash-locked demo-video Python
   assert.equal(packageLock.packages[""].devDependencies["@types/node"], "24.13.3");
 
   const dockerfile = readFileSync(join(ROOT, "Dockerfile"), "utf8");
-  const nodeImages = [...dockerfile.matchAll(/^FROM\s+(node:\S+)\s+AS\s+/gm)].map((match) => match[1]!);
-  assert.equal(nodeImages.length, 2, "both Docker stages must use the pinned Node image");
-  for (const image of nodeImages) assert.equal(image, NODE_IMAGE);
+  const stageImages = [...dockerfile.matchAll(/^FROM\s+(\S+)\s+AS\s+/gm)].map((match) => match[1]!);
+  assert.deepEqual(
+    stageImages,
+    [BUILD_NODE_IMAGE, RUNTIME_IMAGE, RUNTIME_IMAGE],
+    "the build, APK-resolver, and final runtime stages must use reviewed digests",
+  );
 
   const dockerIgnore = readFileSync(join(ROOT, ".dockerignore"), "utf8");
+  assert.deepEqual(
+    dockerIgnore
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !line.startsWith("#")),
+    [
+      "*",
+      "!package.json",
+      "!package-lock.json",
+      "!tsconfig.json",
+      "!runtime-packages.lock",
+      "!runtime-apk-inventory.lock",
+      "!runtime-apk-archives.sha256",
+      "!src/",
+      "!src/**",
+      "!scripts/",
+      "!scripts/apply-schema.ts",
+      "!scripts/bootstrap-db.ts",
+      "!demo/",
+      "!demo/sample-invoice.png",
+    ],
+    "the Docker context must remain a default-deny allowlist of reviewed COPY sources",
+  );
   const scriptCopy = dockerfile.match(/^COPY\s+(.+?)\s+\.\/scripts\/\s*$/m);
   assert.ok(scriptCopy, "Dockerfile must copy the production database scripts into the build stage");
   const copiedScripts = scriptCopy[1]!.trim().split(/\s+/);
@@ -579,7 +625,12 @@ test("CHECK 7 · supply chain: immutable Actions + hash-locked demo-video Python
   const ciWorkflow = readFileSync(join(ROOT, ".github", "workflows", "ci.yml"), "utf8");
   assert.match(
     ciWorkflow,
-    /name:\s+Build the exact production Docker image\s+run:\s+docker build --tag archon-qwen-autopilot:ci \./,
+    /name:\s+Build \(tsc\)\s+run:\s+npm run --ignore-scripts build/,
+    "hosted compilation must suppress prebuild/postbuild lifecycle hooks",
+  );
+  assert.match(
+    ciWorkflow,
+    /name:\s+Build the exact production Docker image\s+run:\s+DOCKER_BUILDKIT=1 docker build --tag archon-qwen-autopilot:ci \./,
     "hosted CI must build the same production Dockerfile used by deploy/redeploy.sh",
   );
   const pgvectorImages = [...ciWorkflow.matchAll(/^\s*image:\s+(pgvector\/pgvector:\S+)/gm)].map(

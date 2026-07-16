@@ -328,6 +328,35 @@ test("reviewer APIs fail closed: missing/wrong credentials cannot read or execut
   }
 });
 
+test("Bearer authentication uses bounded linear parsing and preserves valid HTTP OWS", async () => {
+  const local = await buildServer(deps());
+  await local.ready();
+  try {
+    const valid = await local.inject({
+      method: "GET",
+      url: "/pending",
+      headers: { authorization: `bEaReR\t${REVIEWER_TOKEN}\t` },
+    });
+    assert.equal(valid.statusCode, 200, "scheme matching remains case-insensitive and accepts RFC OWS");
+
+    const missingSeparator = await local.inject({
+      method: "GET",
+      url: "/pending",
+      headers: { authorization: `Bearer${REVIEWER_TOKEN}` },
+    });
+    assert.equal(missingSeparator.statusCode, 401);
+
+    const adversarialWhitespace = await local.inject({
+      method: "GET",
+      url: "/pending",
+      headers: { authorization: `Bearer ${" ".repeat(9_000)}not-the-reviewer-token` },
+    });
+    assert.equal(adversarialWhitespace.statusCode, 401, "oversized whitespace is rejected before token parsing");
+  } finally {
+    await local.close();
+  }
+});
+
 test("reviewer APIs return 503 when REVIEWER_TOKEN is unconfigured; public health/UI remain available", async () => {
   const local = await buildServer(deps({ reviewerToken: null }));
   await local.ready();
@@ -849,6 +878,65 @@ test("GET /sample-document serves the committed sample invoice PNG", async () =>
   // PNG magic bytes — a real, uncorrupted image (not text-normalized).
   assert.equal(res.rawPayload.subarray(0, 4).toString("latin1"), "\x89PNG");
   assert.ok(res.rawPayload.length > 1000);
+});
+
+test("GET /sample-document is bounded by isolated public/reviewer and global HTTP limits", async () => {
+  const tiered = await buildServer(deps({
+    trustProxy: false,
+    httpRateLimiter: new InMemoryHttpRequestRateLimiter(() => 0),
+    httpRequestLimits: { public: 1, reviewer: 2, global: 10 },
+  }));
+  await tiered.ready();
+  try {
+    assert.equal((await tiered.inject({ method: "GET", url: "/sample-document" })).statusCode, 200);
+    const forged = await tiered.inject({
+      method: "GET",
+      url: "/sample-document",
+      headers: { authorization: "Bearer forged-reviewer-token" },
+    });
+    assert.equal(forged.statusCode, 429, "invalid credentials remain in the exhausted public/IP bucket");
+    assert.match(String(forged.headers["retry-after"]), /^\d+$/);
+
+    assert.equal((await tiered.inject({ method: "GET", url: "/sample-document", headers: AUTH })).statusCode, 200);
+    assert.equal((await tiered.inject({ method: "GET", url: "/sample-document", headers: AUTH })).statusCode, 200);
+    const reviewerOver = await tiered.inject({ method: "GET", url: "/sample-document", headers: AUTH });
+    assert.equal(reviewerOver.statusCode, 429, "valid reviewer credentials select a separate but bounded bucket");
+  } finally {
+    await tiered.close();
+  }
+
+  const globallyBounded = await buildServer(deps({
+    httpRateLimiter: new InMemoryHttpRequestRateLimiter(() => 0),
+    httpRequestLimits: { public: 10, reviewer: 10, global: 1 },
+  }));
+  await globallyBounded.ready();
+  try {
+    assert.equal((await globallyBounded.inject({ method: "GET", url: "/sample-document" })).statusCode, 200);
+    const globalOver = await globallyBounded.inject({ method: "GET", url: "/sample-document", headers: AUTH });
+    assert.equal(globalOver.statusCode, 429, "reviewer authentication never bypasses the global ceiling");
+  } finally {
+    await globallyBounded.close();
+  }
+});
+
+test("GET /sample-document fails closed when its HTTP limiter cannot decide", async () => {
+  const local = await buildServer(deps({
+    httpRateLimiter: {
+      consume() {
+        throw new Error("limiter backend unavailable");
+      },
+    },
+  }));
+  await local.ready();
+  try {
+    const res = await local.inject({ method: "GET", url: "/sample-document" });
+    assert.equal(res.statusCode, 500);
+    assert.equal(res.json().error, "internal server error");
+    assert.ok(typeof res.json().requestId === "string" && res.json().requestId.length > 0);
+    assert.doesNotMatch(String(res.headers["content-type"]), /image\/png/);
+  } finally {
+    await local.close();
+  }
 });
 
 test("security headers: helmet sets X-Frame-Options + X-Content-Type-Options on responses", async () => {

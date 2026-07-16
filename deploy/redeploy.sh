@@ -146,7 +146,7 @@ ok "durable JSONL ledger directory ready: $LEDGER_HOST_DIR"
 
 # ── Build the Autopilot image ─────────────────────────────────────────────────
 log "Build image ($IMAGE)"
-docker build -t "$IMAGE" . || die "docker build failed."
+DOCKER_BUILDKIT=1 docker build -t "$IMAGE" . || die "docker build failed."
 ok "image built"
 
 # The exact value that will reach the serving container must be an official,

@@ -1,0 +1,7 @@
+# Reviewed, fail-closed image inventory policy. Every CI invocation passes this
+# path explicitly so Syft cannot auto-discover an unreviewed repository/user config.
+check-for-app-update: false
+scope: squashed
+default-catalogers: []
+select-catalogers: []
+exclude: []

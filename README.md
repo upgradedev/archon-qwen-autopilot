@@ -236,7 +236,7 @@ memory = cyan. The **structural human gate** is the security differentiator —
 the model's tool catalog **excludes** `approve` / `pay`, so no prompt-injection
 in the untrusted invoice can reach a side-effect.
 
-**Stack:** TypeScript · Node ≥20 (ESM) · Fastify 5 ·
+**Stack:** TypeScript · Node 24.18.0 / npm 11.16.0 (ESM) · Fastify 5 ·
 the `openai` SDK against Alibaba Cloud Model Studio / DashScope (`qwen-plus` for
 reasoning + **function-calling**, `text-embedding-v4` for memory) · `pg` +
 pgvector for persistent memory and the approval queue.
@@ -537,10 +537,14 @@ source is new:
 
 1. **PDF → page images.** Poppler probes through page `MAX_PDF_PAGES + 1`; PDFs over
    the cap are rejected as a whole, and accepted documents are rasterized without
-   silent truncation under pixel/output/time bounds. `pdftoppm` is a self-contained
-   system binary — chosen over a native-canvas npm dependency so `npm ci` / `npm
-   audit` stay clean and the build is reproducible; it is installed in the Docker
-   image via `apt-get install poppler-utils`. A PNG/JPG upload passes through directly.
+   silent truncation under pixel/output/time bounds. `pdftoppm` is a separate system
+   executable with platform libraries, chosen over a native-canvas npm dependency so
+   `npm ci` / `npm audit` stay clean. The production image locks
+   `poppler-utils=26.07.0-r0` and its complete Wolfi closure, verifies every fetched
+   APK archive against `runtime-apk-archives.sha256` before a network-disabled local
+   install, and checks the final installed inventory. That content-binds the reviewed
+   runtime inputs; it is not a byte-identical Docker image claim. A PNG/JPG upload
+   passes through directly.
 2. **Qwen-VL extraction.** The page image(s) go to the configured Qwen vision model
    (`qwen-vl-max` rollback default; `VISION_MODEL`) over the same OpenAI-compatible DashScope surface the rest of the
    app uses, with explicit **untrusted-data delimiters** (the prompt labels document
@@ -803,7 +807,19 @@ CI (`.github/workflows/ci.yml`): **gitleaks** (pinned v8.18.4) → **dep-audit**
 **test** → **demo smoke** → **decision-quality eval gate**, with parallel
 **coverage**, **docs-consistency**, **readiness** gates and a dedicated
 **Playwright e2e** job — all with no `DASHSCOPE_API_KEY`, so the whole agent runs
-on the deterministic Fakes.
+on the deterministic Fakes. Separate hosted gates run pinned CodeQL
+`security-and-quality` over the complete submitted JavaScript/TypeScript source even on pull requests (the
+Action's default diff-informed restriction is explicitly disabled), retain
+raw/post-processed SARIF, and fail CodeQL results at
+numeric `security-severity >= 7.0` (high/critical) with no allowlist. They also build
+and constrain-exercise the production image, byte-verify its 45-APK closure, verify
+the exact image config/default-command health path, reject final inventory and
+APK-audited package-file/permission drift, bind both Grype invocations to the retained Syft JSON,
+retain self-verifying pre-scan SPDX/CycloneDX SBOMs, require zero ignored matches,
+and fail every high/critical Grype result with no current allowlist against a byte-pinned
+database **as of 2026-07-15**. These are dated, reviewable artifacts—not a security
+certification or a claim that future vulnerabilities cannot exist; see
+[`docs/SUPPLY_CHAIN.md`](docs/SUPPLY_CHAIN.md).
 
 ### Readiness gate
 
