@@ -1156,8 +1156,8 @@ test("SUPPLY 3 — the image inventory and scanner/database inputs are byte-pinn
   assert.match(redeploy, /ordinary redeploy requires byte-identical schema/);
   assert.match(
     redeploy,
-    /^DOCKER_BUILDKIT=1 docker_job build \\$/m,
-    "the authoritative redeploy path must enable the reviewed BuildKit Dockerfile features under its bounded job wrapper",
+    /^DOCKER_BUILDKIT=1 docker_job buildx build \\$/m,
+    "the authoritative redeploy path must invoke the attested Buildx plugin under its bounded job wrapper",
   );
   assert.match(redeploy, /^  --iidfile "\$IID_FILE" \\$/m);
   assert.match(redeploy, /^  --label "org\.opencontainers\.image\.revision=\$EXPECTED_RELEASE" \\$/m);
