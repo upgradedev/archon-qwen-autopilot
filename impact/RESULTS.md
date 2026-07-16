@@ -14,7 +14,7 @@ The repository-local analysis plan was frozen before these derived files were ge
 - Denominator: 12 paired authored cases; no exclusions or imputation
 - Labels: developer-authored AP policy labels; not expert ground truth
 - Assisted replay: offline / FakeQwenChatClient / Node.js 24.18.0
-- Frozen source identity: commit 5532559de76ee4e7738c666433cc023b2c759bdd / tree c05096dd337c2b77c8a55cd50f68aaafc6493167; canonical replay-source closure unchanged and clean
+- Frozen source identity: commit 4d661e172dd6545d3bcff4c6d37cb59836120777 / tree fa815acd9efeacb5008c72ea27fad2370f608fe5; canonical replay-source closure unchanged and clean
 - Raw replay validation: 12/12 cases re-executed through eval/lib.ts runScenario and matched every frozen action/trace field
 - Input hashing: SHA-256 over LF-canonical UTF-8 text; CRLF and LF checkouts bind identically, while a lone carriage return fails closed
 - Endpoints: modeled active-review seconds, modeled human touches, and developer-policy-label mismatches
