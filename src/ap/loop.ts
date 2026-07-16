@@ -224,9 +224,22 @@ export class AutopilotLoop {
       // only that tool (and a forced tool choice) until it succeeds, but keep this
       // local fence as well: a malformed or non-conforming compatible endpoint must
       // not be able to execute validation or propose an action ahead of history.
-      // Rejected calls are deliberately absent from the evidence trace, whose first
-      // persisted step therefore remains the first evidence operation that ran.
+      // A redacted guard event is persisted for auditability; provider arguments are
+      // intentionally excluded because no untrusted action was accepted or executed.
       if (call && !state.didRecall && name !== "recall_vendor_history") {
+        const attemptedTool = isAnalysisTool(name) || isTerminalTool(name)
+          ? name
+          : "unrecognized_tool";
+        const guardStep: TraceStep = {
+          step,
+          tool: "recall_sequence_guard",
+          args: { attemptedTool },
+          observation:
+            `Blocked ${attemptedTool} before execution: vendor history must be the first evidence operation.`,
+          reasoning: "A deterministic sequence fence prevents proposals or other analysis from preceding recall.",
+        };
+        trace.push(guardStep);
+        input.onStep?.(guardStep);
         noProgress++;
         if (noProgress >= MAX_NO_PROGRESS) {
           return safeFallback(

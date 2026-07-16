@@ -311,7 +311,18 @@ test("recall-first fence constrains the provider and rejects a non-conforming st
     type: "function",
     function: { name: "recall_vendor_history" },
   });
-  assert.equal(res.trace[0]!.tool, "recall_vendor_history");
+  assert.equal(res.trace[0]!.tool, "recall_sequence_guard");
+  assert.deepEqual(res.trace[0]!.args, { attemptedTool: "draft_payment" });
+  assert.equal(res.trace[0]!.step, 1);
+  assert.equal(res.trace[1]!.tool, "recall_vendor_history");
+  assert.equal(res.trace[1]!.step, 2);
+  assert.deepEqual(requests[1]!.tools?.map((tool) => tool.function.name), ["recall_vendor_history"]);
+  assert.deepEqual(requests[1]!.tool_choice, {
+    type: "function",
+    function: { name: "recall_vendor_history" },
+  });
+  assert.equal(requests[2]!.tool_choice, "auto");
+  assert.ok((requests[2]!.tools?.length ?? 0) > 1);
   assert.ok(res.trace.some((step) => step.tool === "validate_invoice"));
 });
 
