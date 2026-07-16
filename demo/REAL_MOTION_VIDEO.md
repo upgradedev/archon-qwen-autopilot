@@ -39,7 +39,8 @@ node demo/media-tools/record-live-motion.cjs `
   --capture-review demo/gallery/CAPTURE_REVIEW.json
 
 python demo/media-tools/build-real-motion-submission.py `
-  --expected-sha $sha
+  --expected-sha $sha `
+  --replace
 
 python demo/media-tools/compose_real_motion_video.py --verify-only
 ```

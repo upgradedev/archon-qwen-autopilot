@@ -18,11 +18,12 @@ memory recall and AP validations, stops at one persisted proposal, and cannot ex
 without an authenticated human decision. The strongest story is the combination of
 agentic depth, structural least agency, and a measurable correction feedback loop.
 
-The public-main engineering gates are green. Two final variables remain: exact-deploy
-the current application source and repeat the live canaries, then make the recording
-and screenshots explain the workflow within three minutes without exposing the
-reviewer credential. Historical release `321b6c5…` is not final provenance after
-later runtime changes.
+The public-main engineering gates are green, and exact-deploy attempt 23 verified
+application SHA `203f159…` through immutable checkout, the singleton runtime-env
+contract, non-published and final readiness, a real-Qwen PENDING canary, and
+zero-residue cleanup. The remaining variables are presentation/publication: make the
+recording and screenshots explain that exact workflow within three minutes without
+exposing the reviewer credential, then verify every public link signed out.
 
 ## Rubric readiness review
 

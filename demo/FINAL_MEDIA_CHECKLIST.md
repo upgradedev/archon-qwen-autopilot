@@ -1,17 +1,17 @@
 # Final media + submission checklist
 
-The public-main engineering gates are green. Exact-current-source release proof and
+The public-main engineering gates and exact-current-source release proof are green;
 the media/publication steps below remain human-gated. Never show the reviewer token,
 `.env`, terminal history containing credentials, cloud keys, or a real vendor address.
 
 Run [`BUILD_RECORDING.md`](BUILD_RECORDING.md) first, then use the concise operator
 sheet in [`VIDEO_RECORDING_CHECKLIST.md`](VIDEO_RECORDING_CHECKLIST.md). Release
-`321b6c5440a365fe346d2c446e141e9c5d33854c` passed an exact deployment proof on
-2026-07-15, but it is historical after later runtime changes on public `main`.
-**Do not use that release as final-submission provenance.** Exact-deploy the final
-application release, rerun every canary, and capture its new proof before recording.
-A later documentation/media-only submission HEAD may differ, but the deployed
-application SHA and submission SHA must be labelled separately.
+Exact application release
+`203f159df25f825a0b994a2f8a4d2c0892b45390` passed project-contained attempt 23 on
+2026-07-16, including the singleton runtime-env contract, staging/final readiness,
+real-Qwen PENDING canary, and zero-residue cleanup. Bind all final media to that
+evidence. A later documentation/media-only submission HEAD may differ, but the
+deployed application SHA and submission SHA must be labelled separately.
 Recheck the [official rules](https://qwencloud-hackathon.devpost.com/rules) immediately
 before submission; this pack was reconciled to them on 2026-07-16.
 
