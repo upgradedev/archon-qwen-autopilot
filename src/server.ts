@@ -27,8 +27,8 @@ import multipart from "@fastify/multipart";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { createHash, timingSafeEqual } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { lstat, readFile, readdir } from "node:fs/promises";
+import { dirname, isAbsolute, join } from "node:path";
 import { isIP } from "node:net";
 import { hasDatabase, query } from "./db/client.js";
 import { UI_HTML } from "./ui.js";
@@ -101,6 +101,9 @@ export const LOGGER_REDACT_PATHS = [
   "request.headers['x-reviewer-token']",
   "headers.authorization",
   "headers['x-reviewer-token']",
+  "req.headers['x-archon-deployment-gate']",
+  "request.headers['x-archon-deployment-gate']",
+  "headers['x-archon-deployment-gate']",
   "authorization",
   "reviewerToken",
   "reviewer_token",
@@ -178,6 +181,11 @@ export type ServerDeps = AutopilotDeps & {
   // Coarse all-route abuse guard. Durable daily quotas still meter provider spend.
   httpRateLimiter?: HttpRequestRateLimiter;
   httpRequestLimits?: { public: number; reviewer: number; global: number };
+  // Production cutovers mount a root-owned, read-only release-gate directory.
+  // Tests inject a contained fixture. The bypass is used only by the deployment
+  // smoke while every ordinary business route remains fail-closed.
+  deploymentGateDir?: string | null;
+  deploymentGateToken?: string | null;
 };
 
 export type TrustProxySetting = false | number | string[];
@@ -278,6 +286,32 @@ function pageEnvelope(
   };
 }
 
+const DEPLOYMENT_GATE_CONTRACT = "archon-release-gate-v1\n";
+const DEPLOYMENT_GATE_HEADER = "x-archon-deployment-gate";
+const DEPLOYMENT_GATE_PROBE_PATHS = new Set(["/health", "/ready", "/ready/deep"]);
+
+async function deploymentGateOpen(directory: string): Promise<boolean> {
+  try {
+    // One directory read gives a fail-closed view: exactly the attested contract
+    // file means open; the closed marker or any unexpected entry means closed.
+    // Re-check every request so rollback can re-close a candidate before the old
+    // release is exposed again.
+    const entries = await readdir(directory);
+    if (entries.length !== 1 || entries[0] !== "contract") return false;
+    const contractPath = join(directory, "contract");
+    const metadata = await lstat(contractPath);
+    if (!metadata.isFile() || metadata.isSymbolicLink()) return false;
+    return await readFile(contractPath, "utf8") === DEPLOYMENT_GATE_CONTRACT;
+  } catch {
+    return false;
+  }
+}
+
+function deploymentGateHeader(req: FastifyRequest): string | null {
+  const value = req.headers[DEPLOYMENT_GATE_HEADER];
+  return typeof value === "string" && value.length <= 256 ? value : null;
+}
+
 export async function buildServer(deps: Partial<ServerDeps> = {}) {
   const maxJsonBytes = boundedEnvInt("MAX_JSON_BODY_BYTES", 256 * 1024, 16 * 1024, 1024 * 1024);
   const trustProxy = deps.trustProxy === undefined ? configuredTrustProxy() : deps.trustProxy;
@@ -292,6 +326,44 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
     // Strict request schemas must reject unknown reviewer-control fields rather
     // than Fastify/Ajv silently deleting them before the handler sees the body.
     ajv: { customOptions: { removeAdditional: false, coerceTypes: false } },
+  });
+
+  const deploymentGateDir = (
+    deps.deploymentGateDir === undefined
+      ? process.env.DEPLOYMENT_GATE_DIR
+      : deps.deploymentGateDir
+  )?.trim() || null;
+  const deploymentGateToken = (
+    deps.deploymentGateToken === undefined
+      ? process.env.DEPLOYMENT_GATE_TOKEN
+      : deps.deploymentGateToken
+  )?.trim() || null;
+  if (Boolean(deploymentGateDir) !== Boolean(deploymentGateToken)) {
+    throw new Error("deployment gate directory and token must be configured together");
+  }
+  if (deploymentGateDir && !isAbsolute(deploymentGateDir)) {
+    throw new Error("deployment gate directory must be absolute");
+  }
+  if (deploymentGateToken && (
+    deploymentGateToken.length < 32
+    || deploymentGateToken.length > 256
+    || /[\u0000-\u001f\u007f-\u009f]/.test(deploymentGateToken)
+  )) {
+    throw new Error("deployment gate token must be 32–256 printable characters");
+  }
+
+  app.addHook("onRequest", async (req, reply) => {
+    if (!deploymentGateDir || !deploymentGateToken) return;
+    const path = req.url.split("?", 1)[0] ?? "";
+    if ((req.method === "GET" || req.method === "HEAD") && DEPLOYMENT_GATE_PROBE_PATHS.has(path)) {
+      return;
+    }
+    if (await deploymentGateOpen(deploymentGateDir)) return;
+    const supplied = deploymentGateHeader(req);
+    if (supplied && safeTokenEqual(supplied, deploymentGateToken)) return;
+    reply.header("cache-control", "no-store");
+    reply.header("retry-after", "1");
+    return reply.code(503).send({ error: "release gate closed", requestId: String(req.id) });
   });
 
   // Security response headers (HSTS · X-Frame-Options · X-Content-Type-Options ·
@@ -1146,6 +1218,26 @@ export async function buildServer(deps: Partial<ServerDeps> = {}) {
       const pending = (await agent.pending(page.limit, page.offset)).map(withReviewFlags);
       return { pending, page: pageEnvelope(page, pending.length) };
     }
+  );
+
+  app.get<{ Params: { id: string } }>(
+    "/pending/:id",
+    {
+      preHandler: reviewerAuth,
+      schema: {
+        summary: "Read one exact pending proposal",
+        description: "Returns one proposal only while it remains pending; used by reviewers and exact release canaries without queue-order assumptions.",
+        tags: ["approval"],
+        security: [{ reviewerBearer: [] }],
+        params: { type: "object", properties: { id: { type: "string", minLength: 1, maxLength: 128 } }, required: ["id"] },
+        response: { 200: looseObject, 404: errorResponse },
+      },
+    },
+    (req, reply) => guard(reply, async () => {
+      const item = await agent.get(req.params.id);
+      if (item.status !== "pending") throw new NotFoundError(`pending work item ${req.params.id} not found`);
+      return { pending: withReviewFlags(item) };
+    })
   );
 
   app.get(

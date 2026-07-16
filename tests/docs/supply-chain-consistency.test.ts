@@ -1145,10 +1145,40 @@ test("SUPPLY 3 — the image inventory and scanner/database inputs are byte-pinn
 
   const dockerfile = readText("Dockerfile");
   assertPackageBuildContract(JSON.parse(readText("package.json")));
+  const redeploy = readText("deploy/redeploy.sh");
   assert.match(
-    readText("deploy/redeploy.sh"),
-    /^DOCKER_BUILDKIT=1 docker build -t "\$IMAGE" \. \|\| die "docker build failed\."$/m,
-    "the authoritative redeploy path must enable the reviewed BuildKit Dockerfile features",
+    redeploy,
+    /^git archive --format=tar "\$EXPECTED_RELEASE" \| tar -xf - -C "\$BUILD_CONTEXT" \\$/m,
+    "production must materialize the Docker context from the exact committed release, not the mutable checkout",
+  );
+  assert.match(redeploy, /^chmod 0700 "\$BUILD_CONTEXT" \|\| die /m);
+  assert.match(redeploy, /OLD_SCHEMA_SHA256/);
+  assert.match(redeploy, /ordinary redeploy requires byte-identical schema/);
+  assert.match(
+    redeploy,
+    /^DOCKER_BUILDKIT=1 docker_job build \\$/m,
+    "the authoritative redeploy path must enable the reviewed BuildKit Dockerfile features under its bounded job wrapper",
+  );
+  assert.match(redeploy, /^  --iidfile "\$IID_FILE" \\$/m);
+  assert.match(redeploy, /^  --label "org\.opencontainers\.image\.revision=\$EXPECTED_RELEASE" \\$/m);
+  assert.match(redeploy, /^  -t "\$IMAGE" "\$BUILD_CONTEXT" \\$/m);
+  assert.match(redeploy, /valid_image_id "\$BUILT_IMAGE_ID"/);
+  assert.match(redeploy, /\.Image[^\n]+\$BUILT_IMAGE_ID/);
+  assert.match(redeploy, /--env-file "\$DATABASE_ENV_FILE"/);
+  assert.doesNotMatch(
+    redeploy,
+    /(?:^|\s)(?:-e|--env(?:=|\s+))["']?DATABASE_URL(?:=|["']?(?:\s|\\|$))/m,
+    "the runtime database credential must be supplied by a private env file, never Docker argv",
+  );
+  const runtimeStart = redeploy.slice(
+    redeploy.indexOf("start_runtime_container()"),
+    redeploy.indexOf("\ncontainer_probe()"),
+  );
+  assert.ok(runtimeStart.length > 0, "the authoritative runtime-start function must be present");
+  assert.doesNotMatch(
+    runtimeStart,
+    /--label "org\.opencontainers\.image\.revision=/,
+    "the serving container must inherit provenance from the immutable built image, not a caller-injected run label",
   );
   const dockerfileInstructions = dockerInstructions(dockerfile);
   assert.deepEqual(

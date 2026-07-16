@@ -12,6 +12,7 @@ import { defaultSinks, resolveDeps } from "../../src/deps.js";
 import { FakeEmailSink, FakeLedgerSink } from "../../src/ap/sinks.js";
 import { SmtpEmailSink } from "../../src/ap/smtp-sink.js";
 import { JsonlLedgerSink } from "../../src/ap/ledger-sink.js";
+import { resolveDatabasePoolConfig } from "../../src/db/client.js";
 
 test("defaultSinks(): unconfigured env → in-memory Fake email + ledger sinks", () => {
   const saved = { ...process.env };
@@ -76,4 +77,29 @@ test("production fails closed instead of silently selecting Fake Qwen or in-memo
   } finally {
     process.env = saved;
   }
+});
+
+test("PostgreSQL pool limits are canonical, bounded, and server timeout never exceeds the client", () => {
+  assert.deepEqual(resolveDatabasePoolConfig({}), {
+    max: 5,
+    connectionTimeoutMillis: 10_000,
+    query_timeout: 30_000,
+    statement_timeout: 30_000,
+  });
+  assert.deepEqual(resolveDatabasePoolConfig({
+    PGPOOL_MAX: "10",
+    PG_CONNECT_TIMEOUT_MS: "5000",
+    PG_QUERY_TIMEOUT_MS: "60000",
+    PG_STATEMENT_TIMEOUT_MS: "45000",
+  }), {
+    max: 10,
+    connectionTimeoutMillis: 5000,
+    query_timeout: 60_000,
+    statement_timeout: 45_000,
+  });
+  for (const invalid of ["-1", "1.5", "01", "NaN", " 5", "5 ", "999999999999999999999"]) {
+    assert.throws(() => resolveDatabasePoolConfig({ PGPOOL_MAX: invalid }), /PGPOOL_MAX/);
+  }
+  assert.throws(() => resolveDatabasePoolConfig({ PG_CONNECT_TIMEOUT_MS: "99" }), /PG_CONNECT_TIMEOUT_MS/);
+  assert.throws(() => resolveDatabasePoolConfig({ PG_QUERY_TIMEOUT_MS: "1000", PG_STATEMENT_TIMEOUT_MS: "1001" }), /must not exceed/);
 });
