@@ -30,8 +30,13 @@ later runtime changes.
 |---|---|---|---|
 | **Innovation & AI Creativity (30%)** | **Strong differentiator** | Bounded Qwen function-calling loop; model catalog separated into five read/analyze and four proposal skills; human gate doubles as a correction signal that changes a later decision; injection resistance comes from unreachable execution rather than trusting a classifier. | The offline `22/22` is a deterministic policy result, not live-model accuracy; no multi-agent/A2A layer, by deliberate design. |
 | **Technical Depth & Engineering (30%)** | **Strong engineering evidence** | Authenticated HTTP/UI exclusively owns decisions; a four-tool MCP surface shares intake/memory but is limited to proposal/read operations; Qwen vision + embeddings + chat; pgvector memory; strict auth; production quotas; atomic claims; explicit uncertain-outcome recovery; durable restart-safe ledger; Node/real-pgvector/browser/adversarial gates; ≥80% coverage in every dimension. | The frozen vision benchmark is synthetic rather than representative real-world traffic; the local MCP surface can still read proposal/vendor state and must be access-controlled at the process boundary; SMTP cannot promise recipient-level exactly once. |
-| **Problem Value & Impact (25%)** | **Credible value; impact not yet quantified** | Solves a real AP bottleneck while retaining human control; duplicate/anomaly checks use cross-session evidence; configurable SMTP and durable JSONL ledger create real post-approval effects. | Payment rail and specialist case system remain simulated; no production time-saved or error-rate study is claimed. |
+| **Problem Value & Impact (25%)** | **Credible value with bounded synthetic evidence** | Solves a real AP bottleneck while retaining human control; duplicate/anomaly checks use cross-session evidence; configurable SMTP and durable JSONL ledger create real post-approval effects. Within an authored 12-case workflow model, the assisted arm uses fewer modeled base active-review seconds and human checkpoints while both arms match developer policy labels. | The impact artifact is a fixed synthetic workflow comparison, not a human study, field trial, production benchmark, labor-savings or ROI claim. Payment and specialist case systems remain simulated. |
 | **Presentation (15%) — artifacts** | **Prepared; public media still pending** | Strong README, architecture, judge guide, evidence matrix, honest eval method, Devpost copy, story, blog, and reproducible commands. | Final public hosted video, refreshed screenshots, and published post are human-owned and must still be supplied. |
+
+The strict-union organizer packet also requires a final PPTX/PDF judge deck when the
+separate Qwen flow requests it. The draft builder is prepared, but no placeholder
+deck is deliverable: it must use exact-release screenshots and pass layout/hash
+review before upload.
 
 The table is a release checklist, not a forecast. Competition scoring and placement
 belong exclusively to the independent judges after they review the final submitted
@@ -138,6 +143,7 @@ fail-safe review behavior.
 | Playwright | **Final immutable CI total** | Served UI flows in Chromium with deterministic providers |
 | Coverage | **Four-metric ≥80% gate; final values from CI** | Statements, branches, functions, and lines all gate the commit |
 | Adversarial | **Final immutable CI total** | Repository threat cases, not proof against every future attack |
+| Hosted load ramp | **50 VUs · 13,204 HTTP requests · 0 HTTP failures** | Published deterministic offline application-path stress evidence; Fake Qwen + in-memory storage, not production provider/database capacity or live latency |
 | Readiness | **≥95% automatable gate + explicit user-gated work** | Final playback/hosting and deployment capture are never auto-claimed; recipient delivery is not a claim |
 | Audits | **Final immutable CI result** | Snapshot of advisories for the submitted commit, not a permanent guarantee |
 

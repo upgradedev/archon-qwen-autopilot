@@ -344,10 +344,22 @@ function parseReleaseEvidence({
     `autopilot=${expectedSha}`,
   ]) assert.ok(output.includes(marker), `release output is missing exact marker: ${marker}`);
   assert.ok(/EXACT_DEPLOY_SUCCESS\b/.test(output), 'release output is missing EXACT_DEPLOY_SUCCESS');
-  assert.ok(/"status":"ok"/.test(output), 'release output is missing successful health evidence');
-  assert.ok(/"status":"ready"/.test(output), 'release output is missing successful readiness evidence');
-  assert.ok(/metered authenticated live embedding probe ok/i.test(output), 'release output is missing deep-readiness success');
-  assert.ok(/intake produced a PENDING proposal/i.test(output), 'release output is missing the authenticated decision canary');
+  assert.ok(
+    /raw runtime \.env attested and override-owned keys materialized exactly once/i.test(output),
+    'release output is missing the runtime env singleton proof',
+  );
+  assert.ok(
+    /non-published, fail-closed exact image\/config passed health, DB readiness, and metered Qwen readiness/i.test(output),
+    'release output is missing non-published health/deep-readiness evidence',
+  );
+  assert.ok(
+    /health, DB\/security readiness, and metered live Qwen readiness passed/i.test(output),
+    'release output is missing final health/deep-readiness evidence',
+  );
+  assert.ok(
+    /unique pending identity verified; independent work-item \+ memory cleanup proved zero residue/i.test(output),
+    'release output is missing the authenticated decision and zero-residue canary',
+  );
   assert.ok(deployState.includes(expectedSha), 'DEPLOY_STATE does not name the exact expected release SHA');
 
   const maxAgeHours = Number(process.env.MAX_RELEASE_EVIDENCE_AGE_HOURS || 72);
@@ -1136,10 +1148,10 @@ async function selfTest() {
   }, null, 2)}\n`, 'utf8');
   fs.writeFileSync(outputPath, [
     `EXACT_CHECKOUT_OK app=autopilot sha=${deployed}`,
-    '{"status":"ok"}',
-    '{"status":"ready"}',
-    'metered authenticated live embedding probe ok',
-    'intake produced a PENDING proposal',
+    'raw runtime .env attested and override-owned keys materialized exactly once',
+    'non-published, fail-closed exact image/config passed health, DB readiness, and metered Qwen readiness',
+    'health, DB/security readiness, and metered live Qwen readiness passed',
+    'unique pending identity verified; independent work-item + memory cleanup proved zero residue',
     `EXACT_APP_DEPLOY_OK app=autopilot sha=${deployed}`,
     `EXACT_DEPLOY_SUCCESS memory=${'b'.repeat(40)} autopilot=${deployed}`,
     '',

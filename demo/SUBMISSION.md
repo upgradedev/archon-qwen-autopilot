@@ -1,6 +1,6 @@
 # Archon Autopilot — Devpost submission description
 
-*Paste the body below into the Devpost "description" field. Track 4. ~605 words.*
+*Paste the body below into the Devpost "description" field. Track 4. ~750 words.*
 
 ---
 
@@ -24,7 +24,9 @@ surfaced at the approval gate, while safety does not depend on detecting every p
   (53 total, rounded to one decimal).
 - **Human-in-the-loop gate**: reviewer-authenticated proposals persist as PENDING
   **with the auditable tool/observation trace plus concise model rationale**; public
-  intake is an isolated non-durable preview with redacted evidence. Nothing executes until a person approves, amends, or rejects a durable item.
+  intake is an isolated non-durable preview with redacted evidence. No sink executes
+  at intake: approval executes the original reviewed args,
+  amendment executes the reviewed replacement args, and rejection executes nothing.
   The domain args a human approves are exactly the args that execute. Two sinks are
   **real when configured**: `draft_vendor_reply` submits the approved message to the
   configured SMTP transport and awaits transport acceptance; recipient delivery is not
@@ -32,7 +34,8 @@ surfaced at the approval gate, while safety does not depend on detecting every p
   claimed. `draft_journal_entry` fsyncs a balanced row to a restart-safe,
   append-only JSONL ledger. Payment and specialist-review sinks remain simulated.
 - **Structural tool-attack defense**: the model's tool catalog contains only the
-  *proposing* tools — it can never name `approve`, `amend`, `reject`, or `pay`. No
+  *proposing* tools — it contains no `approve`, `amend`, `reject`, or `pay`
+  capability. Out-of-catalog verbs are rejected and cannot reach execution. No
   injection can autonomously execute. An advisory pattern scan surfaces recognized
   attacks in the trace and at the gate. Proven offline — including a
   **poisoned-memory** prior that is genuinely recalled yet still cannot move money
@@ -49,6 +52,14 @@ surfaced at the approval gate, while safety does not depend on detecting every p
   policy eval is **22/22**, averaging 2.4 autonomous steps. The final Node,
   real-pgvector, Playwright, adversarial, coverage, and audit totals come directly
   from the immutable CI run for the submitted commit, avoiding stale copied counts.
+  A published 50-VU offline application-path k6 ramp completed 13,204 requests with
+  zero HTTP failures; it uses Fake Qwen and in-memory storage and is not a live-Qwen,
+  provider, pgvector, or production-capacity claim.
+- **Measured impact with an explicit boundary**: within an authored 12-case workflow
+  model, the assisted arm uses fewer modeled base active-review seconds and human
+  checkpoints while both arms match the developer policy labels. This is a fixed
+  synthetic workflow comparison—not a human study, field trial, labor-savings or ROI
+  claim.
 
 ### Qwen Cloud usage
 

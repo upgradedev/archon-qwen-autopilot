@@ -150,7 +150,12 @@ signed-out publication checks.
   the repository About/header area, as required by the rules.
 - [ ] Add the live Alibaba HTTPS URL, architecture image, Alibaba/Qwen code proof, and
   final public video URL.
-- [ ] Put the reviewer Bearer token only in Devpost's private testing instructions.
+- [ ] If a separate Qwen submission flow requests PPT/PDF, attach the reviewed final
+  `demo/deck/archon-autopilot-qwen-cloud-hackathon-deck.pptx` and matching PDF; never
+  upload a placeholder build.
+- [ ] Put the reviewer Bearer token only in a field confirmed non-public and
+  judges-only. If visibility is uncertain, omit it and use an organizer-approved
+  secure channel; inspect the saved public preview logged out and rotate on exposure.
 - [ ] Add the optional public post URL.
 - [ ] Test every link and the full judge flow in a signed-out/incognito window.
 - [ ] Re-hash the uploaded gallery files against `demo/gallery/CAPTURE_REVIEW.json`;

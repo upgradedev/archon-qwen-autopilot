@@ -10,13 +10,19 @@ printed or committed.
 > Autopilot container is bound to **`127.0.0.1:9100`**, not a public security-group
 > port.
 >
-> **Exact application release verified 2026-07-15:**
-> `321b6c5440a365fe346d2c446e141e9c5d33854c`. The release controller checked out that
-> SHA, built the production image, bootstrapped the dedicated database role and
-> schema, proved cross-database denial, replaced the hardened container, and passed
-> `/health`, `/ready`, authenticated `/ready/deep`, and a real-Qwen
-> intake→PENDING→targeted-cleanup smoke. Public UI, health and readiness also
-> returned `200` over valid TLS. The deployment record is redacted and retained only
+> **Exact application release verified 2026-07-16:**
+> [`203f159df25f825a0b994a2f8a4d2c0892b45390`](https://github.com/upgradedev/archon-qwen-autopilot/commit/203f159df25f825a0b994a2f8a4d2c0892b45390).
+> Project-contained exact-deploy attempt 23 completed with Alibaba Cloud Assistant
+> terminal status `Success`, exit code `0`, the SHA-bound application marker, and
+> the aggregate `EXACT_DEPLOY_SUCCESS` marker. The release controller checked out
+> that immutable GitHub SHA, built the production image, attested a byte-stable raw
+> `.env`, filtered every override-owned runtime key from the base env file, and
+> proved each authoritative runtime value appeared exactly once in both the
+> non-published staging and final containers. It then bootstrapped the dedicated
+> database role and schema, proved cross-database denial, replaced the hardened
+> container, and passed `/health`, `/ready`, authenticated `/ready/deep`, and a
+> real-Qwen intake→PENDING→targeted-cleanup smoke. Public UI, health and readiness
+> also returned `200` over valid TLS. The redacted deployment record is retained only
 > in this project's ignored `.artifacts/` evidence directory.
 >
 > The exercised release proves all three baseline model paths: a
