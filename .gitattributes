@@ -27,6 +27,7 @@ eval/results/*-attempt-*.json text eol=lf
 # Impact evidence hashes the LF-canonical UTF-8 text form and the replay inputs
 # are pinned LF in every checkout. This makes the source/evidence binding stable
 # across Windows and Linux without weakening lone-CR rejection in the analyzer.
+.gitattributes text eol=lf
 src/** text eol=lf
 eval/lib.ts text eol=lf
 eval/dataset.ts text eol=lf

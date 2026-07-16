@@ -38,6 +38,7 @@ function git(root: string, args: string[]): string {
 }
 
 function writeReplayClosure(root: string, suffix = "v1"): void {
+  writeFileSync(join(root, ".gitattributes"), "* text eol=lf\n");
   mkdirSync(join(root, "src"), { recursive: true });
   mkdirSync(join(root, "eval"), { recursive: true });
   mkdirSync(join(root, "impact"), { recursive: true });
@@ -99,6 +100,7 @@ test("impact input hashes are cross-platform deterministic and reject ambiguous 
 
 test("impact replay closure includes every local module and runtime manifest loaded by the analyzer", () => {
   assert.deepEqual(REPLAY_SOURCE_PATHS, [
+    ".gitattributes",
     "src",
     "eval/lib.ts",
     "eval/dataset.ts",
@@ -208,6 +210,21 @@ test("impact source identity rejects committed replay-source drift", () => {
     writeReplayClosure(fixture.root, "v2");
     git(fixture.root, ["add", "src/core.ts", "eval/lib.ts"]);
     git(fixture.root, ["commit", "--quiet", "-m", "drift replay source"]);
+    assert.throws(
+      () => verifyReplaySourceIdentity(fixture.collection, { repoRoot: fixture.root }),
+      /changed the replay-source closure/,
+    );
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("impact source identity rejects replay-byte policy drift", () => {
+  const fixture = sourceFixture();
+  try {
+    writeFileSync(join(fixture.root, ".gitattributes"), "* text=auto\n");
+    git(fixture.root, ["add", ".gitattributes"]);
+    git(fixture.root, ["commit", "--quiet", "-m", "weaken replay-byte policy"]);
     assert.throws(
       () => verifyReplaySourceIdentity(fixture.collection, { repoRoot: fixture.root }),
       /changed the replay-source closure/,

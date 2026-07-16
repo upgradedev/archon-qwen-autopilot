@@ -863,7 +863,8 @@ and `c8` enforces at least 80% for statements, branches, functions, and lines.
 - **Coverage** — the full unit + integration pyramid runs under **c8** with an **80%
   floor** (statements / branches / functions / lines) on `src/`, gated in CI.
 - **Readiness gate** — `scripts/readiness.ts` encodes the Track-4 rubric as **real
-  behavioral checks** and fails CI below **95%** automatable completion (see below).
+  behavioral checks** and fails CI unless completion is at least **95%** with
+  **zero failed automatable checks** (see below).
 
 CI (`.github/workflows/ci.yml`): **gitleaks** (pinned v8.18.4) → **dep-audit**
 (`npm audit`, fails on high/critical) → **typecheck** → **build** (`tsc`) →
@@ -908,10 +909,11 @@ npm run readiness       # print the per-criterion report + write readiness.json
 ```
 
 It emits `readiness.json` (per-criterion breakdown + the user-gated list, uploaded as a
-CI artifact) and **exits non-zero** below the 95% floor, so a regressed check — a broken
-eval, a dropped sink, an MCP-count drift — fails the build. An e2e
+CI artifact) and **exits non-zero** below the 95% floor or when even one automatable
+check fails. A regressed check — a broken eval, a dropped sink, an MCP-count drift —
+therefore cannot hide at the weighted threshold boundary. An e2e
 (`tests/integration/readiness.e2e.test.ts`) spawns the gate exactly as CI does and
-asserts it runs green offline.
+pins both the zero-failure policy and a green offline run.
 
 ---
 

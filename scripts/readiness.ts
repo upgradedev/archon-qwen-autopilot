@@ -15,9 +15,10 @@
 //
 // Scoring: each criterion's weight is split evenly across its AUTOMATABLE checks
 // (user-gated checks are listed but consume no weight). The automatable completion % is
-// the weighted fraction of automatable checks that pass. CI FAILS the gate when it drops
-// below 95% — so a single regressed check (≈6 pts) trips it. The full breakdown is
-// emitted to readiness.json for the CI artifact + the e2e assertion.
+// the weighted fraction of automatable checks that pass. CI requires both ≥95% weighted
+// completion AND zero failed automatable checks, so no known regression can hide at the
+// threshold boundary. The full breakdown is emitted to readiness.json for the CI artifact
+// + the e2e assertion.
 
 import { writeFileSync, existsSync, statSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -45,6 +46,10 @@ import { JsonlLedgerSink, type LedgerTransport } from "../src/ap/ledger-sink.js"
 import { defaultSinks } from "../src/deps.js";
 import type { ChatCreateArgs, ChatResponse, QwenChatClient, ToolCall } from "../src/qwen/client.js";
 import { safeOperationalSummary } from "../src/security/operational-error.js";
+import {
+  passesReadinessGate,
+  READINESS_GATE_THRESHOLD_PCT,
+} from "./readiness-policy.js";
 
 // Offline: no key means the decider/embedder/extractor auto-select the deterministic Fakes.
 delete process.env.DASHSCOPE_API_KEY;
@@ -52,7 +57,6 @@ delete process.env.DASHSCOPE_API_KEY;
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..");
 const GOLDEN = JSON.parse(readFileSync(join(ROOT, "tests", "docs", "claims.golden.json"), "utf8"));
-const GATE_THRESHOLD_PCT = 95;
 
 type Status = "pass" | "fail" | "user-gated";
 interface Check {
@@ -647,13 +651,14 @@ async function main() {
   const userGated = allChecks.filter((ch) => ch.status === "user-gated");
   const failed = allChecks.filter((ch) => ch.status === "fail");
   const passed = allChecks.filter((ch) => ch.status === "pass");
-  const gatePass = automatablePct >= GATE_THRESHOLD_PCT;
+  const gatePass = passesReadinessGate(automatablePct, failed.length);
 
   const report = {
     generatedAt: new Date().toISOString(),
     rubric: "Track-4 Autopilot Agent — Technical 30 / Innovation 30 / Problem 25 / Presentation 15 · Security 25 (cross-cutting app-sec assurance)",
     automatableCompletionPct: automatablePct,
-    gateThresholdPct: GATE_THRESHOLD_PCT,
+    gateThresholdPct: READINESS_GATE_THRESHOLD_PCT,
+    gatePolicy: { requiresZeroFailedAutomatableChecks: true },
     gatePass,
     totals: { passed: passed.length, failed: failed.length, userGated: userGated.length, automatable: passed.length + failed.length },
     criteria: scored,
@@ -678,7 +683,7 @@ async function main() {
     }
     console.log("\n" + "=".repeat(78));
     console.log(`Automatable completion : ${automatablePct}%  ${bar(automatablePct)}`);
-    console.log(`Gate (≥ ${GATE_THRESHOLD_PCT}%)          : ${gatePass ? "PASS" : "FAIL"}   (${passed.length} pass · ${failed.length} fail · ${userGated.length} user-gated)`);
+    console.log(`Gate (0 fails and ≥ ${READINESS_GATE_THRESHOLD_PCT}%): ${gatePass ? "PASS" : "FAIL"}   (${passed.length} pass · ${failed.length} fail · ${userGated.length} user-gated)`);
     if (userGated.length) {
       console.log(`\nUser-gated (not counted — a human must confirm):`);
       for (const ch of userGated) console.log(`  ◐ [${ch.criterion}] ${ch.label}`);
@@ -691,7 +696,10 @@ async function main() {
   }
 
   if (!gatePass) {
-    console.error(`\nREADINESS GATE FAILED — automatable completion ${automatablePct}% is below the ${GATE_THRESHOLD_PCT}% floor.`);
+    console.error(
+      `\nREADINESS GATE FAILED — requires zero failed automatable checks and at least ` +
+      `${READINESS_GATE_THRESHOLD_PCT}% weighted completion; observed ${failed.length} failed and ${automatablePct}%.`,
+    );
     process.exit(1);
   }
 }

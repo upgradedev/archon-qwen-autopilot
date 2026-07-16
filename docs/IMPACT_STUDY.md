@@ -67,13 +67,14 @@ executing `process.version` to equal `v24.18.0`, resolves the raw record's full
 Git commit and tree IDs, requires that source commit to remain an ancestor of
 the current `HEAD`, and proves that the complete local replay closure is
 unchanged and free of staged, unstaged, untracked, assume-unchanged, or
-skip-worktree state. That closure includes `src/`; the five transitively loaded
-`eval/` modules; the analyzer and provenance gate; protocol/case inputs; and the
-package, lock, and TypeScript runtime manifests. The eval dataset and runner are
-dynamically imported only after the runtime, committed-raw, and source gates
-pass. A later commit may add the refreshed evidence without changing the frozen
-replay source; the verifier deliberately does not serialize the later `HEAD`,
-so such an evidence-only commit remains reproducible.
+skip-worktree state. That closure includes the `.gitattributes` replay-byte
+policy; `src/`; the five transitively loaded `eval/` modules; the analyzer and
+provenance gate; protocol/case inputs; and the package, lock, and TypeScript
+runtime manifests. The eval dataset and runner are dynamically imported only
+after the runtime, committed-raw, and source gates pass. A later commit may add
+the refreshed evidence without changing the frozen replay source; the verifier
+deliberately does not serialize the later `HEAD`, so such an evidence-only
+commit remains reproducible.
 
 The manual actions are a frozen developer application of the declared
 checklist; no human participant made or timed those decisions. Both arms store
@@ -88,9 +89,10 @@ input hashes in [`impact/results.json`](../impact/results.json).
 
 Every textual input hash is SHA-256 over its LF-canonical UTF-8 form. CRLF and
 LF checkouts therefore bind to the same evidence identity, while any lone
-carriage return is rejected as ambiguous. `.gitattributes` also pins the full
-replay source and evidence-input closure to LF so Windows and Linux checkouts
-exercise the same bytes before analysis.
+carriage return is rejected as ambiguous. `.gitattributes` also pins itself and
+the full replay source/evidence-input closure to LF so Windows and Linux
+checkouts exercise the same bytes before analysis. Because the attribute policy
+is part of `REPLAY_SOURCE_PATHS`, a later evidence-only commit cannot alter it.
 
 | Fixed 12-case endpoint | Manual model | Assisted model | Manual − assisted |
 |---|---:|---:|---:|

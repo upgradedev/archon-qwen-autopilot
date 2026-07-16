@@ -777,6 +777,7 @@ test("SUPPLY 1C — impact replay inputs are LF-pinned across Windows and Linux"
       .filter((line) => line && !line.startsWith("#")),
   );
   for (const rule of [
+    ".gitattributes text eol=lf",
     "src/** text eol=lf",
     "eval/lib.ts text eol=lf",
     "eval/dataset.ts text eol=lf",

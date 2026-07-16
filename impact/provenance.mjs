@@ -10,6 +10,7 @@ const SHA1_RE = /^[0-9a-f]{40}$/;
 export const LOCKED_NODE_VERSION = "v24.18.0";
 export const LOCKED_NODE_LABEL = "Node.js 24.18.0";
 export const REPLAY_SOURCE_PATHS = Object.freeze([
+  ".gitattributes",
   "src",
   "eval/lib.ts",
   "eval/dataset.ts",
