@@ -91,5 +91,5 @@ rights, or release gates. Their checklist state is not a public readiness claim.
 Legacy `docs/architecture.*` assets and the orphaned dated judge-state memo were
 removed after repository-wide reference checks. The documentation fitness tests fail
 if either legacy surface returns, if local Markdown links break, if public URLs drift,
-or if avoidable price/spend rhetoric or numeric-currency storytelling re-enters the
+or if avoidable pricing rhetoric or unsupported numeric-currency storytelling re-enters the
 public submission-copy sources.

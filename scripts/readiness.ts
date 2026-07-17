@@ -513,7 +513,7 @@ async function presentation(): Promise<CriterionSpec> {
   checks.push(gate(
     "video-hosted",
     "Public video remains judges-accessible signed out",
-    "Canonical Public URL is recorded as https://www.youtube.com/watch?v=Vc2mJdsoSX0; recheck 1080p, captions, chapters, and start-to-end playback signed out before final submission.",
+    "Canonical Public URL is recorded as https://www.youtube.com/watch?v=-q-CkOcdS14; recheck narration, 1080p, manual captions, chapters, and start-to-end playback signed out before final submission.",
   ));
   checks.push(gate(
     "live-box-redeploy",

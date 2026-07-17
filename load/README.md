@@ -33,7 +33,8 @@ Authorization header; it is never written to the summary.
 ### Recommended: run against the OFFLINE server
 
 Boot the server with no `DASHSCOPE_API_KEY` (→ the deterministic Fakes) so every
-`/intake` is CPU-cheap with **zero spend**. Raise all four workflow-admission caps
+`/intake` stays offline and invokes no model provider. Raise all four
+workflow-admission caps
 and the three coarse HTTP caps within their finite code bounds so the loop is
 actually exercised under load rather than measuring the abuse controls:
 

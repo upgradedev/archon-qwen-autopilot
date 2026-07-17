@@ -18,7 +18,7 @@ lets a human approve the exact action before anything happens. It is our Track-4
 This post is the build journey: the design decisions, the one that mattered most,
 and how we measured whether the agent's decisions are any good.
 
-Watch the [public 168-second product demo](https://www.youtube.com/watch?v=Vc2mJdsoSX0)
+Watch the [public 168-second product demo](https://www.youtube.com/watch?v=-q-CkOcdS14)
 for the exact human-gated workflow and exercised Alibaba/Qwen proof.
 
 ## System Architecture
@@ -280,7 +280,7 @@ npm start               # the API + Swagger UI at :9000/docs
 ```
 
 The easy half of an AP agent is choosing an action. The half that makes it *usable*
-is never spending the money until a human says so — and proving the decisions are
+is never moving funds until a human says so — and proving the decisions are
 good enough to be worth approving. That's what we built.
 
 ---
@@ -288,5 +288,5 @@ good enough to be worth approving. That's what we built.
 Try the [live human-gated workflow](https://autopilot.43.106.13.19.sslip.io/), inspect
 the [MIT-licensed source](https://github.com/upgradedev/archon-qwen-autopilot), and
 review the [decision-quality method and caveats](https://github.com/upgradedev/archon-qwen-autopilot/blob/main/EVAL.md).
-The [public demo](https://www.youtube.com/watch?v=Vc2mJdsoSX0) shows the complete
+The [public demo](https://www.youtube.com/watch?v=-q-CkOcdS14) shows the complete
 proposal, human-decision, and evidence path in under three minutes.

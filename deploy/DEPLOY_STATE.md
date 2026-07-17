@@ -227,7 +227,7 @@ obsolete and unsafe: one network cannot provide both internal DB DNS and egress,
 public 9100 binding bypasses HTTPS. The authoritative topology is the dual-network,
 localhost-only design above.
 
-## Cost hygiene
+## Provider-call hygiene
 
 After the judging/demo window, stop or release the ECS resources according to the
 team's retention plan. Preserve any required ledger/audit artifact before teardown.

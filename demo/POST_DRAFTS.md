@@ -47,7 +47,7 @@ Live: https://autopilot.43.106.13.19.sslip.io
 
 Code (MIT): https://github.com/upgradedev/archon-qwen-autopilot
 
-Demo: https://www.youtube.com/watch?v=Vc2mJdsoSX0
+Demo: https://www.youtube.com/watch?v=-q-CkOcdS14
 
 Build journey: https://dev.to/efousekis/building-archon-autopilot-where-qwen-proposes-and-humans-control-the-money-4mfg
 
@@ -72,7 +72,7 @@ Archon Autopilot (Track 4): Qwen recalls first, validates, selects only relevant
 4/4 Live on Alibaba Cloud / Qwen, MIT licensed:
 https://autopilot.43.106.13.19.sslip.io
 https://github.com/upgradedev/archon-qwen-autopilot
-https://www.youtube.com/watch?v=Vc2mJdsoSX0
+https://www.youtube.com/watch?v=-q-CkOcdS14
 ```
 
 ## Devpost community update

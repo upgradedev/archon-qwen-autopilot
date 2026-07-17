@@ -3,7 +3,7 @@
 [![CI](https://github.com/upgradedev/archon-qwen-autopilot/actions/workflows/ci.yml/badge.svg)](https://github.com/upgradedev/archon-qwen-autopilot/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-Alibaba%20Cloud-ff6a00?logo=alibabacloud&logoColor=white)](https://autopilot.43.106.13.19.sslip.io)
-[![Demo video](https://img.shields.io/badge/Demo-2%3A48%20on%20YouTube-red?logo=youtube)](https://www.youtube.com/watch?v=Vc2mJdsoSX0)
+[![Demo video](https://img.shields.io/badge/Demo-2%3A48%20on%20YouTube-red?logo=youtube)](https://www.youtube.com/watch?v=-q-CkOcdS14)
 [![Tests](https://img.shields.io/badge/Tests-full%20pyramid%20CI--gated-brightgreen)](.github/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/Coverage-%E2%89%A580%25%20four--metric%20gate-brightgreen)](.github/workflows/ci.yml)
 [![Project Story](https://img.shields.io/badge/Project%20Story-Devpost-003e54)](demo/PROJECT_STORY.md)
@@ -536,8 +536,9 @@ approval checkpoint into a public, scriptable side-effect endpoint.
 
 To limit the model exposure of an open, unauthenticated endpoint, invoice
 uploads are rate-limited **per UTC day** (resetting at 00:00 UTC) across the four
-budget-consuming upload routes — `POST /intake`, `POST /intake/stream`, `POST
-/intake/document`, **and `POST /extract/document`** (all four share one budget). A
+provider-invoking upload routes — `POST /intake`, `POST /intake/stream`, `POST
+/intake/document`, **and `POST /extract/document`** (all four share one workflow
+quota). A
 `/extract/document` mints a durable single-use ticket bound to the owner, tier,
 UTC day, expiry, and canonical extraction digest. Only the unchanged extraction's
 follow-up `/intake/stream` call avoids double charging; edits/replacements follow
@@ -547,16 +548,16 @@ the same source, while proposal persistence consumes it.
 The limiter ([`src/ap/rate-limit.ts`](src/ap/rate-limit.ts)) is **two-tier**. With
 `DATABASE_URL`, production uses `PostgresDailyRateLimiter`: both rows are locked and
 incremented in one transaction, so restarts and multiple replicas cannot reset or
-oversubscribe the workflow-entitlement budget. `DailyRateLimiter` is only the no-DB
+oversubscribe the workflow-entitlement quota. `DailyRateLimiter` is only the no-DB
 dev/test implementation.
 
 - a **per-client bucket** (default **100/day**, `UPLOAD_DAILY_LIMIT`) keyed by the
-  caller's IP, so each visitor gets their own fair budget; and
+  caller's IP, so each visitor gets their own fair quota; and
 - a **global daily backstop** across all clients (default **2000/day**,
   `UPLOAD_GLOBAL_DAILY_LIMIT`) — the hard, spoof-proof bound on accepted public
   provider workflows.
   It is independent of the per-client cap and is never silently increased when an
-  operator intentionally configures a smaller global budget.
+  operator intentionally configures a smaller global quota.
 
 A request is refused (`429`) only when **either** the caller's own bucket **or** the
 global backstop is full, and the message says which. The per-client key is
@@ -567,7 +568,8 @@ topology pins one trusted hop. The **global backstop** remains the hard public
 workflow-entitlement bound.
 Both caps are env-tunable for a judging window.
 The limiter is checked **after** payload/file validation, so an invalid request or an
-unsupported/oversize document never burns budget. Validation, the approval gate, and
+unsupported/oversize document never consumes provider-workflow quota. Validation, the
+approval gate, and
 every read endpoint (`/pending`, `/pending/:id`, `/decided`, `/skills`, `/health`) is **not charged
 to this daily provider-workflow quota**. They are still covered by the coarse
 whole-HTTP per-minute abuse guard.
@@ -662,7 +664,7 @@ possible exclusively through the Bearer-authenticated HTTP API / Approval UI. Th
 least-agency split remains true even if an MCP client itself is compromised.
 
 Provider-bearing MCP calls share the zero-wait public provider pool and a separate
-bounded daily budget. With real Qwen, MCP refuses to start without `DATABASE_URL`,
+bounded daily quota. With real Qwen, MCP refuses to start without `DATABASE_URL`,
 so spawning more stdio processes cannot reset the durable Postgres quota. Default
 responses are capped and redacted. Full evidence requires the operator-side
 `MCP_FULL_REVIEWER_EVIDENCE=true` opt-in; it is never a caller-controlled tool arg.
@@ -792,7 +794,8 @@ input-safety layers **on top of** the existing extension/content-type allowlist,
 + page caps, untrusted-data vision instructions, and the decider fence:
 
 - **Magic-byte content-sniffing** ([`src/qwen/vision.ts`](src/qwen/vision.ts),
-  `validateMagicBytes`). Before any budget is consumed, the buffer's leading bytes are
+  `validateMagicBytes`). Before any provider-workflow quota is consumed, the buffer's
+  leading bytes are
   checked against the type the file *claims* to be — `%PDF` for PDF, the 8-byte PNG
   signature, the JPEG SOI marker. A file whose real bytes disagree with its extension /
   content-type (a `.pdf` that is actually a PNG — a disguised-payload trick) is rejected
@@ -811,7 +814,8 @@ input-safety layers **on top of** the existing extension/content-type allowlist,
   `assessRelevance`). Derived from the structured extraction (no extra model call): if a
   document has no invoice fields (vendor / invoice number / amount) or the extractor
   reports very low confidence, it is flagged `relevant: false` with a reason. It is
-  advisory — the human still decides — and it spends no decider budget on an obviously
+  advisory — the human still decides — and it does not invoke the decider loop for an
+  obviously
   irrelevant file (`/extract/document` runs no loop).
 
 Both `/extract/document` (JSON) and `/intake/document` (SSE) surface the findings as:

@@ -67,7 +67,7 @@ technologies or Devpost **Built with** tags.
 | Organizer deck (strict-union artifact) | If the organizer's separate Qwen flow requests a PPT/PDF, use `demo/deck/archon-autopilot-qwen-cloud-hackathon-deck.pptx` and the matching `.pdf` only after exact-release screenshots, layout review and hash verification; never upload a placeholder build. |
 | Devpost project thumbnail | `demo/thumbnail.png` (1500×1000, 3:2) |
 | Editable thumbnail source | `demo/thumbnail.svg` |
-| Public demo video | https://www.youtube.com/watch?v=Vc2mJdsoSX0 (public, signed-out verified: 2:48, 1080p, captions) |
+| Public demo video | https://www.youtube.com/watch?v=-q-CkOcdS14 (narrated release; 2:48, 1080p, manual English captions; re-verify signed out before final submission) |
 | Optional public build-journey post | https://dev.to/efousekis/building-archon-autopilot-where-qwen-proposes-and-humans-control-the-money-4mfg (public, signed-out verified) |
 
 At final draft time, add immutable evidence links for the exact submission commit:
@@ -208,11 +208,11 @@ and judge reserve active free of charge through **2026-08-11 2:00 PM PDT**.
 
 ## 9 · Video and optional blog fields
 
-**Video URL:** https://www.youtube.com/watch?v=Vc2mJdsoSX0
+**Video URL:** https://www.youtube.com/watch?v=-q-CkOcdS14
 
 Published per [`VIDEO_PUBLICATION_PACKET.md`](VIDEO_PUBLICATION_PACKET.md) and signed-out
-verified: publicly visible on YouTube with no login or
-access request; 2:48 (below three minutes); 1080p works signed out; English captions work;
+verified: publicly visible on YouTube with no login or access request; the narrated
+release is 2:48 (below three minutes); 1080p works signed out; manual English captions work;
 no secret appears for even one frame; all visible functionality matches the final deployment.
 
 **Blog/social URL:** https://dev.to/efousekis/building-archon-autopilot-where-qwen-proposes-and-humans-control-the-money-4mfg
