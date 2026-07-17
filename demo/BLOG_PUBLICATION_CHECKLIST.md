@@ -1,4 +1,4 @@
-# Blog-post publication packet
+# Blog-post publication and re-verification packet
 
 Use the long-form [`BLOG.md`](BLOG.md) for the optional Blog Post bonus. The official
 bonus criterion is the post's **thoroughness and potential impact**, so the full build
@@ -23,11 +23,11 @@ journey is preferable to publishing only the short social draft.
 > `demo/final-media/autopilot-live-intake-pending.png`, after final sanitization. Use
 > `judge-architecture.jpg` if the publication layout makes the UI unreadable.
 
-## Before publication
+## Before publication or any public revision
 
 - [ ] Replace the relative architecture image in `BLOG.md` with the public final
   architecture image or an uploaded copy; preview it on the destination platform.
-- [ ] Add the final public video URL near the introduction and final call to action.
+- [ ] Preserve the canonical public video URL near the introduction and final call to action.
 - [ ] Add the live app and MIT repository links exactly as listed in
   [`DEVPOST_PACKET.md`](DEVPOST_PACKET.md).
 - [ ] Keep the build-journey details: why the hard human boundary matters, the single
@@ -44,8 +44,8 @@ journey is preferable to publishing only the short social draft.
   have public promotional-use rights.
 - [ ] Add descriptive alt text to every image.
 - [ ] Preview mobile and desktop layouts, then open every link signed out.
-- [ ] Publish publicly, copy its canonical URL into the Devpost draft, and recheck the
-  URL signed out.
+- [ ] After publishing or editing, keep its canonical URL in the Devpost draft and
+  recheck the URL signed out.
 
 ## Suggested final call to action
 

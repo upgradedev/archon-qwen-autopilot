@@ -9,8 +9,8 @@
 //            22/22 + measured autonomy, MCP tools, skill split, the security
 //            invariant) and asserts the README's stated versions match, so future
 //            drift is caught.
-//   CHECK 4  Every local README link resolves, and every Markdown fragment points to
-//            a real GitHub-style heading anchor (no silently broken judge navigation).
+//   CHECK 4  Every local Markdown link resolves, and every Markdown fragment points
+//            to a real GitHub-style heading anchor (no silently broken navigation).
 //   CHECK 5  Judge-facing SMTP claims stop at awaited transport acceptance and never
 //            imply recipient delivery or recipient-level exactly-once semantics.
 //   CHECK 6  Submission/media copy stays judge-safe: no public self-score, product-
@@ -425,10 +425,17 @@ test("CHECK 3 · golden: the security invariant pinned in the golden holds in co
 });
 
 // ════════════════════════════════════════════════════════════════════════════════
-// CHECK 4 — README local links + heading anchors
+// CHECK 4 — repository Markdown local links + heading anchors
 // ════════════════════════════════════════════════════════════════════════════════
 
-test("CHECK 4 · links: every local README target and Markdown heading fragment resolves", () => {
+function trackedMarkdownFiles(): string[] {
+  return execFileSync("git", ["ls-files", "*.md", "*.mdx"], {
+    cwd: ROOT,
+    encoding: "utf8",
+  }).split(/\r?\n/).filter(Boolean).map((path) => join(ROOT, path)).filter(existsSync);
+}
+
+test("CHECK 4 · links: every tracked local Markdown target and heading fragment resolves", () => {
   const cache = new Map<string, Set<string>>();
   const anchorsFor = (path: string) => {
     let anchors = cache.get(path);
@@ -439,23 +446,26 @@ test("CHECK 4 · links: every local README target and Markdown heading fragment 
     return anchors;
   };
 
-  for (const match of README.matchAll(/(?<!!)\[[^\]]*\]\(([^)]+)\)/g)) {
-    const rawTarget = match[1]!.trim().replace(/^<|>$/g, "").split(/\s+["']/)[0]!;
-    if (/^(?:https?:|mailto:|tel:)/i.test(rawTarget)) continue;
-    const [rawPath = "", rawFragment] = rawTarget.split("#", 2);
-    const relativePath = decodeURIComponent(rawPath);
-    const targetPath = relativePath ? resolve(ROOT, relativePath) : join(ROOT, "README.md");
-    assert.ok(
-      targetPath === ROOT || targetPath.startsWith(ROOT + "\\") || targetPath.startsWith(ROOT + "/"),
-      `README link escapes the repository: '${rawTarget}'`,
-    );
-    assert.ok(existsSync(targetPath), `README link target does not exist: '${rawTarget}'`);
-    if (!rawFragment || !targetPath.toLowerCase().endsWith(".md")) continue;
-    const fragment = decodeURIComponent(rawFragment).toLowerCase();
-    assert.ok(
-      anchorsFor(targetPath).has(fragment),
-      `README link fragment '#${fragment}' does not match a heading in '${relativePath || "README.md"}'`,
-    );
+  for (const sourcePath of trackedMarkdownFiles()) {
+    const markdown = readFileSync(sourcePath, "utf8");
+    for (const match of markdown.matchAll(/!?\[[^\]]*\]\(([^)\r\n]+)\)/g)) {
+      const rawTarget = match[1]!.trim().replace(/^<|>$/g, "").split(/\s+["']/)[0]!;
+      if (/^(?:https?:|mailto:|tel:|data:)/i.test(rawTarget)) continue;
+      const [rawPath = "", rawFragment] = rawTarget.split("#", 2);
+      const relativePath = decodeURIComponent(rawPath);
+      const targetPath = relativePath ? resolve(dirname(sourcePath), relativePath) : sourcePath;
+      assert.ok(
+        targetPath === ROOT || targetPath.startsWith(ROOT + "\\") || targetPath.startsWith(ROOT + "/"),
+        `${sourcePath} link escapes the repository: '${rawTarget}'`,
+      );
+      assert.ok(existsSync(targetPath), `${sourcePath} link target does not exist: '${rawTarget}'`);
+      if (!rawFragment || !targetPath.toLowerCase().endsWith(".md")) continue;
+      const fragment = decodeURIComponent(rawFragment).toLowerCase();
+      assert.ok(
+        anchorsFor(targetPath).has(fragment),
+        `${sourcePath} link fragment '#${fragment}' does not match a heading in '${relativePath || sourcePath}'`,
+      );
+    }
   }
 });
 
@@ -675,6 +685,93 @@ test("CHECK 6 · submission copy: internal scoring, Built-with tags, and operato
   assert.match(operatorChecklist, /operator only/i);
   assert.match(operatorChecklist, /never paste any part of it/i);
   assert.match(operatorChecklist, /replace\s+`\[PUBLIC_VIDEO_URL\]`/i);
+});
+
+test("CHECK 6 · housekeeping: documentation inventory is exhaustive and stale surfaces cannot return", () => {
+  const index = readFileSync(join(ROOT, "docs", "README.md"), "utf8");
+  for (const absolutePath of trackedMarkdownFiles()) {
+    const repositoryPath = absolutePath.slice(ROOT.length + 1).replaceAll("\\", "/");
+    if (repositoryPath === "docs/README.md") continue;
+    const linkTarget = repositoryPath.startsWith("docs/")
+      ? repositoryPath.slice("docs/".length)
+      : `../${repositoryPath}`;
+    assert.ok(index.includes(`](${linkTarget})`), `docs/README.md does not inventory ${repositoryPath}`);
+  }
+
+  for (const legacyPath of [
+    join(ROOT, "docs", "architecture.mmd"),
+    join(ROOT, "docs", "architecture.png"),
+    join(ROOT, "docs", "architecture.svg"),
+    join(ROOT, "docs", "JUDGE_STATE_2026-07-13.md"),
+  ]) {
+    assert.equal(existsSync(legacyPath), false, `${legacyPath} is obsolete and must not return`);
+  }
+
+  for (const path of [
+    join(ROOT, "README.md"),
+    join(ROOT, "demo", "BLOG.md"),
+    join(ROOT, "demo", "PROJECT_STORY.md"),
+    join(ROOT, "demo", "SUBMISSION.md"),
+    join(ROOT, "demo", "DEVPOST_PACKET.md"),
+  ]) {
+    assert.doesNotMatch(readFileSync(path, "utf8"), /docs\/architecture\.(?:mmd|png|svg)/i,
+      `${path} must use only the canonical judge architecture`);
+  }
+});
+
+test("CHECK 6 · public copy: canonical URLs and bounded non-price rhetoric stay aligned", () => {
+  const videoUrl = "https://www.youtube.com/watch?v=Vc2mJdsoSX0";
+  const blogUrl = "https://dev.to/efousekis/building-archon-autopilot-where-qwen-proposes-and-humans-control-the-money-4mfg";
+  const completeHttpsTokens = (markdown: string): Set<string> =>
+    new Set([...markdown.matchAll(/https:\/\/[^\s<>()\]]+/g)].map((match) => match[0]!));
+  for (const path of [
+    join(ROOT, "README.md"),
+    join(ROOT, "demo", "BLOG.md"),
+    join(ROOT, "demo", "DEVPOST_PACKET.md"),
+    join(ROOT, "demo", "POST_DRAFTS.md"),
+  ]) {
+    assert.ok(completeHttpsTokens(readFileSync(path, "utf8")).has(videoUrl),
+      `${path} does not carry the exact canonical public video URL`);
+  }
+  for (const path of [
+    join(ROOT, "demo", "DEVPOST_PACKET.md"),
+    join(ROOT, "demo", "POST_DRAFTS.md"),
+  ]) {
+    assert.ok(completeHttpsTokens(readFileSync(path, "utf8")).has(blogUrl),
+      `${path} does not carry the exact canonical public build-article URL`);
+  }
+
+  const publicCopy = [
+    join(ROOT, "demo", "BLOG.md"),
+    join(ROOT, "demo", "PROJECT_STORY.md"),
+    join(ROOT, "demo", "SUBMISSION.md"),
+    join(ROOT, "demo", "DEVPOST_PACKET.md"),
+    join(ROOT, "demo", "POST_DRAFTS.md"),
+    join(ROOT, "demo", "gallery", "GALLERY_MANIFEST.md"),
+  ];
+  const rhetoricForbidden = [
+    /hidden[ -]?costs?/i,
+    /few cents?/i,
+    /\b(?:zero|no) spend\b/i,
+  ];
+  for (const path of [join(ROOT, "README.md"), ...publicCopy]) {
+    const copy = readFileSync(path, "utf8");
+    for (const pattern of rhetoricForbidden) {
+      assert.doesNotMatch(copy, pattern, `${path} contains avoidable price/spend rhetoric (${pattern})`);
+    }
+  }
+
+  const numericCurrencyForbidden = [
+    /€\s*\d/i,
+    /\$\s*\d/i,
+    /\b(?:USD|EUR)\s*\d/i,
+  ];
+  for (const path of publicCopy) {
+    const copy = readFileSync(path, "utf8");
+    for (const pattern of numericCurrencyForbidden) {
+      assert.doesNotMatch(copy, pattern, `${path} contains avoidable numeric-currency storytelling (${pattern})`);
+    }
+  }
 });
 
 test("CHECK 6 · media: Devpost thumbnail is exact 3:2, original, and self-contained", () => {

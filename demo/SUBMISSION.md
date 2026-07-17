@@ -42,9 +42,10 @@ surfaced at the approval gate, while safety does not depend on detecting every p
   (`tests/pentest/prompt-injection.test.ts`).
 - **Correction-aware memory**: duplicate + anomaly checks read persistent **pgvector**
   vendor history. Human amend/reject outcomes are written back and lifted into the
-  next decision. In the controlled delta, a €5,000 re-bill above a human-corrected
-  €3,000 amount changes `draft_payment → flag_for_review`, while the compliant €3,000
-  control stays a payment proposal. No model weights are updated.
+  next decision. In the controlled delta, a material re-bill above the verified
+  human-corrected amount changes `draft_payment → flag_for_review`, while the
+  compliant corrected-amount control stays a payment proposal. No model weights are
+  updated.
 - **Two deliberately asymmetric surfaces**: HTTP + Approval UI is the exclusive
   authenticated decision path; an **MCP server exposes four proposal/read-only tools**
   (`intake_invoice`, `list_pending`, `recall_vendor`, `list_skills`) and cannot decide

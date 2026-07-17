@@ -67,10 +67,12 @@ OS temp folders for project media.
 
 ## 2 · Refresh the <3-minute video
 
-Follow the nine judge-first beats in [`VIDEO_SCRIPT.md`](VIDEO_SCRIPT.md). No final
-MP4 is tracked yet; the obsolete `demo/video/assets/ui_*.png` captures were removed
-because they predated the final authenticated UI and were not approved evidence.
-After rendering, use [`VIDEO_PUBLICATION_PACKET.md`](VIDEO_PUBLICATION_PACKET.md) for
+Follow the nine judge-first beats in [`VIDEO_SCRIPT.md`](VIDEO_SCRIPT.md). The
+canonical final MP4 and its QA manifests are tracked; rebuild them only when an
+approved exact-release input changes. The obsolete `demo/video/assets/ui_*.png`
+captures were removed because they predated the final authenticated UI and were not
+approved evidence. After rendering or revising, use
+[`VIDEO_PUBLICATION_PACKET.md`](VIDEO_PUBLICATION_PACKET.md) for
 the public title, bounded description, measured chapters, captions, thumbnail, and
 signed-out publication checks.
 

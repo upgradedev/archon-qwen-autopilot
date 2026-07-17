@@ -18,12 +18,15 @@ lets a human approve the exact action before anything happens. It is our Track-4
 This post is the build journey: the design decisions, the one that mattered most,
 and how we measured whether the agent's decisions are any good.
 
+Watch the [public 168-second product demo](https://www.youtube.com/watch?v=Vc2mJdsoSX0)
+for the exact human-gated workflow and exercised Alibaba/Qwen proof.
+
 ## System Architecture
 
 Below is the judge-facing system architecture: one readable proposal flow, an explicit
 "model stops" boundary, authenticated human control, and a separate durable evidence
-loop. The dense component-level render remains available in the repository as a
-technical appendix.
+loop. This is the single canonical architecture used by the repository and submission
+packets.
 
 ![Archon Autopilot system architecture](./final-media/judge-architecture.jpg)
 
@@ -44,7 +47,7 @@ feed the trace; the first terminal action it picks stops the loop as a PENDING
 proposal.
 
 `normalize.ts` is the messy front door: alias keys (`supplier`/`payee` → vendor),
-string amounts (`"€ 2.500,00"`, EU decimals, `"USD 900"`), unparseable dates,
+localized currency strings, mixed decimal conventions, unparseable dates,
 inferred totals — every coercion recorded in `notes[]`, never silently dropped.
 `validate_invoice` runs the four structural checks (amount sanity, required fields,
 tax reconciliation, and line-item integrity). After recall and structural validation,
@@ -68,8 +71,8 @@ The model fills each tool's domain arguments and self-reports a `reasoning` and 
 
 ## The decision that mattered: one loop, one seam
 
-The trap in an LLM agent is that the LLM call is the one thing your CI can't run — no
-key, no spend. So the integration you most want to trust is the one you test least.
+The trap in an LLM agent is that CI cannot depend on a live provider call. So the
+integration you most want to trust is often the one teams test least.
 
 We designed around it. There is a **single** `AutopilotLoop` (`src/ap/loop.ts`) — a
 bounded, multi-step ReAct loop. Behind it sits a seam — `QwenChatClient` — with two
@@ -85,7 +88,8 @@ return { choices: [{ message: { content: null, tool_calls: [chooseToolCall(evide
 ```
 
 So the loop's real parse-and-lift path — `tool_calls → JSON.parse(args) → split
-out reasoning/confidence → ProposedAction` — is **exercised in CI with no key**, at
+out reasoning/confidence → ProposedAction` — is **exercised in CI through the
+deterministic provider seam**, at
 every step of the loop. The Fake reads a deterministic `EVIDENCE:` line the step
 prompt embeds (produced by `computeEvidence`) and applies the same decision
 documented conservative precedence; the real model reads the accumulated context and
@@ -214,8 +218,8 @@ Two honesty points sit behind that offline number. First, it is produced by the
 **deterministic Fakes**, so it is a **policy / regression guard** over the real
 multi-step pipeline—not a decision-quality claim about the model. The online runner
 records raw `qwen-plus` agreement separately from guarded system outcomes
-against the same labels. That run needs a key and a few cents of spend, so we keep it
-separate rather than pass the Fake's result off as the model's. Second, that 22/22
+against the same labels. That run requires configured live-provider access, so we
+keep it separate rather than pass the Fake's result off as the model's. Second, that 22/22
 was **earned, not curated**: scenario `s22` (an invoice with no parseable total)
 originally *failed* offline, because the deterministic policy had no branch for "no
 total". We shipped it failing and documented it — an eval that can't fail proves
@@ -227,9 +231,9 @@ perfect.
 
 ## Offline-first, so all of it runs in CI
 
-With no `DASHSCOPE_API_KEY`, the `FakeQwenChatClient` + `FakeEmbedder` engage and the
-**whole loop — intake → decide → approve → execute → remember — plus the eval gate**
-runs with zero credentials and zero spend. The identical code runs live against Qwen
+With live-provider access unconfigured, the `FakeQwenChatClient` + `FakeEmbedder`
+engage and the **whole loop — intake → decide → approve → execute → remember — plus
+the eval gate** runs deterministically without external provider calls. The identical code runs live against Qwen
 + pgvector on Alibaba Cloud. CI is gitleaks → dep-audit → typecheck → build → the
 test pyramid → the demo smoke → the eval gate, all green on a bare clone.
 
@@ -268,7 +272,7 @@ the safety boundary. Live Qwen is wired; the offline path uses deterministic Fak
 
 ```bash
 npm install
-npm run demo             # offline: four invoices through the whole loop, no key
+npm run demo             # offline: four invoices through deterministic provider Fakes
 npm run eval            # offline: 22 labelled decisions graded, 22/22
 npm run eval -- --gate  # the CI gate
 npm test                # the full offline test pyramid
@@ -284,3 +288,5 @@ good enough to be worth approving. That's what we built.
 Try the [live human-gated workflow](https://autopilot.43.106.13.19.sslip.io/), inspect
 the [MIT-licensed source](https://github.com/upgradedev/archon-qwen-autopilot), and
 review the [decision-quality method and caveats](https://github.com/upgradedev/archon-qwen-autopilot/blob/main/EVAL.md).
+The [public demo](https://www.youtube.com/watch?v=Vc2mJdsoSX0) shows the complete
+proposal, human-decision, and evidence path in under three minutes.

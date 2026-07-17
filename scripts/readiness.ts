@@ -9,7 +9,7 @@
 // is EXERCISED (the eval is run, the learning delta is measured, an injection is driven
 // through the agent, each real sink is invoked through its transport seam). Where a
 // claim can only be confirmed by a human with credentials or a browser — final-video
-// playback, a hosted video URL, a live-box redeploy — it is reported as `user-gated`,
+// playback, signed-out public-host playback, or live-box availability — it is reported as `user-gated`,
 // never asserted as passing. Recipient delivery is deliberately not a submission
 // claim, so it is not misrepresented as unfinished work.
 //
@@ -485,7 +485,7 @@ async function presentation(): Promise<CriterionSpec> {
   //    promotion and a synthetic mid-commit fault restores the reviewed finals.
   {
     let passed = false;
-    let evidence = "media capture self-test did not run";
+    let evidence: string;
     try {
       const output = execFileSync(process.execPath, ["demo/media-tools/capture-final-media.cjs", "--self-test"], {
         cwd: ROOT,
@@ -508,9 +508,18 @@ async function presentation(): Promise<CriterionSpec> {
     ));
   }
 
-  // 6/7) Human-only presentation surfaces — a hosted video URL + a current live box.
-  checks.push(gate("video-hosted", "Demo video hosted on a Public judges-accessible page", "Upload demo/final-media/autopilot-demo.mp4 and record its Public URL in the submission."));
-  checks.push(gate("live-box-redeploy", "Live deployment serves the current image", "Redeploy the Alibaba Cloud box from the merged branch so the live OpenAPI + sinks match this repo."));
+  // 6/7) Human-only presentation surfaces. Public values are already recorded; the
+  // repository cannot replace the entrant's final signed-out/browser verification.
+  checks.push(gate(
+    "video-hosted",
+    "Public video remains judges-accessible signed out",
+    "Canonical Public URL is recorded as https://www.youtube.com/watch?v=Vc2mJdsoSX0; recheck 1080p, captions, chapters, and start-to-end playback signed out before final submission.",
+  ));
+  checks.push(gate(
+    "live-box-redeploy",
+    "Hash-bound deployed runtime remains available to judges",
+    "CAPTURE_REVIEW binds deployed runtime 030950e9b1e2353ee64f422ad050feb9733745bc; later docs/media-only commits do not require a runtime redeploy, but final signed-out and reviewer-path availability remains a human check.",
+  ));
 
   return { key: "presentation", name: "Presentation", weight: 15, checks };
 }
