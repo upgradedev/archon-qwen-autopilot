@@ -656,12 +656,13 @@ def build_beats(assets) -> list[Beat]:
 
     # 8 · Alibaba/Qwen proof
     add("08-alibaba-proof",
-        "This proof is Autopilot-specific and comes from the recorded deployed application "
-        "release. It labels that deployed application S.H.A. separately from any later "
-        "documentation or media-only submission head. The proof shows Alibaba deployment "
+        "This proof is Autopilot-specific and comes from the recorded deployed runtime "
+        "release. It labels that deployed runtime S.H.A. separately from the clean public "
+        "capture-source head. A later final submitted head is linked after the media commit "
+        "and is not claimed as the running runtime. The proof shows Alibaba deployment "
         "identity, public network-free health and readiness, authenticated metered deep "
         "readiness, one real Qwen decider canary and one document-vision extraction. The "
-        "displayed IDs are the verified final runtime models; any candidate appears only "
+        "displayed IDs are the verified deployed runtime models; any candidate appears only "
         "after its frozen promotion gate passes.",
         lambda: scene_image(media["alibaba"], "Alibaba Cloud + Qwen proof",
             "/health · /ready · authenticated /ready/deep · decision + vision canaries"))

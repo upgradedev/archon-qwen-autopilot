@@ -96,17 +96,17 @@ reviewed final with a raw capture.
 
 ## Render and mechanical acceptance
 
-From the exact public submission checkout, run the canonical rights-safe real-motion
-pipeline:
+From the capture worktree after `CAPTURE_REVIEW.json` passes—whose clean starting HEAD
+was the public capture-source HEAD—run the canonical rights-safe real-motion pipeline:
 
 ```powershell
 node demo/media-tools/record-live-motion.cjs `
-  --expected-sha 203f159df25f825a0b994a2f8a4d2c0892b45390 `
+  --expected-sha 030950e9b1e2353ee64f422ad050feb9733745bc `
   --capture-review demo/gallery/CAPTURE_REVIEW.json `
   --replace
 
 python demo/media-tools/build-real-motion-submission.py `
-  --expected-sha 203f159df25f825a0b994a2f8a4d2c0892b45390 `
+  --expected-sha 030950e9b1e2353ee64f422ad050feb9733745bc `
   --replace
 
 python demo/media-tools/compose_real_motion_video.py --verify-only

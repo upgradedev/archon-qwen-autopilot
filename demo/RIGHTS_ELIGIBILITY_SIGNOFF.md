@@ -41,7 +41,7 @@ identity documents, or other personal data.
 
 - [ ] The final live project functions as depicted in the video, screenshots, and
   English description.
-- [ ] Every displayed model ID and deployed SHA comes from an exercised final-release
+- [ ] Every displayed model ID and deployed runtime SHA comes from an exercised deployed-runtime
   proof, not configuration or an older screenshot.
 - [ ] Claims retain their documented boundaries: offline eval is not live-model
   accuracy; SMTP acceptance is not recipient delivery; JSONL is not an ERP; payment

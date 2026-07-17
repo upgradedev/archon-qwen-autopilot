@@ -527,15 +527,17 @@ test("CHECK 6 · media: obsolete pre-auth UI captures remain deleted", () => {
   }
 });
 
-test("CHECK 6 · media: proof narration separates deployed application SHA from submission HEAD", () => {
+test("CHECK 6 · media: proof narration separates runtime, capture-source and submitted HEADs", () => {
   const renderer = readFileSync(join(ROOT, "scripts", "make_frames.py"), "utf8").toLowerCase();
   assert.ok(
-    renderer.includes("recorded deployed application") && renderer.includes("submission head"),
-    "Alibaba proof narration must distinguish the deployed application release from a later docs/media submission HEAD",
+    renderer.includes("recorded deployed runtime")
+      && renderer.includes("capture-source head")
+      && renderer.includes("final submitted head"),
+    "Alibaba proof narration must distinguish deployed runtime, capture-source and final submitted identities",
   );
   assert.ok(
     !renderer.includes("comes from the exact final commit"),
-    "proof narration must not collapse deployed application SHA and final submission HEAD",
+    "proof narration must not collapse deployed runtime SHA and final submitted HEAD",
   );
 });
 
@@ -553,6 +555,29 @@ test("CHECK 6 · media: cleanup-zero precedes transactional canonical promotion"
   assert.match(capture, /rollbackPromotionTransaction/);
   assert.match(capture, /recoverInterruptedPromotions/);
   assert.match(capture, /REVIEW_MANIFEST_PATH\s*=\s*path\.join\(GALLERY_DIR, 'CAPTURE_REVIEW\.json'\)/);
+  assert.match(capture, /schemaVersion:\s*3/,
+    "the first canonical three-identity manifest must use schema version 3");
+  assert.match(capture, /deployedRuntimeSha:\s*release\.expectedSha/,
+    "the manifest must call the live application identity the deployed runtime SHA");
+  assert.match(capture, /captureSourceHead:\s*release\.captureSourceHead/,
+    "the manifest must call the public HEAD used for capture the capture-source HEAD");
+  assert.match(capture, /schema:\s*release\.evidenceSchema/,
+    "the manifest must retain the exact release-evidence schema");
+  assert.doesNotMatch(capture, /submissionHeadAtCapture/,
+    "a pre-media capture-source HEAD must not be labelled as the final submission HEAD");
+  assert.match(capture, /artifacts:\s*\{\s*finalMedia,\s*gallery,\s*architecture\s*\}/,
+    "CAPTURE_REVIEW must hash-bind the static architecture used by the video renderer");
+  assert.match(capture, /expectedSha256:\s*manifest\.artifacts\.finalMedia\[name\]\.sha256/,
+    "canonical promotion must consume the PNG hashes already recorded in CAPTURE_REVIEW");
+  assert.match(capture, /promotion source differs from reviewed manifest/,
+    "candidate drift after manifest construction must fail before canonical promotion");
+  const finalBuilder = readFileSync(join(ROOT, "demo", "media-tools", "build-real-motion-submission.py"), "utf8");
+  assert.match(finalBuilder, /asset_snapshot\s*=\s*session\s*\/\s*"assets"/,
+    "the caption renderer must consume a session-owned immutable asset snapshot");
+  assert.match(finalBuilder, /"ASSETS_DIR":\s*str\(asset_snapshot\)/,
+    "the renderer must never re-read mutable canonical evidence paths while building pixels");
+  assert.match(finalBuilder, /architecture_record[\s\S]*architecture hash mismatch/,
+    "the renderer architecture must be bound by CAPTURE_REVIEW");
   assert.match(
     capture,
     /const required = canonicalReleaseWorkflows\(\);/,

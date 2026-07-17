@@ -1,7 +1,7 @@
 # Final live-media pipeline
 
 This project-contained pipeline creates the five exact renderer inputs and a
-1280×720 YouTube thumbnail from the **final deployed Autopilot release**. It is
+1280×720 YouTube thumbnail from the exact **deployed Autopilot runtime release**. It is
 stateful by design: it runs uniquely prefixed synthetic invoices through the real
 reviewer path, captures real UI states, then rejects every still-PENDING capture item.
 It never approves a payment or vendor reply.
@@ -18,8 +18,8 @@ runs from silently consuming the host disk.
 
 ## Stage the private release binding
 
-Copy the latest exact-deploy controller outputs into these ignored paths **without
-editing their contents**:
+Stage the latest exact-deploy controller records in these ignored paths. Preserve the
+exact output bytes; do not rewrite or normalize them:
 
 ```text
 demo/.private-captures/release/exact-deploy-status.json
@@ -27,14 +27,19 @@ demo/.private-captures/release/exact-deploy-output.txt
 demo/.private-captures/release/expected-autopilot-sha.txt
 ```
 
-The SHA file contains exactly the selected 40-character Autopilot application SHA
-plus a newline. The status and output must come from the same terminal-success
-controller attempt. `deploy/DEPLOY_STATE.md` must name that exact application SHA.
-The pipeline cross-checks all four sources, their age, exact checkout/deploy/success
-markers, and verifies that the release SHA is an ancestor of the clean source HEAD
-at capture. That HEAD must equal freshly fetched public `origin/main`; the generated
-media commit will necessarily follow it and must be linked separately as the final
-submission SHA. `/health` is deliberately **not** treated as source attestation.
+The SHA file contains exactly the selected 40-character deployed runtime SHA plus a
+newline. For the current release, the status uses the exact-closed
+`cloud-assistant-sentinel-v1` schema and SHA-256-binds the untouched compact controller
+output from the same terminal-success attempt. The pipeline validates every documented
+safe output field and its success semantics; it never invents legacy log markers.
+`deploy/DEPLOY_STATE.md` must name the same deployed runtime SHA. The legacy marker
+adapter remains only for authentic historical controller records.
+
+The pipeline cross-checks all four sources and their age, then verifies that the
+deployed runtime SHA is an ancestor of the clean **capture-source HEAD**. That HEAD
+must equal freshly fetched public `origin/main`. The generated media/publication commit
+will follow it and must be linked separately as the **final submitted HEAD**. `/health`
+is deliberately **not** treated as source attestation.
 
 The project-local `.env` supplies `REVIEWER_TOKEN` in memory. Do not paste the token
 into a command, URL, screenshot, evidence file or shell history.
@@ -69,7 +74,8 @@ controls. The raw SHA-256 and profile SHA-256 are bound into
 
 The command aborts without promotion unless all of these are true:
 
-- exact deploy-controller SHA/status/output and fresh evidence age;
+- exact deployed-runtime SHA, closed-schema terminal status, hash-bound compact output,
+  and fresh evidence age;
 - exact-SHA `CI`, `CodeQL`, and `Production Image Supply Chain` runs are green;
 - public `/health` says `pgvector` and exact decision/embedding IDs;
 - `/ready` proves reviewer auth, PostgreSQL, Qwen configuration and zero incompatible
@@ -118,8 +124,9 @@ Each gallery file contains the complete 16:9 evidence frame centered on a dark 3
 canvas (1500×844 content plus 78px mattes). There is no crop or content synthesis;
 all critical evidence stays inside the 1920×1080 safe margins.
 
-The proof composite explicitly labels the deploy-controller application SHA
-separately from the public source HEAD at capture. Its Alibaba context is a
+The proof composite explicitly labels the deployed runtime SHA separately from the
+clean public capture-source HEAD. The later final submitted HEAD is linked after the
+media commit rather than fabricated in the pre-commit proof. Its Alibaba context is a
 hash-bound safe crop from a genuine console PNG read exactly once into immutable
 bytes; the same bytes are validated, hashed, and rendered. Alibaba instance/resource,
 address, and administrative-principal identifiers are intentionally absent.

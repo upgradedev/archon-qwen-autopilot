@@ -3,7 +3,7 @@
  * Record genuine, secret-free Autopilot browser interaction footage.
  *
  * Production mode requires the passed final CAPTURE_REVIEW for the same exact
- * deployed application SHA and pinned public URL. It deliberately does not read or
+ * deployed runtime SHA and pinned public URL. It deliberately does not read or
  * use the reviewer credential: the visible flow is the real isolated public preview,
  * which streams the Qwen evidence loop but creates no durable PENDING work item and
  * exposes no human-decision control. Raw/highlight footage stays under ignored
@@ -63,12 +63,44 @@ function sha256(file) {
   return hash.digest('hex');
 }
 
-function readJson(file, label) {
+function immutableFileSnapshot(file, label) {
+  const resolved = insideRepo(file, label, { mustExist: true });
+  const canonicalRoot = fs.realpathSync.native(ROOT);
+  const canonical = fs.realpathSync.native(resolved);
+  const identity = (value) => os.platform() === 'win32' ? path.resolve(value).toLowerCase() : path.resolve(value);
+  assert.equal(identity(resolved), identity(canonical), `${label} path and every ancestor must be canonical and non-symlinked`);
+  const relativeTarget = path.relative(canonicalRoot, canonical);
+  assert.ok(relativeTarget && relativeTarget !== '..' && !relativeTarget.startsWith(`..${path.sep}`) && !path.isAbsolute(relativeTarget),
+    `${label} canonical target must stay inside this repository`);
+  const noFollow = Number.isInteger(fs.constants.O_NOFOLLOW) ? fs.constants.O_NOFOLLOW : 0;
+  const descriptor = fs.openSync(canonical, fs.constants.O_RDONLY | noFollow);
+  try {
+    const before = fs.fstatSync(descriptor, { bigint: true });
+    assert.equal(before.isFile(), true, `${label} must be a regular file`);
+    assert.equal(before.nlink, 1n, `${label} must have exactly one hard link`);
+    assert.ok(before.size > 0n && before.size <= 16n * 1024n * 1024n, `${label} has an invalid size`);
+    const bytes = fs.readFileSync(descriptor);
+    const after = fs.fstatSync(descriptor, { bigint: true });
+    const fingerprint = (stats) => [stats.dev, stats.ino, stats.nlink, stats.size, stats.mtimeNs, stats.ctimeNs];
+    assert.deepEqual(fingerprint(after), fingerprint(before), `${label} changed while it was being read`);
+    assert.equal(BigInt(bytes.length), before.size, `${label} descriptor returned a partial read`);
+    const afterCanonical = fs.realpathSync.native(resolved);
+    assert.equal(identity(afterCanonical), identity(canonical), `${label} canonical target changed while it was being read`);
+    assert.deepEqual(fingerprint(fs.statSync(afterCanonical, { bigint: true })), fingerprint(before),
+      `${label} pathname no longer identifies the descriptor-read file`);
+    return { bytes, sha256: crypto.createHash('sha256').update(bytes).digest('hex') };
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+function readJsonSnapshot(file, label) {
+  const snapshot = immutableFileSnapshot(file, label);
   let payload;
-  try { payload = JSON.parse(fs.readFileSync(file, 'utf8')); }
+  try { payload = JSON.parse(snapshot.bytes.toString('utf8')); }
   catch { fail(`${label} is not valid UTF-8 JSON`); }
   assert.equal(payload && typeof payload === 'object' && !Array.isArray(payload), true, `${label} must be a JSON object`);
-  return payload;
+  return { ...snapshot, payload };
 }
 
 function atomicJson(file, payload) {
@@ -96,10 +128,16 @@ function validateRelevantTraceTools(rawTools, label) {
 }
 
 function validateEvidence(file, expectedSha, baseUrl, fixture) {
-  const payload = readJson(file, 'CAPTURE_REVIEW');
+  const snapshot = readJsonSnapshot(file, 'CAPTURE_REVIEW');
+  const payload = snapshot.payload;
   assert.equal(payload.status, 'passed', 'CAPTURE_REVIEW status is not passed');
-  assert.equal(payload.exactDeployedApplicationSha, expectedSha, 'CAPTURE_REVIEW exact application SHA mismatch');
+  assert.equal(payload.deployedRuntimeSha, expectedSha, 'CAPTURE_REVIEW deployed runtime SHA mismatch');
   if (!fixture) {
+    assert.equal(payload.schemaVersion, 3, 'CAPTURE_REVIEW schema version is not 3');
+    assert.match(String(payload.captureSourceHead || ''), SHA_RE,
+      'CAPTURE_REVIEW capture-source HEAD is missing or invalid');
+    assert.equal(payload.releaseEvidence && payload.releaseEvidence.schema,
+      'cloud-assistant-sentinel-v1', 'CAPTURE_REVIEW release-evidence schema mismatch');
     assert.equal(payload.publicUrl, baseUrl, 'CAPTURE_REVIEW public URL mismatch');
     assert.equal(payload.gates && payload.gates.pendingCleanupZero, true, 'CAPTURE_REVIEW does not prove zero capture PENDING residue');
     assert.equal(payload.reviewerCredentialStored, false, 'CAPTURE_REVIEW does not prove credential non-storage');
@@ -114,7 +152,7 @@ function validateEvidence(file, expectedSha, baseUrl, fixture) {
       'CAPTURE_REVIEW decision canary',
     );
   }
-  return payload;
+  return snapshot;
 }
 
 function run(file, args, label, options = {}) {
@@ -358,7 +396,8 @@ function createHighlight(raw, output, actions, { fixture = false } = {}) {
 
 async function capture({ expectedSha, evidenceFile, baseUrl, output, manifestFile, poster, replace, fixture }) {
   assert.match(expectedSha, SHA_RE, 'expected SHA must be 40 lowercase hex characters');
-  const evidence = validateEvidence(evidenceFile, expectedSha, baseUrl, fixture);
+  const evidenceSnapshot = validateEvidence(evidenceFile, expectedSha, baseUrl, fixture);
+  const evidence = evidenceSnapshot.payload;
   if (!fixture) assert.equal(relative(output).startsWith('.artifacts/final-video/'), true, 'live video must stay under .artifacts/final-video');
   for (const file of [output, manifestFile, poster]) {
     if (!replace && fs.existsSync(file)) fail(`refusing to replace existing ${relative(file)} without --replace`);
@@ -412,6 +451,8 @@ async function capture({ expectedSha, evidenceFile, baseUrl, output, manifestFil
   }
   const motion = frameDiversity(output, Math.min(media.durationSeconds, 30));
   assert.ok(motion.uniqueFrames >= 8 && motion.uniqueRatio >= 0.25, 'highlight is too static to prove genuine interaction');
+  assert.equal(sha256(evidenceFile), evidenceSnapshot.sha256,
+    'CAPTURE_REVIEW changed after validation while live motion was being recorded');
   const manifest = {
     schemaVersion: 1,
     status: 'passed',
@@ -422,7 +463,7 @@ async function capture({ expectedSha, evidenceFile, baseUrl, output, manifestFil
     capturedAt,
     finishedAt: new Date().toISOString(),
     evidenceManifestPath: relative(evidenceFile),
-    evidenceManifestSha256: sha256(evidenceFile),
+    evidenceManifestSha256: evidenceSnapshot.sha256,
     reviewerCredentialUsed: false,
     reviewerCredentialRendered: false,
     durableReviewerWritesCreated: false,
@@ -430,7 +471,7 @@ async function capture({ expectedSha, evidenceFile, baseUrl, output, manifestFil
     boundDecisionCanary: fixture ? null : {
       modelId: evidence.models.decision,
       traceTools: evidence.canaries.decision.traceTools,
-      captureReviewSha256: sha256(evidenceFile),
+      captureReviewSha256: evidenceSnapshot.sha256,
     },
     visibleTraceTools: recording.visibleTraceTools,
     actions,
@@ -463,7 +504,7 @@ async function selfTest() {
     /non-read\/analyze trace step/,
   );
   const evidence = path.join(root, 'CAPTURE_REVIEW.json');
-  fs.writeFileSync(evidence, `${JSON.stringify({ status: 'passed', exactDeployedApplicationSha: expectedSha })}\n`);
+  fs.writeFileSync(evidence, `${JSON.stringify({ status: 'passed', deployedRuntimeSha: expectedSha })}\n`);
   const manifest = await capture({ expectedSha, evidenceFile: evidence, baseUrl: DEFAULT_URL,
     output: path.join(root, 'fixture.mp4'), manifestFile: path.join(root, 'fixture.manifest.json'),
     poster: path.join(root, 'fixture-poster.png'), replace: false, fixture: true });
@@ -474,6 +515,31 @@ async function selfTest() {
     'self-test did not require the entry, click, streamed-evidence, and completed-boundary actions');
   assert.ok(manifest.edit.requiredActionCoverage.every((entry) => entry.retained === true),
     'self-test action-aware highlight omitted a required action');
+  const originalEvidence = fs.readFileSync(evidence);
+  const evidenceMutation = setTimeout(() => {
+    fs.writeFileSync(evidence, `${JSON.stringify({
+      status: 'passed', deployedRuntimeSha: expectedSha, changedDuringRecording: true,
+    })}\n`);
+  }, 1_000);
+  try {
+    await assert.rejects(
+      capture({
+        expectedSha,
+        evidenceFile: evidence,
+        baseUrl: DEFAULT_URL,
+        output: path.join(root, 'mutated-evidence-fixture.mp4'),
+        manifestFile: path.join(root, 'mutated-evidence-fixture.manifest.json'),
+        poster: path.join(root, 'mutated-evidence-fixture-poster.png'),
+        replace: false,
+        fixture: true,
+      }),
+      /CAPTURE_REVIEW changed after validation while live motion was being recorded/,
+      'recording must fail instead of hash-binding CAPTURE_REVIEW bytes that were not validated',
+    );
+  } finally {
+    clearTimeout(evidenceMutation);
+    fs.writeFileSync(evidence, originalEvidence);
+  }
   process.stdout.write('Autopilot live recorder self-test: PASS · real browser video · 1920x1080 · no audio · frame diversity\n');
 }
 

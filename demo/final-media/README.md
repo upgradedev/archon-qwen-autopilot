@@ -38,9 +38,13 @@ Final expected artifacts:
 
 The live capture transaction also writes tracked
 `../gallery/CAPTURE_REVIEW.json`. It is the canonical secret-safe acceptance record:
-exact deployed SHA, public source HEAD at capture, exercised model/workflow gates,
-authenticated cleanup-zero proof, and hashes/dimensions/metadata state for every
-promoted PNG. Finals without a matching `status: passed` manifest are not approved.
+exact deployed runtime SHA, clean public capture-source HEAD, release-evidence schema,
+exercised model/workflow gates, authenticated cleanup-zero proof, and
+hashes/dimensions/metadata state for every promoted PNG plus the static architecture
+used by the video renderer. The final builder renders from a project-local immutable
+snapshot of those validated bytes. The final submitted HEAD is
+created and linked only after these media artifacts are committed. Finals without a
+matching `status: passed` manifest are not approved.
 
 ## Reproducible authored-asset pass
 

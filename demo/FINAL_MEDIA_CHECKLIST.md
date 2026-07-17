@@ -7,12 +7,13 @@ the media/publication steps below remain human-gated. Never show the reviewer to
 Run [`BUILD_RECORDING.md`](BUILD_RECORDING.md) first, then follow the canonical
 real-motion pipeline in [`REAL_MOTION_VIDEO.md`](REAL_MOTION_VIDEO.md) and the concise
 operator sheet in [`VIDEO_RECORDING_CHECKLIST.md`](VIDEO_RECORDING_CHECKLIST.md).
-Exact application release
-`203f159df25f825a0b994a2f8a4d2c0892b45390` passed project-contained attempt 23 on
-2026-07-16, including the singleton runtime-env contract, staging/final readiness,
-real-Qwen PENDING canary, and zero-residue cleanup. Bind all final media to that
-evidence. A later documentation/media-only submission HEAD may differ, but the
-deployed application SHA and submission SHA must be labelled separately.
+Exact deployed runtime release
+`030950e9b1e2353ee64f422ad050feb9733745bc` passed project-contained Alibaba Cloud
+Assistant attempt 46 on 2026-07-17 Europe/Athens (`2026-07-16T23:53:18Z`), including
+the singleton runtime-env contract, staging/final readiness, real-Qwen PENDING canary,
+and zero-residue cleanup. Bind all final media to that evidence. Label the deployed
+runtime SHA, clean public capture-source HEAD, and later final submitted HEAD as three
+separate identities.
 Recheck the [official rules](https://qwencloud-hackathon.devpost.com/rules) immediately
 before submission; this pack was reconciled to them on 2026-07-16.
 
@@ -52,7 +53,8 @@ visible in at least one shot.
 - [ ] **Alibaba proof:** provide a fresh genuine console PNG from the shared Alibaba
   ECS host under ignored `demo/.private-captures/`; the capture tool must apply the
   tracked safe-crop profile and bind both hashes in `CAPTURE_REVIEW.json`. Bind that
-  host context to Autopilot-specific exact-deploy markers, public network-free
+  host context to the Autopilot-specific deployed runtime SHA and hash-bound compact
+  Cloud Assistant terminal evidence, public network-free
   `/health` + `/ready`, authenticated/metered `/ready/deep`, one actual decider
   canary, and one document extraction. Keep token, account, instance, address, and
   resource identifiers out of every promoted pixel.
@@ -93,14 +95,15 @@ signed-out publication checks.
   `autopilot-correction-learning.png`, `autopilot-security-pending.png`, and
   `autopilot-alibaba-proof.png` under `demo/final-media/`.
 - [ ] Require tracked `demo/gallery/CAPTURE_REVIEW.json` to say `status: passed`,
-  identify the exact deployed application SHA and public source HEAD at capture,
+  identify the exact deployed runtime SHA and clean public capture-source HEAD,
+  name the release-evidence schema,
   record the exercised models/workflows, set both `pendingCleanupZero=true` flags with
   zero matching PENDING capture residue (rejected audit history remains), and match
   every uploaded PNG's hash, dimensions, RGB
   mode, and empty metadata-key list. A missing/stale manifest blocks publication.
 - [ ] Run `record-live-motion.cjs` against the public isolated preview, then
-  `build-real-motion-submission.py` with exact SHA
-  `203f159df25f825a0b994a2f8a4d2c0892b45390` and `--replace`. The one-command
+  `build-real-motion-submission.py` with exact deployed runtime SHA
+  `030950e9b1e2353ee64f422ad050feb9733745bc` and `--replace`. The one-command
   builder creates a rights-safe caption-only base internally and reads only the
   explicitly promoted captures under `demo/final-media/`.
 - [ ] If the label contains `qwen3.7`, set `VIDEO_PROMOTION_EVIDENCE` to the exact

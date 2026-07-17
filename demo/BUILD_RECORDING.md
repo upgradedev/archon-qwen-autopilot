@@ -11,11 +11,13 @@ project, a chat attachment, or a desktop scratch file as the only copy.
 
 ## Release identity lock
 
-- Exact final application release audited, deployed, and verified on 2026-07-16:
-  **`203f159df25f825a0b994a2f8a4d2c0892b45390`**. Project-contained exact-deploy
-  attempt 23 completed with terminal `Success`, exit code `0`, the application marker,
-  and the aggregate success marker.
-- [x] The exact final application SHA was fetched, clean, built, deployed, and
+- Exact deployed runtime release audited and verified on 2026-07-17 Europe/Athens
+  (`2026-07-16T23:53:18Z`):
+  **`030950e9b1e2353ee64f422ad050feb9733745bc`**. Project-contained Alibaba Cloud
+  Assistant attempt 46 passed strict preflight, DryRun, and Once execution with
+  terminal `Success`, Once exit code `0`, and a hash-bound compact success sentinel
+  with no remote failure or dropped output.
+- [x] The exact deployed runtime SHA was fetched, clean, built, deployed, and
   exercised through every exact-deploy gate before media capture.
 - Project-contained redacted deploy evidence records exact checkout, production
   build, singleton runtime-env proof, schema/bootstrap,
@@ -25,8 +27,10 @@ project, a chat attachment, or a desktop scratch file as the only copy.
   gate independently verifies immutable exact-SHA CI, CodeQL and image-SBOM runs,
   then freshly exercises `qwen-vl-max` document extraction and binds its
   response-reported model id before publication.
-- A later documentation/media-only submission commit may legitimately differ from
-  the deployed application SHA. Record both identities and describe them accurately.
+- The deployed runtime SHA, the clean public capture-source HEAD, and the final
+  submitted HEAD after media/publication commits may legitimately differ. Record all
+  three identities and describe them accurately; never imply that a later docs/media
+  commit is the running runtime.
 - Any later change to runtime code, dependencies, Docker context, deployment scripts,
   schema, or configuration defaults invalidates this release target and requires a
   new exact-SHA deploy, CI run, and proof pass.
@@ -62,9 +66,9 @@ test -z "$(git status --porcelain)"
 git show -s --format='%H %cI %s' HEAD
 ```
 
-Acceptance for the **new final application release**:
+Acceptance for the **deployed runtime release**:
 
-- [ ] `HEAD` is the exact final application release SHA selected after all runtime
+- [ ] `HEAD` is the exact deployed-runtime release SHA selected after all runtime
   changes are merged.
 - [ ] The checkout is clean before build.
 - [ ] The immutable GitHub CI run resolves to the same application
@@ -117,10 +121,11 @@ legible 16:9 composite should show:
 4. authenticated `/ready/deep` success with the request credential/header cropped;
 5. one decision canary model ID and one vision extraction model ID.
 
-Add a small caption distinguishing the **deployed application SHA** from any later
-documentation/media-only **submission HEAD**. Strip EXIF/metadata and inspect the
-image at 200% zoom. Reject it if any token, secret path, real invoice, resource ID,
-stale model label, stale CI run, or ambiguous SHA remains.
+Add a small caption distinguishing the **deployed runtime SHA** from the clean public
+**capture-source HEAD**. The later **final submitted HEAD** is linked after the media
+commit and is not fabricated inside this pre-commit proof. Strip EXIF/metadata and
+inspect the image at 200% zoom. Reject it if any token, secret path, real invoice,
+resource ID, stale model label, stale CI run, or ambiguous SHA remains.
 
 ## 4 · Approved public wording
 

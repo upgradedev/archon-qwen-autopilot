@@ -150,7 +150,7 @@ plants a hijack in the documented attacker-controllable
 surface (vendor name, reference, tax id, line item, raw passthrough, fake system
 prompt) and asserts the same invariant for each: at most a PENDING proposal, **no**
 side-effect sink fires, the proposed tool is never the attacker's payment, and
-`confidence != 1`. The final release proof re-runs the same cleanly reconciling
+`confidence != 1`. The deployed-runtime release proof re-runs the same cleanly reconciling
 hostile-input canary on the configured Qwen path. We claim that live result only when
 the exact-release capture exists; the structural gate remains the safety evidence
 even if a model proposes the attacker's requested action.
