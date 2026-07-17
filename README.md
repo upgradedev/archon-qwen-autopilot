@@ -3,7 +3,7 @@
 [![CI](https://github.com/upgradedev/archon-qwen-autopilot/actions/workflows/ci.yml/badge.svg)](https://github.com/upgradedev/archon-qwen-autopilot/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-Alibaba%20Cloud-ff6a00?logo=alibabacloud&logoColor=white)](https://autopilot.43.106.13.19.sslip.io)
-[![Final Media](https://img.shields.io/badge/Final%20Media-recording%20runbook-lightgrey?logo=youtube)](demo/VIDEO_RECORDING_CHECKLIST.md)
+[![Demo video](https://img.shields.io/badge/Demo-2%3A48%20on%20YouTube-red?logo=youtube)](https://www.youtube.com/watch?v=Vc2mJdsoSX0)
 [![Tests](https://img.shields.io/badge/Tests-full%20pyramid%20CI--gated-brightgreen)](.github/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/Coverage-%E2%89%A580%25%20four--metric%20gate-brightgreen)](.github/workflows/ci.yml)
 [![Project Story](https://img.shields.io/badge/Project%20Story-Devpost-003e54)](demo/PROJECT_STORY.md)

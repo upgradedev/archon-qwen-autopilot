@@ -17,8 +17,6 @@ Resolve these in the Devpost draft and publication accounts, not by inventing va
 
 | Value | Where it belongs |
 |---|---|
-| `[PUBLIC_VIDEO_URL]` | Devpost video field after signed-out playback succeeds |
-| `[PUBLIC_BLOG_OR_SOCIAL_URL]` | Optional blog/social field after signed-out review |
 | `[ACTIVE_REVIEWER_TOKEN]` | Only a confirmed non-public judges-only testing field or organizer-approved secure channel |
 | `[OPTIONAL_ACCESS_CONTACT]` | Only a confirmed non-public judges-only testing field; otherwise omit and use an organizer-approved secure channel |
 | Exact deployed runtime SHA `030950e9b1e2353ee64f422ad050feb9733745bc` | Sanitized Alibaba proof + runtime release record; already resolved and must not be relabelled |
@@ -69,8 +67,8 @@ technologies or Devpost **Built with** tags.
 | Organizer deck (strict-union artifact) | If the organizer's separate Qwen flow requests a PPT/PDF, use `demo/deck/archon-autopilot-qwen-cloud-hackathon-deck.pptx` and the matching `.pdf` only after exact-release screenshots, layout review and hash verification; never upload a placeholder build. |
 | Devpost project thumbnail | `demo/thumbnail.png` (1500×1000, 3:2) |
 | Editable thumbnail source | `demo/thumbnail.svg` |
-| Public demo video | `[PUBLIC_VIDEO_URL]` |
-| Optional public build-journey post | `[PUBLIC_BLOG_OR_SOCIAL_URL]` |
+| Public demo video | https://www.youtube.com/watch?v=Vc2mJdsoSX0 (public, signed-out verified: 2:48, 1080p, captions) |
+| Optional public build-journey post | https://dev.to/efousekis/building-archon-autopilot-where-qwen-proposes-and-humans-control-the-money-4mfg (public, signed-out verified) |
 
 At final draft time, add immutable evidence links for the exact submission commit:
 `[FINAL_CI_RUN_URL]` and `[FINAL_CODEQL_AND_IMAGE_SCAN_URLS]`. A run for an earlier
@@ -209,14 +207,14 @@ and judge reserve active free of charge through **2026-08-11 2:00 PM PDT**.
 
 ## 9 · Video and optional blog fields
 
-**Video URL:** `[PUBLIC_VIDEO_URL]`
+**Video URL:** https://www.youtube.com/watch?v=Vc2mJdsoSX0
 
-Follow [`VIDEO_PUBLICATION_PACKET.md`](VIDEO_PUBLICATION_PACKET.md). Acceptance before
-paste: publicly visible on YouTube, Vimeo, or Youku; no login or
-access request; below three minutes; 1080p works signed out; captions work; no secret
-appears for even one frame; all visible functionality matches the final deployment.
+Published per [`VIDEO_PUBLICATION_PACKET.md`](VIDEO_PUBLICATION_PACKET.md) and signed-out
+verified: publicly visible on YouTube with no login or
+access request; 2:48 (below three minutes); 1080p works signed out; English captions work;
+no secret appears for even one frame; all visible functionality matches the final deployment.
 
-**Blog/social URL:** `[PUBLIC_BLOG_OR_SOCIAL_URL]`
+**Blog/social URL:** https://dev.to/efousekis/building-archon-autopilot-where-qwen-proposes-and-humans-control-the-money-4mfg
 
 The blog/social field is optional for entry eligibility but required for consideration
 for the Blog Post bonus. Prefer the full build-journey article in [`BLOG.md`](BLOG.md)
@@ -242,7 +240,7 @@ public repository intentionally does not guess or retain them.
 | Alibaba/Qwen code file | <https://github.com/upgradedev/archon-qwen-autopilot/blob/main/src/qwen/client.ts> |
 | Architecture Diagram upload | [`final-media/judge-architecture.jpg`](./final-media/judge-architecture.jpg) |
 | Alibaba Deployment Screenshot upload | [`gallery/autopilot-05-alibaba-qwen-proof.png`](./gallery/autopilot-05-alibaba-qwen-proof.png), only after tracked [`gallery/CAPTURE_REVIEW.json`](./gallery/CAPTURE_REVIEW.json) passes, proves zero matching PENDING capture residue (audit history remains), and its SHA-256 matches the upload. |
-| Published Blog or Social Post | `[PUBLIC_BLOG_OR_SOCIAL_URL]`, only after signed-out verification. |
+| Published Blog or Social Post | <https://dev.to/efousekis/building-archon-autopilot-where-qwen-proposes-and-humans-control-the-money-4mfg> (public, signed-out verified). |
 | AI tools leveraged | **Qwen Cloud models (qwen-plus, qwen-vl-max, text-embedding-v4), OpenAI Codex, and Anthropic Claude.** |
 | Learning level | **Significant** |
 | Age-of-majority attestation | `[HUMAN LEGAL ATTESTATION REQUIRED]` |
