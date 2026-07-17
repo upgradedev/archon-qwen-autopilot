@@ -1,0 +1,292 @@
+{
+  "schemaVersion": 3,
+  "status": "passed",
+  "project": "archon-qwen-autopilot",
+  "capturedAt": "2026-07-17T01:14:25Z",
+  "publicUrl": "https://autopilot.43.106.13.19.sslip.io",
+  "deployedRuntimeSha": "030950e9b1e2353ee64f422ad050feb9733745bc",
+  "captureSourceHead": "51f73aebd7fcf25dce6afde472cdbcdfb7dbdcca",
+  "releaseEvidence": {
+    "schema": "cloud-assistant-sentinel-v1",
+    "statusSha256": "8b7eced35474e5fc47a79cd7022f403a2dc94b0c4216e3700cdf1dda351d4ae2",
+    "outputSha256": "c84be0cdedc5f107cbceefada3ecf3751a5581df97ac5a80ccc2545a8123063f",
+    "attempt": 46
+  },
+  "alibabaConsoleEvidence": {
+    "rawSourceSha256": "cf0b35d66d4bd5ac131b212a48e04c98fb7449c9aa0d1458a5f086b352898a1e",
+    "rawSourceStoredInTrackedArtifacts": false,
+    "rawSourceCapturedAt": "2026-07-16T21:05:36Z",
+    "redactionProfile": "demo/media-tools/alibaba-proof-redaction.json",
+    "redactionProfileSha256": "0c1c3cb7b8c7af3d7a1f971b204465fadd45d6ba63e1b4b60fdda3ccfdc0c975",
+    "sourceDimensions": {
+      "width": 1600,
+      "height": 842
+    },
+    "publishableCrop": {
+      "x": 0,
+      "y": 0,
+      "width": 1180,
+      "height": 300
+    },
+    "excludedSensitiveRegions": [
+      "administrative principal and avatar",
+      "instance id, name, public address, and resource controls"
+    ],
+    "sanitizedComposite": "demo/final-media/autopilot-alibaba-proof.png"
+  },
+  "models": {
+    "decision": "qwen-plus",
+    "embedding": "text-embedding-v4",
+    "vision": "qwen-vl-max"
+  },
+  "gates": {
+    "exactDeploymentEvidence": true,
+    "captureSourceHeadMatchesPublicMain": true,
+    "githubWorkflowsGreenForDeployedRuntimeSha": true,
+    "workflowBoundSha": "030950e9b1e2353ee64f422ad050feb9733745bc",
+    "publicHealthReady": true,
+    "authenticatedDeepEmbeddingProbe": true,
+    "unauthenticatedQueueDenied": true,
+    "decisionStoppedAtPending": true,
+    "visionModelExercised": true,
+    "hostileInputStoppedAtPending": true,
+    "correctionBehaviorVerified": true,
+    "metadataStripped": true,
+    "transactionalPromotion": true,
+    "pendingCleanupZero": true,
+    "genuineAlibabaConsoleCaptureBound": true,
+    "alibabaSensitiveAreasExcludedByCrop": true
+  },
+  "cleanup": {
+    "rejectedPending": 4,
+    "matchingPendingAfter": 0,
+    "pendingCleanupZero": true,
+    "pagesScannedBefore": 1,
+    "pagesScannedAfter": 1
+  },
+  "canaries": {
+    "health": {
+      "status": "ok",
+      "store": "pgvector"
+    },
+    "ready": {
+      "status": "ready",
+      "database": "postgres",
+      "incompatibleRows": 0
+    },
+    "deep": {
+      "status": "ready",
+      "model": "text-embedding-v4",
+      "dimensions": 1024
+    },
+    "decision": {
+      "model": "qwen-plus",
+      "status": "pending",
+      "tracePolicy": "relevant-side-effect-free-subset",
+      "traceTools": [
+        "recall_vendor_history",
+        "validate_invoice",
+        "check_duplicate",
+        "compute_variance_vs_history"
+      ]
+    },
+    "vision": {
+      "model": "qwen-vl-max",
+      "pages": 1,
+      "sourceType": "image"
+    },
+    "security": {
+      "model": "qwen-plus",
+      "status": "pending",
+      "warningVisible": true
+    },
+    "correction": {
+      "rebill": "flag_for_review",
+      "control": "draft_payment",
+      "stored": true
+    }
+  },
+  "githubWorkflows": [
+    {
+      "name": "CI",
+      "path": ".github/workflows/ci.yml",
+      "workflowBoundSha": "030950e9b1e2353ee64f422ad050feb9733745bc",
+      "runNumber": 222,
+      "runAttempt": 1,
+      "url": "https://github.com/upgradedev/archon-qwen-autopilot/actions/runs/29541294955"
+    },
+    {
+      "name": "CodeQL",
+      "path": ".github/workflows/codeql.yml",
+      "workflowBoundSha": "030950e9b1e2353ee64f422ad050feb9733745bc",
+      "runNumber": 30,
+      "runAttempt": 1,
+      "url": "https://github.com/upgradedev/archon-qwen-autopilot/actions/runs/29541294932"
+    },
+    {
+      "name": "Production Image Supply Chain",
+      "path": ".github/workflows/supply-chain.yml",
+      "workflowBoundSha": "030950e9b1e2353ee64f422ad050feb9733745bc",
+      "runNumber": 30,
+      "runAttempt": 1,
+      "url": "https://github.com/upgradedev/archon-qwen-autopilot/actions/runs/29541294943"
+    }
+  ],
+  "artifacts": {
+    "finalMedia": {
+      "autopilot-live-intake-pending.png": {
+        "path": "demo/final-media/autopilot-live-intake-pending.png",
+        "sha256": "72b0f7472641290f0c799cb4427d24d9a39e3722dd8e72976f0bd53534d28b5c",
+        "bytes": 224022,
+        "dimensions": {
+          "width": 1920,
+          "height": 1080
+        },
+        "format": "PNG",
+        "mode": "RGB",
+        "metadataKeys": []
+      },
+      "autopilot-human-amend-diff.png": {
+        "path": "demo/final-media/autopilot-human-amend-diff.png",
+        "sha256": "83156b31f4e0cd3329d25a92a40ef546886e0e3b12efd8188170f028ff140c09",
+        "bytes": 145322,
+        "dimensions": {
+          "width": 1920,
+          "height": 1080
+        },
+        "format": "PNG",
+        "mode": "RGB",
+        "metadataKeys": []
+      },
+      "autopilot-correction-learning.png": {
+        "path": "demo/final-media/autopilot-correction-learning.png",
+        "sha256": "9f63a0cf9edd92da5bee9da21a4c8b36cebe900b3bd45b831213bb71fa814668",
+        "bytes": 152790,
+        "dimensions": {
+          "width": 1920,
+          "height": 1080
+        },
+        "format": "PNG",
+        "mode": "RGB",
+        "metadataKeys": []
+      },
+      "autopilot-security-pending.png": {
+        "path": "demo/final-media/autopilot-security-pending.png",
+        "sha256": "f3cbd966769782668b85b2633dd18de0f56d0315baf2700c246caeb7d65111c0",
+        "bytes": 197302,
+        "dimensions": {
+          "width": 1920,
+          "height": 1080
+        },
+        "format": "PNG",
+        "mode": "RGB",
+        "metadataKeys": []
+      },
+      "autopilot-alibaba-proof.png": {
+        "path": "demo/final-media/autopilot-alibaba-proof.png",
+        "sha256": "07b1c11655057a7adc73ec1e0d109f870320b80d88afa658cb7627632e046bb4",
+        "bytes": 271882,
+        "dimensions": {
+          "width": 1920,
+          "height": 1080
+        },
+        "format": "PNG",
+        "mode": "RGB",
+        "metadataKeys": []
+      },
+      "autopilot-youtube-thumbnail.png": {
+        "path": "demo/final-media/autopilot-youtube-thumbnail.png",
+        "sha256": "e9ebd07342b47f003e18acf2a3f7dfd8e25f427396c42f2603acb3e85a0b58eb",
+        "bytes": 338175,
+        "dimensions": {
+          "width": 1280,
+          "height": 720
+        },
+        "format": "PNG",
+        "mode": "RGB",
+        "metadataKeys": []
+      }
+    },
+    "gallery": {
+      "autopilot-01-live-intake-pending.png": {
+        "path": "demo/gallery/autopilot-01-live-intake-pending.png",
+        "sha256": "ad23707654930dc7c38dc2d7f2bf425d3b562b0e3317a5f95f270441c6912abd",
+        "bytes": 395767,
+        "dimensions": {
+          "width": 1500,
+          "height": 1000
+        },
+        "format": "PNG",
+        "mode": "RGB",
+        "metadataKeys": [],
+        "source": "autopilot-live-intake-pending.png",
+        "crop": "none"
+      },
+      "autopilot-02-human-amend-diff.png": {
+        "path": "demo/gallery/autopilot-02-human-amend-diff.png",
+        "sha256": "66ecb2277414cc1b11ae60e3a21416055aad6af83b749776e59f9e43ba42a2c4",
+        "bytes": 205162,
+        "dimensions": {
+          "width": 1500,
+          "height": 1000
+        },
+        "format": "PNG",
+        "mode": "RGB",
+        "metadataKeys": [],
+        "source": "autopilot-human-amend-diff.png",
+        "crop": "none"
+      },
+      "autopilot-03-correction-learning.png": {
+        "path": "demo/gallery/autopilot-03-correction-learning.png",
+        "sha256": "5562a1d3e9b393ced4fe54a188592a290f0f46704fe7f431bd40b8a62e784124",
+        "bytes": 260790,
+        "dimensions": {
+          "width": 1500,
+          "height": 1000
+        },
+        "format": "PNG",
+        "mode": "RGB",
+        "metadataKeys": [],
+        "source": "autopilot-correction-learning.png",
+        "crop": "none"
+      },
+      "autopilot-04-security-pending.png": {
+        "path": "demo/gallery/autopilot-04-security-pending.png",
+        "sha256": "4cf5a5ebd4f1f08b9a1cfadff0edd0cfca3df7c60ff8106de31300ca96b3924f",
+        "bytes": 340491,
+        "dimensions": {
+          "width": 1500,
+          "height": 1000
+        },
+        "format": "PNG",
+        "mode": "RGB",
+        "metadataKeys": [],
+        "source": "autopilot-security-pending.png",
+        "crop": "none"
+      },
+      "autopilot-05-alibaba-qwen-proof.png": {
+        "path": "demo/gallery/autopilot-05-alibaba-qwen-proof.png",
+        "sha256": "4e49cfe0c48c1ddb94f19ef9ae3d51bdde28f29392fdb3370c6a0fe105061191",
+        "bytes": 411104,
+        "dimensions": {
+          "width": 1500,
+          "height": 1000
+        },
+        "format": "PNG",
+        "mode": "RGB",
+        "metadataKeys": [],
+        "source": "autopilot-alibaba-proof.png",
+        "crop": "none"
+      }
+    },
+    "architecture": {
+      "path": "demo/final-media/judge-architecture.jpg",
+      "sha256": "0487fae27df6a8923ed9200b03ccdaf01ffed5d5faa972f62e54d791c584d54a",
+      "bytes": 223115,
+      "format": "JPEG",
+      "metadataKeys": []
+    }
+  },
+  "reviewerCredentialStored": false,
+  "vendorIdentifiersStored": false
+}
