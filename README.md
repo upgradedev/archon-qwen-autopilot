@@ -977,7 +977,7 @@ This is **measured as a behavioural delta**, not asserted — the same decision
 invoice is run twice, differing only in whether the human correction happened:
 
 ```bash
-npm run eval:corrections   # prints the before/after table (offline, zero spend)
+npm run eval:corrections   # prints the deterministic before/after table offline
 ```
 
 | Scenario | Before (no correction) | After (with correction) | Changed? |

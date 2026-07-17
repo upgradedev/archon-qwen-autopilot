@@ -745,18 +745,27 @@ test("CHECK 6 · public copy: canonical URLs and bounded non-price rhetoric stay
     join(ROOT, "demo", "POST_DRAFTS.md"),
     join(ROOT, "demo", "gallery", "GALLERY_MANIFEST.md"),
   ];
-  const forbidden = [
+  const rhetoricForbidden = [
     /hidden[ -]?costs?/i,
     /few cents?/i,
     /\b(?:zero|no) spend\b/i,
+  ];
+  for (const path of [join(ROOT, "README.md"), ...publicCopy]) {
+    const copy = readFileSync(path, "utf8");
+    for (const pattern of rhetoricForbidden) {
+      assert.doesNotMatch(copy, pattern, `${path} contains avoidable price/spend rhetoric (${pattern})`);
+    }
+  }
+
+  const numericCurrencyForbidden = [
     /€\s*\d/i,
     /\$\s*\d/i,
     /\b(?:USD|EUR)\s*\d/i,
   ];
   for (const path of publicCopy) {
     const copy = readFileSync(path, "utf8");
-    for (const pattern of forbidden) {
-      assert.doesNotMatch(copy, pattern, `${path} contains avoidable price/spend rhetoric (${pattern})`);
+    for (const pattern of numericCurrencyForbidden) {
+      assert.doesNotMatch(copy, pattern, `${path} contains avoidable numeric-currency storytelling (${pattern})`);
     }
   }
 });
