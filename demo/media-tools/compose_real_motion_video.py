@@ -367,7 +367,10 @@ def atomic_json(payload: dict[str, Any], destination: Path, scratch: Path, *, re
     os.close(fd)
     temporary = Path(temp_name)
     try:
-        temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        # Byte-exact LF output on every platform: these records are hash-bound
+        # (the manifest binds the QA file's SHA-256), so a Windows text-mode CRLF
+        # transform would break the committed binding on an LF checkout.
+        temporary.write_bytes((json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8"))
         os.replace(temporary, destination)
     finally:
         temporary.unlink(missing_ok=True)
@@ -432,7 +435,7 @@ def compose(
         f"tpad=stop_mode=clone:stop_duration={window:.6f},trim=duration={window:.6f},"
         f"setpts=PTS-STARTPTS+{overlay_start:.6f}/TB,"
         "drawbox=x=0:y=0:w=iw:h=ih:color=0x67e8b2:t=6[live];"
-        f"[0:v][live]overlay=x=248:y=58:eof_action=pass:shortest=0:"
+        f"[0:v][live]overlay=x=248:y=92:eof_action=pass:shortest=0:"
         f"enable='between(t,{overlay_start:.6f},{overlay_end:.6f})'[video]"
     )
     try:

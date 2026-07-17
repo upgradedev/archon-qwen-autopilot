@@ -1,0 +1,97 @@
+{
+  "builder": "caption-led-real-motion-compositor-v1",
+  "claimBoundary": "Live footage demonstrates interaction with the deployed app; benchmark and security claims remain bounded by CAPTURE_REVIEW and the existing caption source.",
+  "evidence": {
+    "captureReviewPath": "demo/gallery/CAPTURE_REVIEW.json",
+    "captureReviewSha256": "0159277a1275e7d9ad2995d0f82b19abe5b0dfce59b836e880ea155b7ee6bf2c"
+  },
+  "exactRuntimeSource": "030950e9b1e2353ee64f422ad050feb9733745bc",
+  "generatedAt": "2026-07-17T02:23:34Z",
+  "inputs": {
+    "baseVideo": {
+      "path": ".artifacts/final-video/base-030950e9b1e2-26da3e3c1d6f90e0/caption-base.single-link.mp4",
+      "sha256": "a37cdcd4ca51962229175f40a023575308e643c34066dae3573d89014487c741"
+    },
+    "subtitles": {
+      "path": ".artifacts/final-video/base-030950e9b1e2-26da3e3c1d6f90e0/caption-base.single-link.en.srt",
+      "sha256": "7c5c9a109c1b04b249e060b4694ef5bf4eeda0856505702fd5f112c1cf7d0fa2"
+    },
+    "thumbnail": {
+      "path": "demo/final-media/autopilot-youtube-thumbnail.png",
+      "sha256": "e9ebd07342b47f003e18acf2a3f7dfd8e25f427396c42f2603acb3e85a0b58eb"
+    }
+  },
+  "liveInteraction": {
+    "actions": [
+      {
+        "action": "loaded live public Autopilot with reviewer workspace locked",
+        "atSeconds": 1.668
+      },
+      {
+        "action": "entered an original synthetic invoice in the public UI",
+        "atSeconds": 2.615
+      },
+      {
+        "action": "clicked Process invoice to start the live Qwen evidence loop",
+        "atSeconds": 3.312
+      },
+      {
+        "action": "observed relevant read/analyze steps stream into the UI: recall_vendor_history → validate_invoice → check_duplicate",
+        "atSeconds": 13.729
+      },
+      {
+        "action": "showed the completed non-durable proposal and human-boundary copy",
+        "atSeconds": 13.822
+      }
+    ],
+    "liveInputFullyConsumed": true,
+    "manifestPath": ".artifacts/final-video/autopilot-live-interaction.manifest.json",
+    "manifestSha256": "611d668b7425fddfe65b388aa8aa4aadbeed777c0e624c17c49e7d7a40aa1403",
+    "overlayEndSeconds": 28.0,
+    "overlayStartSeconds": 19.0,
+    "videoPath": ".artifacts/final-video/autopilot-live-interaction.mp4",
+    "videoSha256": "4e6c6be97c93a75f9508343bee302384db2a50e68932e4f3910b5965c8614ca1"
+  },
+  "outputs": {
+    "qa": {
+      "path": "demo/final-media/autopilot-demo.qa.json",
+      "sha256": "499a3974259e853f7add0f67d561b8923bf863a82872d6abae2da069d97b23c3"
+    },
+    "subtitles": {
+      "cues": 9,
+      "firstStart": 0.0,
+      "lastEnd": 168.0,
+      "path": "demo/final-media/autopilot-demo.en.srt",
+      "sha256": "7c5c9a109c1b04b249e060b4694ef5bf4eeda0856505702fd5f112c1cf7d0fa2"
+    },
+    "thumbnail": {
+      "path": "demo/final-media/autopilot-youtube-thumbnail.png",
+      "sha256": "e9ebd07342b47f003e18acf2a3f7dfd8e25f427396c42f2603acb3e85a0b58eb"
+    },
+    "video": {
+      "audioChannels": 2,
+      "audioCodec": "aac",
+      "audioSampleRate": 48000,
+      "audioStreamCount": 1,
+      "averageFrameRate": "30/1",
+      "durationSeconds": 168.0,
+      "frameCount": 5040,
+      "height": 1080,
+      "path": "demo/final-media/autopilot-demo.mp4",
+      "pixelFormat": "yuv420p",
+      "sha256": "86ba3acde85ad9911ede0c80243674bca5719704eecd7b513f49cba7a43cce5f",
+      "videoCodec": "h264",
+      "videoStreamCount": 1,
+      "width": 1920
+    }
+  },
+  "publicUrl": "https://autopilot.43.106.13.19.sslip.io",
+  "rightsProfile": {
+    "audio": "locally generated digital silence",
+    "thirdPartyMusic": false,
+    "tts": false,
+    "voice": false
+  },
+  "schemaVersion": 1,
+  "status": "passed"
+}

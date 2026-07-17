@@ -6,8 +6,10 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import secrets
 import shutil
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -38,6 +40,42 @@ def sha256_file(path: Path) -> str:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def single_link_snapshot(source: Path, destination: Path, label: str, expected_sha256: str) -> Path:
+    """Break the caption renderer's reviewed hard-link publication into a sealed input.
+
+    The caption-only renderer intentionally hard-links its verified candidate to its
+    publication path. The compositor intentionally rejects aliased inputs. Copy from
+    one descriptor-stable source into an exclusive file, then bind both sides to the
+    renderer manifest hash so neither safety contract has to be weakened.
+    """
+    require(source.resolve(strict=True) == source, f"{label} source is not canonical")
+    require(not source.is_symlink(), f"{label} source must not be a symlink")
+    require(not destination.exists(), f"{label} snapshot already exists")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with source.open("rb") as input_stream, destination.open("xb") as output_stream:
+            before = os.fstat(input_stream.fileno())
+            require(stat.S_ISREG(before.st_mode), f"{label} source must be a regular file")
+            require(before.st_size > 0, f"{label} source is empty")
+            shutil.copyfileobj(input_stream, output_stream, length=1024 * 1024)
+            output_stream.flush()
+            os.fsync(output_stream.fileno())
+            after = os.fstat(input_stream.fileno())
+        fingerprint = lambda value: (
+            value.st_dev, value.st_ino, value.st_nlink, value.st_size,
+            value.st_mtime_ns, value.st_ctime_ns,
+        )
+        require(fingerprint(before) == fingerprint(after), f"{label} source changed during snapshot")
+        require(destination.is_file() and not destination.is_symlink(), f"{label} snapshot is not a regular file")
+        require(destination.stat().st_nlink == 1, f"{label} snapshot must have exactly one hard link")
+        require(sha256_file(destination) == expected_sha256, f"{label} snapshot hash mismatch")
+        require(sha256_file(source) == expected_sha256, f"{label} source hash changed after snapshot")
+        return destination
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
 
 
 def evidence(path: Path, expected_sha: str) -> tuple[dict[str, Any], str]:
@@ -170,17 +208,38 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         if built.returncode != 0:
             raise motion.GateError(f"caption-only base renderer failed: {built.stderr[-3000:]}")
+        try:
+            base_manifest_bytes = base_manifest.read_bytes()
+            base_publication = json.loads(base_manifest_bytes.decode("utf-8", errors="strict"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise motion.GateError("caption-only renderer manifest is not valid UTF-8 JSON") from exc
+        require(base_publication.get("mode") == "caption-only",
+                "caption-only renderer manifest has the wrong mode")
+        base_video_sha256 = str(base_publication.get("video", {}).get("sha256") or "")
+        base_srt_sha256 = str(base_publication.get("subtitles", {}).get("sidecar_sha256") or "")
+        require(re.fullmatch(r"[0-9a-f]{64}", base_video_sha256) is not None,
+                "caption-only renderer manifest has no video hash")
+        require(re.fullmatch(r"[0-9a-f]{64}", base_srt_sha256) is not None,
+                "caption-only renderer manifest has no subtitle hash")
+        compose_base_video = single_link_snapshot(
+            base_video, session / "caption-base.single-link.mp4", "caption-only base video", base_video_sha256,
+        )
+        compose_base_srt = single_link_snapshot(
+            base_srt, session / "caption-base.single-link.en.srt", "caption-only SRT", base_srt_sha256,
+        )
+        require(base_manifest.read_bytes() == base_manifest_bytes,
+                "caption-only renderer manifest changed while inputs were sealed")
         for snapshot_path, expected_hash in snapshot_hashes.items():
             require(sha256_file(snapshot_path) == expected_hash,
                     f"renderer asset snapshot changed during caption build: {snapshot_path.name}")
         require(sha256_file(capture_review) == review_sha256,
                 "CAPTURE_REVIEW changed after validation while the caption base was rendered")
         result = motion.compose(
-            base_video=base_video,
+            base_video=compose_base_video,
             live_video=live_video,
             interaction_manifest=interaction_manifest,
             evidence_manifest=capture_review,
-            srt=base_srt,
+            srt=compose_base_srt,
             output_srt=output_srt,
             thumbnail=thumbnail,
             output=output,
