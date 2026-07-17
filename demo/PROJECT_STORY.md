@@ -18,8 +18,8 @@ wrong call is real money out the door (a double payment) or a supplier left wait
 
 The obvious pitch is "automate it away." We think that pitch is *wrong*, and
 dangerously so. You cannot hand a language model your bank rail and let it pay
-invoices unattended — one hallucinated amount or missed duplicate and it has spent
-money you can't claw back. But the *reasoning* — reading a messy invoice, recalling
+invoices unattended — one hallucinated amount or missed duplicate and it has moved
+funds you can't claw back. But the *reasoning* — reading a messy invoice, recalling
 the vendor, weighing the findings, and proposing the right next action — is exactly
 what a model is good at.
 
@@ -157,7 +157,8 @@ even if a model proposes the attacker's requested action.
 
 We then extended that same defense to the **document-input vector** — the front door
 where a judge uploads a real file, not JSON. Three added layers: a **magic-byte sniff**
-(a `.pdf` that is really a PNG is rejected before it costs a budget slot), a **relevance
+(a `.pdf` that is really a PNG is rejected before it consumes a provider-workflow
+quota slot), a **relevance
 gate** (a random image is flagged "this doesn't look like an invoice"), and — the one
 we like most — we made recognized attack text **VISIBLE**. The fence labels document
 fields as untrusted; structural tool separation plus the human gate block autonomous

@@ -162,7 +162,7 @@ ignored project path `.artifacts/supply-chain/poppler/`; the runner resolves the
 executable, rejects symlink/path escapes, requires platform, architecture,
 basename/version/package spec/executable SHA-256 and the deterministic hash of all 178 bundle
 files to match `eval/promotion-poppler.lock.json`, and proves it can raster every
-frozen PDF before artifact creation or provider spend. Raster outputs and all
+frozen PDF before artifact creation or any model-provider call. Raster outputs and all
 promotion-time Node temporary files stay under a unique `.artifacts/` run root.
 Preflight files are cleaned before provider calls; live files are cleaned and the
 bundle is re-attested before a result can close as complete.

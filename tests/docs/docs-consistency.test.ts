@@ -725,7 +725,7 @@ test("CHECK 6 · housekeeping: documentation inventory is exhaustive and stale s
 });
 
 test("CHECK 6 · public copy: canonical URLs and bounded non-price rhetoric stay aligned", () => {
-  const videoUrl = "https://www.youtube.com/watch?v=Vc2mJdsoSX0";
+  const videoUrl = "https://www.youtube.com/watch?v=-q-CkOcdS14";
   const blogUrl = "https://dev.to/efousekis/building-archon-autopilot-where-qwen-proposes-and-humans-control-the-money-4mfg";
   const completeHttpsTokens = (markdown: string): Set<string> =>
     new Set([...markdown.matchAll(/https:\/\/[^\s<>()\]]+/g)].map((match) => match[0]!));
@@ -738,6 +738,8 @@ test("CHECK 6 · public copy: canonical URLs and bounded non-price rhetoric stay
     assert.ok(completeHttpsTokens(readFileSync(path, "utf8")).has(videoUrl),
       `${path} does not carry the exact canonical public video URL`);
   }
+  assert.ok(readFileSync(join(ROOT, "scripts", "readiness.ts"), "utf8").includes(videoUrl),
+    "readiness registry does not carry the exact canonical public video URL");
   for (const path of [
     join(ROOT, "demo", "DEVPOST_PACKET.md"),
     join(ROOT, "demo", "POST_DRAFTS.md"),
@@ -757,7 +759,8 @@ test("CHECK 6 · public copy: canonical URLs and bounded non-price rhetoric stay
   const rhetoricForbidden = [
     /hidden[ -]?costs?/i,
     /few cents?/i,
-    /\b(?:zero|no) spend\b/i,
+    /\bspend(?:ing|s)?\b/i,
+    /\bspent\s+(?:money|funds)\b/i,
   ];
   for (const path of [join(ROOT, "README.md"), ...publicCopy]) {
     const copy = readFileSync(path, "utf8");
@@ -777,6 +780,12 @@ test("CHECK 6 · public copy: canonical URLs and bounded non-price rhetoric stay
       assert.doesNotMatch(copy, pattern, `${path} contains avoidable numeric-currency storytelling (${pattern})`);
     }
   }
+
+  const judgeMemo = readFileSync(join(ROOT, "demo", "JUDGE_REVIEW.md"), "utf8");
+  assert.match(judgeMemo, /hash-locked local narration/i,
+    "internal judge memo must describe the narrated release");
+  assert.doesNotMatch(judgeMemo, /caption-led with digital silence/i,
+    "internal judge memo must not describe the retired silent release");
 });
 
 test("CHECK 6 · media: Devpost thumbnail is exact 3:2, original, and self-contained", () => {
