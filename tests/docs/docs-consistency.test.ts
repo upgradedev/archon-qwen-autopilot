@@ -756,6 +756,37 @@ test("CHECK 6 · public copy: canonical URLs and bounded non-price rhetoric stay
     join(ROOT, "demo", "POST_DRAFTS.md"),
     join(ROOT, "demo", "gallery", "GALLERY_MANIFEST.md"),
   ];
+  const judgeFacingCopy = [
+    join(ROOT, "README.md"),
+    ...publicCopy,
+    join(ROOT, "demo", "VIDEO_PUBLICATION_PACKET.md"),
+    join(ROOT, "demo", "BLOG_PUBLICATION_CHECKLIST.md"),
+    join(ROOT, "docs", "JUDGE-GUIDE.md"),
+  ];
+  const devpostTemplateHeading =
+    /^#{1,6}\s+(?:Inspiration|What it does|How we built it|Challenges we ran into|Accomplishments that we're proud of|What we learned|What's next(?: for .*)?)\s*$/mi;
+  const renderedEmDash = /(?:\u2014|&mdash;|&#0*8212;|&#x0*2014;)/i;
+  for (const path of judgeFacingCopy) {
+    const copy = readFileSync(path, "utf8");
+    assert.doesNotMatch(copy, renderedEmDash,
+      `${path} contains a literal or HTML-encoded em dash`);
+    assert.doesNotMatch(copy, devpostTemplateHeading,
+      `${path} contains a stock Devpost story heading`);
+  }
+
+  const projectStory = readFileSync(join(ROOT, "demo", "PROJECT_STORY.md"), "utf8");
+  for (const heading of [
+    "The AP inbox was the real starting point",
+    "The product stops where consequences begin",
+    "What enforces the boundary",
+    "The parts that fought back",
+    "The proof points we care about",
+    "What changed our minds while building",
+    "The next useful version",
+  ]) {
+    assert.ok(projectStory.split(/\r?\n/).includes(`## ${heading}`),
+      `PROJECT_STORY.md is missing its distinctive \"${heading}\" section`);
+  }
   const rhetoricForbidden = [
     /hidden[ -]?costs?/i,
     /few cents?/i,

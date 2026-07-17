@@ -6,7 +6,7 @@ the video to be publicly visible on YouTube, Vimeo, or Youku and below three min
 
 ## Title
 
-> Archon Autopilot — Human-Gated AP Agent on Qwen | Hackathon Track 4
+> Archon Autopilot: Human-Gated AP Agent on Qwen | Hackathon Track 4
 
 ## Description
 

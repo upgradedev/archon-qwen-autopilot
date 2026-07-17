@@ -1,4 +1,4 @@
-# Archon Autopilot — public post copy
+# Archon Autopilot: public post copy
 
 The demo and build-journey URLs below are the signed-out-verified public YouTube video
 and dev.to article. Keep every claim and caveat exactly as written when reposting.
@@ -31,7 +31,7 @@ Authenticated HTTP/UI is the exclusive human decision surface.
 
 Two post-approval transports are real when configured: an SMTP vendor reply and a
 restart-safe, fsynced append-only JSONL double-entry ledger. Payment and specialist
-review stay simulated—no claim of a bank or ERP integration.
+review stay simulated, no claim of a bank or ERP integration.
 
 Measured evidence includes a 22/22 offline policy eval with 2.4 average autonomous
 steps plus Node, real-pgvector, browser, adversarial, coverage, and audit gates. The
@@ -40,7 +40,7 @@ is a regression measurement, not live-model accuracy.
 
 Within an authored 12-case workflow model, the assisted arm uses fewer modeled base
 active-review seconds and human checkpoints while both arms match developer policy
-labels. This is synthetic workflow evidence—not a human study, field trial,
+labels. This is synthetic workflow evidence, not a human study, field trial,
 labor-savings or ROI claim.
 
 Live: https://autopilot.43.106.13.19.sslip.io
