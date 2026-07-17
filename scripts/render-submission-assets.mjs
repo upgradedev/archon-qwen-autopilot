@@ -16,6 +16,7 @@ import { chromium } from "playwright";
 const ROOT = realpathSync(fileURLToPath(new URL("../", import.meta.url)));
 const THUMBNAIL_SVG = join(ROOT, "demo", "thumbnail.svg");
 const THUMBNAIL_PNG = join(ROOT, "demo", "thumbnail.png");
+const ARCHITECTURE_SVG = join(ROOT, "docs", "judge-architecture.svg");
 const ARCHITECTURE_JPG = join(ROOT, "demo", "final-media", "judge-architecture.jpg");
 const mode = process.argv[2];
 
@@ -183,6 +184,36 @@ async function renderThumbnail() {
   }
 }
 
+async function renderArchitecture() {
+  const svg = await readFile(ARCHITECTURE_SVG, "utf8");
+  assert.match(svg, /<svg\b[^>]*\bwidth="1600"[^>]*\bheight="900"[^>]*\bviewBox="0 0 1600 900"/i);
+  assert.match(svg, /Qwen proposes\. Deterministic controls constrain\. A human authorizes every consequence\./);
+  assert.match(svg, /MODEL STOPS/);
+  assert.match(svg, /STRUCTURAL CONSEQUENCE BOUNDARY/);
+  assert.doesNotMatch(svg, /€|\$\s*\d|hidden costs?/i);
+  assert.doesNotMatch(svg, /<(?:image|script|foreignObject)\b/i);
+  assert.doesNotMatch(svg, /\b(?:href|xlink:href)\s*=|url\(\s*['"]?https?:/i);
+
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1600, height: 900 }, deviceScaleFactor: 1 });
+    const unexpectedRequests = [];
+    page.on("request", (request) => unexpectedRequests.push(request.url()));
+    await page.route("**/*", (route) => route.abort("blockedbyclient"));
+    await page.setContent(
+      `<style>html,body{margin:0;width:1600px;height:900px;overflow:hidden;background:#080b12}svg{display:block}</style>${svg}`,
+      { waitUntil: "load" },
+    );
+    await page.evaluate(() => document.fonts.ready);
+    assert.deepEqual(unexpectedRequests, [], "architecture render attempted an external request");
+    const jpeg = await page.screenshot({ type: "jpeg", quality: 96, animations: "disabled", caret: "hide" });
+    inspectJpegHeader(jpeg);
+    return { jpeg, browserVersion: browser.version() };
+  } finally {
+    await browser.close();
+  }
+}
+
 async function replaceAtomically(path, bytes) {
   const temporary = `${path}.next-${process.pid}`;
   await rm(temporary, { force: true });
@@ -200,23 +231,27 @@ async function replaceAtomically(path, bytes) {
   }
 }
 
-const [{ png, browserVersion }, currentPng, currentJpeg] = await Promise.all([
+const [{ png, browserVersion }, { jpeg, browserVersion: architectureBrowserVersion }, currentPng, currentJpeg] = await Promise.all([
   renderThumbnail(),
+  renderArchitecture(),
   readFile(THUMBNAIL_PNG),
   readFile(ARCHITECTURE_JPG),
 ]);
 inspectPng(currentPng);
-const { sanitized: sanitizedJpeg, removed } = stripJpegMetadata(currentJpeg);
+const { sanitized: sanitizedJpeg, removed } = stripJpegMetadata(jpeg);
+const { sanitized: sanitizedCurrentJpeg } = stripJpegMetadata(currentJpeg);
 
 if (mode === "--write") {
   if (!png.equals(currentPng)) await replaceAtomically(THUMBNAIL_PNG, png);
   if (!sanitizedJpeg.equals(currentJpeg)) await replaceAtomically(ARCHITECTURE_JPG, sanitizedJpeg);
   console.log(
     `submission assets written: thumbnail 1500x1000 via Chromium ${browserVersion}; `
-    + `architecture 1600x900; removed JPEG markers=${removed.map((marker) => `0x${marker.toString(16)}`).join(",") || "none"}`,
+    + `architecture 1600x900 via Chromium ${architectureBrowserVersion}; `
+    + `removed JPEG markers=${removed.map((marker) => `0x${marker.toString(16)}`).join(",") || "none"}`,
   );
 } else {
   assert.ok(png.equals(currentPng), "demo/thumbnail.png is not the canonical raster of demo/thumbnail.svg");
-  assert.ok(sanitizedJpeg.equals(currentJpeg), "judge-architecture.jpg still contains removable metadata");
-  console.log(`submission assets canonical: thumbnail and metadata-free architecture (Chromium ${browserVersion})`);
+  assert.ok(sanitizedCurrentJpeg.equals(currentJpeg), "judge-architecture.jpg still contains removable metadata");
+  assert.ok(sanitizedJpeg.equals(currentJpeg), "demo/final-media/judge-architecture.jpg is not the canonical raster of docs/judge-architecture.svg");
+  console.log(`submission assets canonical: thumbnail and architecture via Chromium ${browserVersion}`);
 }
