@@ -46,6 +46,15 @@ snapshot of those validated bytes. The final submitted HEAD is
 created and linked only after these media artifacts are committed. Finals without a
 matching `status: passed` manifest are not approved.
 
+On Windows, restore the hash-bound text evidence with Git's canonical bytes before
+running the final verifier. This avoids a local `core.autocrlf` checkout transform
+changing an otherwise valid manifest or subtitle without altering repository data:
+
+```powershell
+git -c core.autocrlf=false checkout HEAD -- demo/gallery/CAPTURE_REVIEW.json demo/final-media/autopilot-demo.en.srt demo/final-media/autopilot-demo.real-motion.json demo/final-media/autopilot-demo.qa.json
+python demo/media-tools/compose_real_motion_video.py --verify-only
+```
+
 ## Reproducible authored-asset pass
 
 The canonical thumbnail and architecture raster are maintained together:

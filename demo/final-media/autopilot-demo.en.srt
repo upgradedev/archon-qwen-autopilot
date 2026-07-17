@@ -1,0 +1,76 @@
+1
+00:00:00,000 --> 00:00:13,000
+Accounts-payable teams must extract, validate, de-duplicate and
+triage every invoice under time pressure. Archon Autopilot
+automates the evidence gathering, but never unattended payment.
+This is our Track Four Autopilot Agent.
+
+2
+00:00:13,000 --> 00:00:28,000
+This is an independent accounts-payable orchestration product.
+Public intake is an isolated, redacted preview with no durable
+queue item. Authenticated reviewer intake creates durable
+pending work. Qwen proposes through bounded tools; only the
+human interface can decide or execute.
+
+3
+00:00:28,000 --> 00:00:52,000
+On the final Alibaba deployment, an original synthetic invoice
+document enters the reviewer flow. Qwen extracts the document,
+recalls vendor evidence, validates arithmetic, and selects the
+relevant duplicate, variance, or context checks. The live trace
+shows tool calls and observations, then stops at one durable
+pending proposal. Nothing has executed.
+
+4
+00:00:52,000 --> 00:01:11,000
+The reviewer sees the exact proposed action and arguments, then
+approves, amends or rejects. Here the amendment is
+schema-validated and the decided view preserves the
+before-and-after diff. Approved arguments equal executed
+arguments. An atomic claim blocks replay; uncertain SMTP
+delivery is never called recipient-exactly-once and is never
+blindly retried.
+
+5
+00:01:11,000 --> 00:01:34,000
+The gate also creates correction evidence. A normal
+three-thousand-euro baseline is followed by a five-thousand-euro
+overbill amended back to three thousand. On the next bounded
+run, the five-thousand re-bill is flagged for review, while the
+three-thousand control remains a payment proposal.
+
+6
+00:01:34,000 --> 00:01:53,000
+The deterministic workflow matches all twenty-two
+developer-labelled regression cases, with an average
+two-point-four autonomous evidence steps before a proposal. That
+is not live-model accuracy or a labor-savings result. A fixed
+twelve-case synthetic workflow comparison reports only modeled
+review seconds and checkpoints, and sixteen original vision
+fixtures retain raw outcomes. No candidate model was promoted.
+
+7
+00:01:53,000 --> 00:02:14,000
+A hostile invoice can influence a proposal, so recognized
+patterns are surfaced to the reviewer; we do not claim universal
+detection. The stronger invariant is structural: the model and
+four-tool MCP catalog contain no approve, amend, reject, recover
+or pay capability. The proposal remains pending behind the human
+gate.
+
+8
+00:02:14,000 --> 00:02:34,000
+Autopilot's proof binds its recorded deployed runtime SHA to the
+Alibaba deployment and a separate clean capture-source head; the
+later final submitted head is only linked. It shows Alibaba
+identity, public network-free health and readiness,
+authenticated deep readiness, plus real Qwen decision and vision
+canaries. The displayed deployed models are qwen-plus and
+qwen-vl-max; no candidate was promoted.
+
+9
+00:02:34,000 --> 00:02:48,000
+Archon Autopilot is open source under M.I.T., live on Alibaba
+Cloud, and submitted to Track Four. Bounded where judgment
+helps; deterministic and human-controlled where money moves.
