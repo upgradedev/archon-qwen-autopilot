@@ -925,7 +925,7 @@ const CAPTURE_CSS = `
   * { box-sizing: border-box; }
   html, body { margin: 0; width: 1920px; height: 1080px; overflow: hidden; background: #070b12; }
   body { color: #e6edf3; font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
-  #capture-stage { width: 1920px; height: 1080px; padding: 60px 96px 64px; background:
+  #capture-stage { width: 1920px; min-width: 1920px; max-width: none; height: 1080px; margin: 0; padding: 60px 96px 64px; background:
     radial-gradient(circle at 90% 0%, rgba(52,211,153,.14), transparent 32%),
     radial-gradient(circle at 0% 90%, rgba(88,166,255,.12), transparent 31%), #0b1018; overflow: hidden; }
   .capture-head { display:flex; align-items:flex-start; justify-content:space-between; gap:30px; margin-bottom:26px; }
@@ -1451,6 +1451,11 @@ async function selfTest() {
   ), true, 'one-pixel sensitive overlap must fail');
   assert.deepEqual(FINAL_NAMES.length, 6);
   assert.deepEqual(Object.keys(GALLERY_MAP).length, 5);
+  assert.match(
+    CAPTURE_CSS,
+    /#capture-stage\s*\{[^}]*width:\s*1920px[^}]*min-width:\s*1920px[^}]*max-width:\s*none/s,
+    'capture stage must override the live UI main max-width constraint',
+  );
   const fixtureRoot = insideRepo(path.join(ROOT, '.artifacts', 'media-pipeline-self-test'), 'self-test fixture root');
   fs.rmSync(fixtureRoot, { recursive: true, force: true });
   const fixtureDir = path.join(fixtureRoot, 'release');
