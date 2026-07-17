@@ -21,7 +21,8 @@ Resolve these in the Devpost draft and publication accounts, not by inventing va
 | `[PUBLIC_BLOG_OR_SOCIAL_URL]` | Optional blog/social field after signed-out review |
 | `[ACTIVE_REVIEWER_TOKEN]` | Only a confirmed non-public judges-only testing field or organizer-approved secure channel |
 | `[OPTIONAL_ACCESS_CONTACT]` | Only a confirmed non-public judges-only testing field; otherwise omit and use an organizer-approved secure channel |
-| Exact deployed app SHA `203f159df25f825a0b994a2f8a4d2c0892b45390` | Sanitized Alibaba proof + final release record; already resolved and must not be relabelled |
+| Exact deployed runtime SHA `030950e9b1e2353ee64f422ad050feb9733745bc` | Sanitized Alibaba proof + runtime release record; already resolved and must not be relabelled |
+| `[CAPTURE_SOURCE_HEAD]` | `CAPTURE_REVIEW.json` + sanitized Alibaba proof; resolve from the clean public `origin/main` used for capture |
 | `[FINAL_SUBMISSION_SHA]` | Final link/CI verification record |
 | `[FINAL_CI_RUN_URL]` | Engineering-proof caption or supporting link |
 | `[FINAL_CODEQL_AND_IMAGE_SCAN_URLS]` | Engineering-proof caption or supporting link |
@@ -106,7 +107,7 @@ Use this only if Devpost exposes a separate short-summary field:
 
 **Deployment explanation, if a text field is available**
 
-> The backend runs on Alibaba Cloud ECS behind public HTTPS. The linked client file demonstrates the DashScope-compatible Qwen base URL and model instantiation required by the rules. The sanitized gallery proof and public video separately show the recorded deployed application SHA, public health/readiness, an exercised embedding deep probe, a qwen-plus intake-to-PENDING canary, and a qwen-vl-max document extraction. Configuration alone is not presented as exercised-model evidence.
+> The backend runs on Alibaba Cloud ECS behind public HTTPS. The linked client file demonstrates the DashScope-compatible Qwen base URL and model instantiation required by the rules. The sanitized gallery proof and public video separately show the recorded deployed runtime SHA, public health/readiness, an exercised embedding deep probe, a qwen-plus intake-to-PENDING canary, and a qwen-vl-max document extraction. Configuration alone is not presented as exercised-model evidence.
 
 **What was built during the submission period**
 
@@ -165,7 +166,7 @@ Upload only reviewed, sanitized final files. Recommended order:
      combined with exact-release identity, health/readiness, deep embedding probe,
      and exercised decision and vision model IDs.**
    - Alt: **Composite showing a sanitized genuine Alibaba ECS console crop, the
-     deployed application SHA, green CI, readiness checks, and Qwen canary model
+     deployed runtime SHA, green CI, readiness checks, and Qwen canary model
      identifiers without account, instance, address, resource, or credential data.**
 
 Never upload a screenshot until the filename, pixels, metadata, visible model IDs,
@@ -261,12 +262,13 @@ public repository intentionally does not guess or retain them.
 - [ ] Working app and private tester flow pass signed out.
 - [ ] Gallery contains only fresh sanitized current-release captures.
 - [ ] `demo/gallery/CAPTURE_REVIEW.json` is tracked, `status=passed`, binds the exact
-  deployed SHA/public source HEAD at capture, records `pendingCleanupZero=true` with
+  deployed runtime SHA and clean public capture-source HEAD, records
+  `pendingCleanupZero=true` with
   zero matching **PENDING** capture residue (not zero audit history), and hashes every
   uploaded current-release PNG.
-- [ ] Deployed application SHA `203f159df25f825a0b994a2f8a4d2c0892b45390`
-  and `[FINAL_SUBMISSION_SHA]` are labelled separately if docs/media commits follow
-  the deployed application release.
+- [ ] Deployed runtime SHA `030950e9b1e2353ee64f422ad050feb9733745bc`,
+  `[CAPTURE_SOURCE_HEAD]`, and `[FINAL_SUBMISSION_SHA]` are labelled separately. No
+  later docs/media commit is described as the running runtime.
 - [ ] Exact final CI, CodeQL, and image/SBOM runs are green for the submission SHA.
 - [ ] Blog/social URL works publicly if entered.
 - [ ] No unresolved bracketed placeholder remains in any Devpost field.

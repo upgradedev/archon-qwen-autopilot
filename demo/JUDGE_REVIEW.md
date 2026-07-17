@@ -4,7 +4,7 @@
 > evidence/gap review for the team. It deliberately does not assign a competition
 > score, estimate placement, or speak on behalf of the independent judges.
 
-**Review date:** 2026-07-16
+**Review date:** 2026-07-17
 
 **Entry:** Qwen Cloud Hackathon, Track 4 — Autopilot Agent
 
@@ -18,12 +18,13 @@ memory recall and AP validations, stops at one persisted proposal, and cannot ex
 without an authenticated human decision. The strongest story is the combination of
 agentic depth, structural least agency, and a measurable correction feedback loop.
 
-The public-main engineering gates are green, and exact-deploy attempt 23 verified
-application SHA `203f159…` through immutable checkout, the singleton runtime-env
-contract, non-published and final readiness, a real-Qwen PENDING canary, and
-zero-residue cleanup. The remaining variables are presentation/publication: make the
-recording and screenshots explain that exact workflow within three minutes without
-exposing the reviewer credential, then verify every public link signed out.
+The public-main engineering gates are green, and Alibaba Cloud Assistant attempt 46
+verified deployed runtime SHA `030950e9…` through a hash-bound compact terminal
+sentinel after immutable checkout, the singleton runtime-env contract, non-published
+and final readiness, a real-Qwen PENDING canary, and zero-residue cleanup. The
+remaining variables are presentation/publication: make the recording and screenshots
+explain that exact workflow within three minutes without exposing the reviewer
+credential, then verify every public link signed out.
 
 ## Rubric readiness review
 
@@ -151,9 +152,11 @@ fail-safe review behavior.
 ## Remaining action
 
 No additional product feature is required for a competitive submission. The exact
-application SHA is already deployed; the remaining sequence is **merge final
-submission source → immutable hosted gates → bind the existing exact-SHA deployment
-to fresh live canaries → sanitized proof → video/screenshots/post → Devpost draft**. Follow
+runtime SHA is already deployed; the remaining sequence is **merge the pre-capture
+tooling/docs as the clean public capture-source HEAD → immutable hosted gates → bind
+the existing deployed runtime SHA to fresh live canaries → sanitized proof →
+video/screenshots/post → commit the final submitted HEAD → final immutable hosted
+gates → Devpost draft**. Follow
 [`FINAL_MEDIA_CHECKLIST.md`](FINAL_MEDIA_CHECKLIST.md) and
 [`DEVPOST_PACKET.md`](DEVPOST_PACKET.md); follow the operator-only
 [`POST_PUBLICATION_CHECKLIST.md`](POST_PUBLICATION_CHECKLIST.md), then use only the

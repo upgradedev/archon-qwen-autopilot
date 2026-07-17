@@ -8,7 +8,7 @@ the shipped pixels and audio.  It never contacts the live service and never read
 reviewer credential.
 
 Production inputs must be regular project-contained files.  The interaction
-manifest must bind the exact CAPTURE_REVIEW bytes, deployed SHA, public origin and
+manifest must bind the exact CAPTURE_REVIEW bytes, deployed runtime SHA, public origin and
 raw browser-video hash.  The final remains rights-safe: no TTS or third-party music;
 the compatibility AAC stream must decode to digital silence.
 """
@@ -26,6 +26,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -87,6 +88,38 @@ def read_json(path: Path, label: str) -> dict[str, Any]:
         raise GateError(f"{label} is not valid UTF-8 JSON") from exc
     require(isinstance(payload, dict), f"{label} must be a JSON object")
     return payload
+
+
+def read_json_snapshot(path: Path, label: str) -> tuple[dict[str, Any], str]:
+    """Parse and hash one descriptor-consistent, project-contained byte snapshot."""
+    canonical = project_path(path, label, exists=True)
+    before_path = canonical.stat()
+    try:
+        with canonical.open("rb") as stream:
+            before = os.fstat(stream.fileno())
+            require(before.st_nlink == 1, f"{label} must have exactly one hard link")
+            require(0 < before.st_size <= 16 * 1024 * 1024, f"{label} has an invalid size")
+            raw = stream.read()
+            after = os.fstat(stream.fileno())
+    except OSError as exc:
+        raise GateError(f"{label} could not be read safely") from exc
+    fingerprint = lambda value: (
+        value.st_dev, value.st_ino, value.st_nlink, value.st_size,
+        value.st_mtime_ns, value.st_ctime_ns,
+    )
+    require(fingerprint(before) == fingerprint(after), f"{label} changed while it was being read")
+    require(len(raw) == before.st_size, f"{label} descriptor returned a partial read")
+    require(canonical.resolve(strict=True) == canonical, f"{label} canonical target changed while it was being read")
+    require(fingerprint(canonical.stat()) == fingerprint(before),
+            f"{label} pathname no longer identifies the descriptor-read file")
+    require(fingerprint(before_path) == fingerprint(before),
+            f"{label} changed between pathname validation and descriptor open")
+    try:
+        payload = json.loads(raw.decode("utf-8", errors="strict"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise GateError(f"{label} is not valid UTF-8 JSON") from exc
+    require(isinstance(payload, dict), f"{label} must be a JSON object")
+    return payload, hashlib.sha256(raw).hexdigest()
 
 
 def run(command: Sequence[str], label: str, *, binary: bool = False) -> bytes | str:
@@ -218,29 +251,36 @@ def validate_srt(path: Path, duration: float) -> dict[str, Any]:
 
 
 def evidence_runtime_sha(payload: dict[str, Any]) -> str:
-    candidates = [payload.get("exactRuntimeSource"), payload.get("exactDeployedApplicationSha")]
-    values = [str(value) for value in candidates if isinstance(value, str)]
-    require(len(values) == 1 and SHA_RE.fullmatch(values[0]) is not None,
-            "CAPTURE_REVIEW has no unambiguous exact deployed application SHA")
-    return values[0]
+    value = payload.get("deployedRuntimeSha")
+    require(isinstance(value, str) and SHA_RE.fullmatch(value) is not None,
+            "CAPTURE_REVIEW has no exact deployed runtime SHA")
+    return value
 
 
 def validate_bindings(
     *, expected_sha: str, expected_url: str, evidence_path: Path,
     interaction_path: Path, live_video: Path, allow_fixture: bool,
-) -> tuple[dict[str, Any], dict[str, Any]]:
+) -> tuple[dict[str, Any], dict[str, Any], str, str]:
     require(SHA_RE.fullmatch(expected_sha) is not None, "--expected-sha must be 40 lowercase hex characters")
-    evidence = read_json(evidence_path, "CAPTURE_REVIEW")
-    interaction = read_json(interaction_path, "interaction manifest")
+    evidence, evidence_sha256 = read_json_snapshot(evidence_path, "CAPTURE_REVIEW")
+    interaction, interaction_sha256 = read_json_snapshot(interaction_path, "interaction manifest")
     require(evidence.get("status") == "passed", "CAPTURE_REVIEW status is not passed")
     require(evidence_runtime_sha(evidence) == expected_sha, "CAPTURE_REVIEW exact SHA does not match --expected-sha")
     require(interaction.get("status") == "passed", "interaction manifest status is not passed")
     require(interaction.get("expectedRuntimeSha") == expected_sha, "interaction manifest exact SHA mismatch")
     require(interaction.get("publicUrl") == expected_url, "interaction manifest public origin mismatch")
     require(interaction.get("reviewerCredentialRendered") is False, "interaction manifest does not prove hidden credentials")
-    require(interaction.get("evidenceManifestSha256") == sha256_file(evidence_path),
+    require(interaction.get("evidenceManifestSha256") == evidence_sha256,
             "interaction manifest is not bound to these CAPTURE_REVIEW bytes")
     if not allow_fixture:
+        require(evidence.get("schemaVersion") == 3, "CAPTURE_REVIEW schema version is not 3")
+        capture_source = evidence.get("captureSourceHead")
+        require(isinstance(capture_source, str) and SHA_RE.fullmatch(capture_source) is not None,
+                "CAPTURE_REVIEW capture-source HEAD is missing or invalid")
+        release_evidence = evidence.get("releaseEvidence")
+        require(isinstance(release_evidence, dict)
+                and release_evidence.get("schema") == "cloud-assistant-sentinel-v1",
+                "CAPTURE_REVIEW release-evidence schema mismatch")
         require(interaction.get("mode") == "live", "production requires a live interaction manifest")
         require(interaction.get("submissionEligible") is True, "interaction is marked non-submission/draft")
         actions = interaction.get("actions")
@@ -302,7 +342,7 @@ def validate_bindings(
     require(isinstance(raw, dict), "interaction manifest has no rawVideo record")
     require(raw.get("sha256") == sha256_file(live_video), "live video hash does not match interaction manifest")
     require(raw.get("path") == relative(live_video), "live video path does not match interaction manifest")
-    return evidence, interaction
+    return evidence, interaction, evidence_sha256, interaction_sha256
 
 
 def atomic_copy(source: Path, destination: Path, scratch: Path, *, replace: bool) -> None:
@@ -349,11 +389,22 @@ def compose(
     require(0 <= overlay_start < overlay_end, "invalid live overlay window")
     window = overlay_end - overlay_start
 
-    _evidence, interaction = validate_bindings(
+    evidence, interaction, evidence_sha256, interaction_sha256 = validate_bindings(
         expected_sha=expected_sha, expected_url=expected_url,
         evidence_path=evidence_manifest, interaction_path=interaction_manifest,
         live_video=live_video, allow_fixture=allow_fixture,
     )
+    thumbnail_sha256 = sha256_file(thumbnail)
+    if not allow_fixture:
+        evidence_artifacts = evidence.get("artifacts")
+        evidence_final_media = evidence_artifacts.get("finalMedia") if isinstance(evidence_artifacts, dict) else None
+        thumbnail_record = (
+            evidence_final_media.get("autopilot-youtube-thumbnail.png")
+            if isinstance(evidence_final_media, dict) else None
+        )
+        require(isinstance(thumbnail_record, dict), "CAPTURE_REVIEW does not bind the YouTube thumbnail")
+        require(thumbnail_record.get("path") == relative(thumbnail), "CAPTURE_REVIEW thumbnail path mismatch")
+        require(thumbnail_record.get("sha256") == thumbnail_sha256, "CAPTURE_REVIEW thumbnail hash mismatch")
     base = media_summary(base_video)
     live = media_summary(live_video)
     require(base["width"] == 1920 and base["height"] == 1080, "base video must be 1920x1080")
@@ -410,6 +461,12 @@ def compose(
         overlay_diversity = diversity(candidate, start=overlay_start, duration=window)
         require(overlay_diversity["uniqueFrames"] >= 8 and overlay_diversity["uniqueRatio"] >= 0.25,
                 "shipped overlay window does not retain real motion")
+        require(sha256_file(evidence_manifest) == evidence_sha256,
+                "CAPTURE_REVIEW changed after validation while the final was composed")
+        require(sha256_file(interaction_manifest) == interaction_sha256,
+                "interaction manifest changed after validation while the final was composed")
+        require(sha256_file(thumbnail) == thumbnail_sha256,
+                "YouTube thumbnail changed after validation while the final was composed")
 
         output.parent.mkdir(parents=True, exist_ok=True)
         require(replace or not output.exists(), f"refusing to replace existing {relative(output)} without --replace")
@@ -442,10 +499,10 @@ def compose(
         "exactRuntimeSource": expected_sha,
         "publicUrl": expected_url,
         "rightsProfile": {"voice": False, "tts": False, "thirdPartyMusic": False, "audio": "locally generated digital silence"},
-        "evidence": {"captureReviewPath": relative(evidence_manifest), "captureReviewSha256": sha256_file(evidence_manifest)},
+        "evidence": {"captureReviewPath": relative(evidence_manifest), "captureReviewSha256": evidence_sha256},
         "liveInteraction": {
             "manifestPath": relative(interaction_manifest),
-            "manifestSha256": sha256_file(interaction_manifest),
+            "manifestSha256": interaction_sha256,
             "videoPath": relative(live_video),
             "videoSha256": sha256_file(live_video),
             "actions": interaction.get("actions", []),
@@ -456,12 +513,12 @@ def compose(
         "inputs": {
             "baseVideo": {"path": relative(base_video), "sha256": sha256_file(base_video)},
             "subtitles": {"path": relative(srt), "sha256": sha256_file(srt)},
-            "thumbnail": {"path": relative(thumbnail), "sha256": sha256_file(thumbnail)},
+            "thumbnail": {"path": relative(thumbnail), "sha256": thumbnail_sha256},
         },
         "outputs": {
             "video": {"path": relative(output), "sha256": final_sha, **final},
             "subtitles": {"path": relative(output_srt), "sha256": sha256_file(output_srt), **output_srt_qa},
-            "thumbnail": {"path": relative(thumbnail), "sha256": sha256_file(thumbnail)},
+            "thumbnail": {"path": relative(thumbnail), "sha256": thumbnail_sha256},
             "qa": {"path": relative(qa_path)},
         },
         "claimBoundary": "Live footage demonstrates interaction with the deployed app; benchmark and security claims remain bounded by CAPTURE_REVIEW and the existing caption source.",
@@ -500,7 +557,7 @@ def verify_existing(manifest_path: Path, qa_path: Path, *, allow_fixture: bool =
     require(project_path(str(qa_record.get("path") or ""), "manifest QA", exists=True) == qa_path,
             "--qa does not match the manifest QA path")
 
-    validate_bindings(
+    _evidence, _interaction, evidence_sha256, interaction_sha256 = validate_bindings(
         expected_sha=expected_sha,
         expected_url=expected_url,
         evidence_path=evidence_path,
@@ -508,8 +565,8 @@ def verify_existing(manifest_path: Path, qa_path: Path, *, allow_fixture: bool =
         live_video=live_video,
         allow_fixture=allow_fixture,
     )
-    require(evidence_record.get("captureReviewSha256") == sha256_file(evidence_path), "CAPTURE_REVIEW hash drift")
-    require(live_record.get("manifestSha256") == sha256_file(interaction_path), "interaction manifest hash drift")
+    require(evidence_record.get("captureReviewSha256") == evidence_sha256, "CAPTURE_REVIEW hash drift")
+    require(live_record.get("manifestSha256") == interaction_sha256, "interaction manifest hash drift")
     require(live_record.get("videoSha256") == sha256_file(live_video), "live video hash drift")
     require(video_record.get("sha256") == sha256_file(final_video), "final video hash drift")
     require(subtitle_record.get("sha256") == sha256_file(subtitles), "subtitle hash drift")
@@ -572,7 +629,7 @@ def self_test() -> int:
          "-an", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", str(live)], "make self-test live motion")
     run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=0x0b211a:s=1280x720", "-frames:v", "1", str(thumbnail)], "make self-test thumbnail")
     srt.write_text("1\n00:00:00,000 --> 00:00:06,000\nSynthetic compositor test.\n\n2\n00:00:06,000 --> 00:00:12,000\nNot submission evidence.\n", encoding="utf-8")
-    evidence.write_text(json.dumps({"status": "passed", "exactRuntimeSource": sha}) + "\n", encoding="utf-8")
+    evidence.write_text(json.dumps({"status": "passed", "deployedRuntimeSha": sha}) + "\n", encoding="utf-8")
     interaction.write_text(json.dumps({
         "status": "passed", "mode": "fixture", "submissionEligible": False,
         "expectedRuntimeSha": sha, "publicUrl": DEFAULT_URL,
@@ -590,6 +647,37 @@ def self_test() -> int:
         allow_fixture=True,
     )
     verify_existing(root / "final.manifest.json", root / "final.qa.json", allow_fixture=True)
+    original_evidence = evidence.read_bytes()
+    mutation = threading.Timer(
+        1.0,
+        lambda: evidence.write_text(
+            json.dumps({"status": "passed", "deployedRuntimeSha": sha, "changedDuringCompose": True}) + "\n",
+            encoding="utf-8",
+        ),
+    )
+    mutation.start()
+    try:
+        try:
+            compose(
+                base_video=base, live_video=live, interaction_manifest=interaction,
+                evidence_manifest=evidence, srt=srt, output_srt=root / "drift-final.srt",
+                thumbnail=thumbnail, output=root / "drift-final.mp4",
+                manifest_path=root / "drift-final.manifest.json", qa_path=root / "drift-final.qa.json",
+                scratch=root / "drift-scratch", expected_sha=sha, expected_url=DEFAULT_URL,
+                overlay_start=1, overlay_end=7, replace=False, allow_fixture=True,
+            )
+        except GateError as exc:
+            require(
+                "CAPTURE_REVIEW changed after validation while the final was composed" in str(exc),
+                f"unexpected evidence-drift rejection: {exc}",
+            )
+        else:
+            raise GateError("compositor accepted CAPTURE_REVIEW bytes changed after validation")
+        require(not (root / "drift-final.mp4").exists(),
+                "evidence drift must fail before promoting an unbound final video")
+    finally:
+        mutation.cancel()
+        evidence.write_bytes(original_evidence)
     print("real-motion compositor self-test: PASS · 1080p/30fps · genuine frame diversity · silent AAC · SRT sync")
     return 0
 

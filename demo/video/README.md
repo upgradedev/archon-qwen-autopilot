@@ -7,7 +7,8 @@ current screenshots or deployment proof.
 
 The canonical shot list and claim lock are in
 [`../VIDEO_SCRIPT.md`](../VIDEO_SCRIPT.md). Capture every live scene again from the
-final deployed commit, store raw material only in ignored `demo/.private-captures/`
+exact deployed runtime through the canonical gate started at the clean public
+capture-source HEAD, store raw material only in ignored `demo/.private-captures/`
 or `.artifacts/`, and place the reviewed sanitized render at:
 
 ```text

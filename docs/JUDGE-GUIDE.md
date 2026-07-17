@@ -20,8 +20,8 @@ repository file, or public URL.
 - **Security boundary:** [`../SECURITY.md`](../SECURITY.md) states the threat model,
   enforced invariants, credential handling, and honest residual risks.
 - **Exact release proof:** [`../demo/BUILD_RECORDING.md`](../demo/BUILD_RECORDING.md)
-  distinguishes source target, deployed application SHA, submission HEAD, and
-  exercised runtime model IDs.
+  distinguishes the deployed runtime SHA, clean public capture-source HEAD, later
+  final submitted HEAD, and exercised runtime model IDs.
 
 ## 90-second judge path
 

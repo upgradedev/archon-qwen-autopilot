@@ -10,12 +10,18 @@ printed or committed.
 > Autopilot container is bound to **`127.0.0.1:9100`**, not a public security-group
 > port.
 >
-> **Exact application release verified 2026-07-16:**
-> [`203f159df25f825a0b994a2f8a4d2c0892b45390`](https://github.com/upgradedev/archon-qwen-autopilot/commit/203f159df25f825a0b994a2f8a4d2c0892b45390).
-> Project-contained exact-deploy attempt 23 completed with Alibaba Cloud Assistant
-> terminal status `Success`, exit code `0`, the SHA-bound application marker, and
-> the aggregate `EXACT_DEPLOY_SUCCESS` marker. The release controller checked out
-> that immutable GitHub SHA, built the production image, attested a byte-stable raw
+> **Exact deployed runtime release verified 2026-07-17 Europe/Athens
+> (`2026-07-16T23:53:18Z`):**
+> [`030950e9b1e2353ee64f422ad050feb9733745bc`](https://github.com/upgradedev/archon-qwen-autopilot/commit/030950e9b1e2353ee64f422ad050feb9733745bc).
+> Project-contained Alibaba Cloud Assistant attempt 46 passed its strict
+> describe-only preflight, DryRun, and Once invocation with terminal `Success` and
+> Once exit code `0`. Its closed-schema status is SHA-bound to the exact compact
+> controller observation (`c84be0cdedc5f107cbceefada3ecf3751a5581df97ac5a80ccc2545a8123063f`),
+> which records recognized canonical output, zero dropped output, no remote failure,
+> and exactly two intended `RunCommand` submissions: a non-mutating DryRun followed
+> by the single Once execution. The SHA-pinned remote
+> release script checked out that immutable GitHub SHA, built the production image,
+> attested a byte-stable raw
 > `.env`, filtered every override-owned runtime key from the base env file, and
 > proved each authoritative runtime value appeared exactly once in both the
 > non-published staging and final containers. It then bootstrapped the dedicated
@@ -25,14 +31,16 @@ printed or committed.
 > also returned `200` over valid TLS. The redacted deployment record is retained only
 > in this project's ignored `.artifacts/` evidence directory.
 >
-> Exact-deploy attempt 23 exercised a `text-embedding-v4` deep probe and a multi-step
+> Exact-deploy attempt 46 exercised a `text-embedding-v4` deep probe and a multi-step
 > `qwen-plus` JSON intake decision that stopped at `PENDING`. The canary was rejected
 > through the authenticated human gate and exactly its work item and vendor-memory
-> row were removed. A separate post-deploy media canary must exercise and
-> response-bind `qwen-vl-max` document extraction before final screenshots/video are
-> accepted; configuration alone is never substituted for an exercised model claim.
-> A later docs/media-only submission HEAD may differ from the deployed application
-> SHA and must be labelled separately. See
+> row were removed. A separate authenticated post-deploy submission smoke also
+> response-bound a one-page `qwen-vl-max` extraction and a `qwen-plus` proposal before
+> rejecting its canary. The canonical media capture must freshly exercise those paths
+> again; configuration alone is never substituted for an exercised model claim.
+> The **deployed runtime SHA** above, the later clean public **capture-source HEAD**,
+> and the still-later **final submitted HEAD** after media/publication commits are
+> three distinct identities and must always be labelled separately. See
 > [`../demo/BUILD_RECORDING.md`](../demo/BUILD_RECORDING.md).
 
 ## Current production topology

@@ -2,8 +2,9 @@
 
 Target: **2:35–2:50**, hard maximum `2:59`. The renderer may use short micro-cuts
 inside a beat, but the story has nine ideas only. Every screenshot/capture must come
-from the final deployed commit; obsolete pre-auth UI captures were removed and are
-not permitted as renderer inputs or gallery evidence.
+from the exact deployed runtime through the canonical gate started at the clean public
+capture-source HEAD; obsolete pre-auth UI captures were removed and are not permitted
+as renderer inputs or gallery evidence.
 
 | Beat | Target | What judges see | Narration job |
 |---|---:|---|---|
@@ -14,7 +15,7 @@ not permitted as renderer inputs or gallery evidence.
 | 5 · Correction changes behavior | 1:11–1:34 | Guided synthetic challenge: baseline €3,000 → amend €5,000 to €3,000 → re-bill/control comparison | Hero innovation: re-bill €5,000 → `flag_for_review`; negative control €3,000 → `draft_payment`. Same live routes, no preloaded answer. |
 | 6 · Evidence, not hype | 1:34–1:53 | Workflow metrics + frozen eval artifacts | State exactly: 22/22 tuned developer-labelled offline regression; a fixed 12-case synthetic workflow model with modeled—not observed—review time/checkpoints; 16 original hash-locked vision fixtures. No candidate model was promoted. |
 | 7 · Structural safety | 1:53–2:14 | Injection invoice, surfaced warning, model/MCP catalog with execution verbs crossed out | The model and four-tool MCP surface cannot approve/amend/reject/pay. Injection can influence a proposal, never autonomously execute. Human gate remains. |
-| 8 · Alibaba/Qwen proof | 2:14–2:34 | Hash-bound safe crop of the genuine shared ECS host + Autopilot-specific exact-SHA binding, `/health`, `/ready`, one actual decider canary and one vision extraction | Label the shared-host context honestly and bind Autopilot through its exact deploy-controller markers and runtime canaries. Label `DEPLOYED APP SHA` separately from a later docs/media-only `SUBMISSION HEAD`. Show `qwen-plus` and `qwen-vl-max`; no candidate model was promoted. |
+| 8 · Alibaba/Qwen proof | 2:14–2:34 | Hash-bound safe crop of the genuine shared ECS host + Autopilot-specific exact-SHA binding, `/health`, `/ready`, one actual decider canary and one vision extraction | Label the shared-host context honestly and bind Autopilot through its deployed runtime SHA, hash-bound compact Cloud Assistant sentinel, and fresh runtime canaries. Label `DEPLOYED RUNTIME SHA` separately from `CAPTURE-SOURCE HEAD`; link the later `FINAL SUBMITTED HEAD` outside this pre-commit proof. Show `qwen-plus` and `qwen-vl-max`; no candidate model was promoted. |
 | 9 · Close | 2:34–2:48 | Live URL, repo, MIT, Track 4, four evidence numbers | “Bounded where judgment helps; deterministic and human-controlled where money moves.” |
 
 ## Claim lock
@@ -28,15 +29,15 @@ not permitted as renderer inputs or gallery evidence.
   are configurable real transports behind approval.
 - Do not mention or link another submission as a product foundation.
 - Do not call historical release `321b6c5…` the final deployment after later runtime
-  changes. Record and show the newly exact-deployed application SHA.
+  changes. Record and show the exact deployed runtime SHA.
 
 ## Build and acceptance
 
 Canonical rights-safe real-motion publication path:
 
 ```bash
-node demo/media-tools/record-live-motion.cjs --expected-sha 203f159df25f825a0b994a2f8a4d2c0892b45390 --capture-review demo/gallery/CAPTURE_REVIEW.json --replace
-python demo/media-tools/build-real-motion-submission.py --expected-sha 203f159df25f825a0b994a2f8a4d2c0892b45390 --replace
+node demo/media-tools/record-live-motion.cjs --expected-sha 030950e9b1e2353ee64f422ad050feb9733745bc --capture-review demo/gallery/CAPTURE_REVIEW.json --replace
+python demo/media-tools/build-real-motion-submission.py --expected-sha 030950e9b1e2353ee64f422ad050feb9733745bc --replace
 python demo/media-tools/compose_real_motion_video.py --verify-only
 ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 demo/final-media/autopilot-demo.mp4
 ```

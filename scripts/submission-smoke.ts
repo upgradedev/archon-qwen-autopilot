@@ -1,7 +1,7 @@
 // Operator-only post-deploy canary. It exercises the actual deployed Qwen-VL
 // extraction and Qwen tool loop, proves the result stops at PENDING, then rejects
 // the canary through the authenticated gate. No credential or raw document data is
-// printed or persisted. Run only against the final deployed revision.
+// printed or persisted. Run only against the exact deployed runtime revision.
 
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";

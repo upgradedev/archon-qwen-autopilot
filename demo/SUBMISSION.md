@@ -96,7 +96,7 @@ presented as newly authored evidence.
 **Alibaba Cloud proof:** the required code proof is the DashScope OpenAI-compatible
 client (base URL + Qwen instantiation) in
 [`src/qwen/client.ts`](https://github.com/upgradedev/archon-qwen-autopilot/blob/main/src/qwen/client.ts);
-the public demo video and gallery proof show the final release's sanitized
+the public demo video and gallery proof show the deployed runtime release's sanitized
 app-specific identity, exact release provenance, readiness, decision canary, and
 vision canary. Devpost uses the video's unrestricted Public hosted URL, not a
 repository blob link.

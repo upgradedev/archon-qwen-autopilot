@@ -33,7 +33,7 @@ digital silence, SRT bounds, evidence hashes and independent post-build re-verif
 The exact deployed Autopilot runtime is already locked:
 
 ```powershell
-$sha = '203f159df25f825a0b994a2f8a4d2c0892b45390'
+$sha = '030950e9b1e2353ee64f422ad050feb9733745bc'
 
 node demo/media-tools/record-live-motion.cjs `
   --expected-sha $sha `
@@ -53,6 +53,11 @@ It records the exact relevant subset chosen in that run and independently applie
 the same policy to the visible public preview. The process view must also show
 “isolated preview—nothing persisted” and the explicit absence of
 approve/amend/reject controls. No durable reviewer item is created.
+The final builder also requires `CAPTURE_REVIEW` to hash-bind all six renderer PNGs
+and `judge-architecture.jpg`, copies those validated bytes into a unique session-owned
+snapshot, and points the caption renderer only at that snapshot. It rechecks the
+snapshot after rendering and the canonical evidence set after composition, so a
+concurrent pathname change cannot enter the shipped pixels or final manifest.
 It builds an action-aware highlight no longer than the canonical nine-second overlay:
 an action-centered segment (one-second pre-roll through 1.25-second post-click) retains
 the synthetic entry/click, while the final four raw seconds retain the completed proposal

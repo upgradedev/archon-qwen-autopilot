@@ -29,6 +29,7 @@ const PRIVATE_ROOT = path.join(ROOT, 'demo', '.private-captures');
 const RELEASE_DIR = path.join(PRIVATE_ROOT, 'release');
 const FINAL_DIR = path.join(ROOT, 'demo', 'final-media');
 const GALLERY_DIR = path.join(ROOT, 'demo', 'gallery');
+const ARCHITECTURE_PATH = path.join(FINAL_DIR, 'judge-architecture.jpg');
 const REVIEW_MANIFEST_PATH = path.join(GALLERY_DIR, 'CAPTURE_REVIEW.json');
 const ALIBABA_REDACTION_PROFILE_PATH = path.join(__dirname, 'alibaba-proof-redaction.json');
 const FIXED_REPOSITORY = 'upgradedev/archon-qwen-autopilot';
@@ -79,6 +80,41 @@ const ALLOWED_TRACE_TOOLS = Object.freeze([
 const REQUIRED_CORE_TRACE_TOOLS = Object.freeze(['recall_vendor_history', 'validate_invoice']);
 const GET_TRANSPORT_RETRY_DELAYS_MS = Object.freeze([250, 500, 1_000, 2_000]);
 const SHA_RE = /^[0-9a-f]{40}$/;
+const SHA256_RE = /^[0-9a-f]{64}$/;
+const CLOUD_ASSISTANT_SENTINEL_SCHEMA = 'cloud-assistant-sentinel-v1';
+const CLOUD_ASSISTANT_SAFE_OUTPUT_KEYS = Object.freeze([
+  'ok',
+  'confirmationAccepted',
+  'configurationValid',
+  'describeOnlyPreflight',
+  'matchedInstanceCount',
+  'exactAddressMatch',
+  'running',
+  'cloudAssistantRecordCount',
+  'cloudAssistantAvailable',
+  'dryRunSubmitted',
+  'dryRunSucceeded',
+  'dryRunTerminalStatus',
+  'dryRunExitCode',
+  'dryRunOutputEmpty',
+  'dryRunResultCount',
+  'dryRunReportedTotalCount',
+  'sameCommandContent',
+  'onceSubmitted',
+  'onceSucceeded',
+  'onceTerminalStatus',
+  'onceExitCode',
+  'onceResultCount',
+  'onceReportedTotalCount',
+  'remoteFailureStage',
+  'recognizedOutput',
+  'droppedOutputCount',
+  'mutationSubmissionCount',
+  'mutationRequestAttemptCount',
+  'describeRequestAttemptCount',
+  'invocationPollCount',
+  'failureCode',
+]);
 
 function fail(message) {
   throw new Error(message);
@@ -250,6 +286,40 @@ function canonicalPathIdentity(value) {
   return os.platform() === 'win32' ? resolved.toLowerCase() : resolved;
 }
 
+function immutableProjectFile(file, label, options = {}) {
+  const resolved = insideRepo(file, label, { mustExist: true });
+  const canonicalRoot = fs.realpathSync.native(ROOT);
+  const canonical = fs.realpathSync.native(resolved);
+  assert.equal(
+    canonicalPathIdentity(resolved),
+    canonicalPathIdentity(canonical),
+    `${label} path and every ancestor must be canonical and non-symlinked`,
+  );
+  const relative = path.relative(canonicalRoot, canonical);
+  assert.ok(
+    relative && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative),
+    `${label} canonical target must stay inside this repository`,
+  );
+
+  const source = immutableRegularFile(canonical, label, options);
+  const afterCanonical = fs.realpathSync.native(resolved);
+  assert.equal(
+    canonicalPathIdentity(afterCanonical),
+    canonicalPathIdentity(canonical),
+    `${label} canonical target changed while it was being read`,
+  );
+  const afterPathStats = fs.statSync(afterCanonical, { bigint: true });
+  const fingerprint = (stats) => [
+    stats.dev, stats.ino, stats.nlink, stats.size, stats.mtimeNs, stats.ctimeNs,
+  ];
+  assert.deepEqual(
+    fingerprint(afterPathStats),
+    fingerprint(source.stats),
+    `${label} pathname no longer identifies the descriptor-read file`,
+  );
+  return { ...source, path: canonical };
+}
+
 function immutableRegularFile(file, label, { minBytes = 1, maxBytes = Number.MAX_SAFE_INTEGER } = {}) {
   const noFollow = Number.isInteger(fs.constants.O_NOFOLLOW) ? fs.constants.O_NOFOLLOW : 0;
   const descriptor = fs.openSync(file, fs.constants.O_RDONLY | noFollow);
@@ -386,6 +456,94 @@ function exactSha(value, label) {
   return sha;
 }
 
+function exactObjectKeys(value, expectedKeys, label) {
+  assert.ok(value && typeof value === 'object' && !Array.isArray(value), `${label} must be an object`);
+  assert.deepEqual(
+    Object.keys(value).sort(),
+    [...expectedKeys].sort(),
+    `${label} must contain exactly the documented safe fields`,
+  );
+  return value;
+}
+
+function parseCloudAssistantSentinel(status, output, outputBytes, expectedSha) {
+  exactObjectKeys(status, [
+    'schema',
+    'attempt',
+    'status',
+    'exitCode',
+    'terminal',
+    'outputCaptured',
+    'projectContained',
+    'skipAutopilotDeploy',
+    'autopilotSha',
+    'outputSha256',
+    'expectedSafeOutput',
+  ], 'Cloud Assistant sentinel status');
+  assert.equal(status.schema, CLOUD_ASSISTANT_SENTINEL_SCHEMA, 'unsupported release status schema');
+  assert.ok(Number.isSafeInteger(status.attempt) && status.attempt > 0,
+    'Cloud Assistant sentinel attempt must be a positive safe integer');
+
+  const declaredOutputSha256 = String(status.outputSha256 || '').trim();
+  assert.match(declaredOutputSha256, SHA256_RE,
+    'Cloud Assistant sentinel outputSha256 must be one lowercase SHA-256 digest');
+  assert.equal(sha256Bytes(outputBytes), declaredOutputSha256,
+    'Cloud Assistant sentinel status is not hash-bound to the exact release output');
+
+  let observed;
+  try { observed = JSON.parse(output); }
+  catch (error) { fail(`Cloud Assistant sentinel output is not valid JSON: ${error.message}`); }
+  exactObjectKeys(observed, CLOUD_ASSISTANT_SAFE_OUTPUT_KEYS, 'Cloud Assistant sentinel output');
+  exactObjectKeys(status.expectedSafeOutput, CLOUD_ASSISTANT_SAFE_OUTPUT_KEYS,
+    'Cloud Assistant sentinel expectedSafeOutput');
+  assert.deepEqual(observed, status.expectedSafeOutput,
+    'Cloud Assistant sentinel output differs from the exact safe observation recorded by its status');
+
+  const expectedSemantics = {
+    ok: true,
+    confirmationAccepted: true,
+    configurationValid: true,
+    describeOnlyPreflight: true,
+    matchedInstanceCount: 1,
+    exactAddressMatch: true,
+    running: true,
+    cloudAssistantRecordCount: 1,
+    cloudAssistantAvailable: true,
+    dryRunSubmitted: true,
+    dryRunSucceeded: true,
+    dryRunTerminalStatus: 'Success',
+    dryRunExitCode: null,
+    dryRunOutputEmpty: true,
+    dryRunResultCount: 1,
+    dryRunReportedTotalCount: 0,
+    sameCommandContent: true,
+    onceSubmitted: true,
+    onceSucceeded: true,
+    onceTerminalStatus: 'Success',
+    onceExitCode: 0,
+    onceResultCount: 1,
+    onceReportedTotalCount: 0,
+    remoteFailureStage: null,
+    recognizedOutput: true,
+    droppedOutputCount: 0,
+    mutationSubmissionCount: 2,
+    mutationRequestAttemptCount: 2,
+    failureCode: null,
+  };
+  for (const [field, expected] of Object.entries(expectedSemantics)) {
+    assert.deepEqual(observed[field], expected,
+      `Cloud Assistant sentinel output has an invalid ${field} observation`);
+  }
+  assert.ok(Number.isSafeInteger(observed.describeRequestAttemptCount)
+      && observed.describeRequestAttemptCount >= 3,
+    'Cloud Assistant sentinel describeRequestAttemptCount must prove preflight and both terminal polls');
+  assert.ok(Number.isSafeInteger(observed.invocationPollCount) && observed.invocationPollCount >= 2,
+    'Cloud Assistant sentinel invocationPollCount must include DryRun and Once polling');
+
+  const controllerSha = exactSha(status.autopilotSha, 'Cloud Assistant sentinel autopilotSha');
+  assert.equal(controllerSha, expectedSha, 'expected SHA and Cloud Assistant sentinel SHA differ');
+}
+
 function canonicalReleaseWorkflows(rawValue = process.env.REQUIRED_RELEASE_WORKFLOWS) {
   const configured = String(rawValue || '').trim()
     ? String(rawValue).split(',').map((name) => name.trim()).filter(Boolean)
@@ -456,10 +614,26 @@ function parseReleaseEvidence({
     ['DEPLOY_STATE', deployedStatePath],
   ]) insideRepo(file, label, { mustExist: true });
 
-  const expectedSha = exactSha(fs.readFileSync(expectedShaPath, 'utf8'), 'expected release SHA file');
-  const statusText = secretSafeText(fs.readFileSync(statusPath, 'utf8'), 'release status', reviewerToken);
-  const output = secretSafeText(fs.readFileSync(outputPath, 'utf8'), 'release output', reviewerToken);
-  const deployState = secretSafeText(fs.readFileSync(deployedStatePath, 'utf8'), 'DEPLOY_STATE', reviewerToken);
+  // Parse and hash the same descriptor-bound bytes. Re-reading a pathname for
+  // the hash would leave a race where a local path swap could validate bytes
+  // other than the ones whose JSON semantics were inspected.
+  const expectedShaSource = immutableProjectFile(expectedShaPath, 'expected release SHA file', {
+    minBytes: 41,
+    maxBytes: 42,
+  });
+  const statusSource = immutableProjectFile(statusPath, 'release status', {
+    maxBytes: 64 * 1024,
+  });
+  const outputSource = immutableProjectFile(outputPath, 'release output', {
+    maxBytes: 512 * 1024,
+  });
+  const deployStateSource = immutableProjectFile(deployedStatePath, 'DEPLOY_STATE', {
+    maxBytes: 256 * 1024,
+  });
+  const expectedSha = exactSha(expectedShaSource.bytes.toString('utf8'), 'expected release SHA file');
+  const statusText = secretSafeText(statusSource.bytes.toString('utf8'), 'release status', reviewerToken);
+  const output = secretSafeText(outputSource.bytes.toString('utf8'), 'release output', reviewerToken);
+  const deployState = secretSafeText(deployStateSource.bytes.toString('utf8'), 'DEPLOY_STATE', reviewerToken);
   let status;
   try { status = JSON.parse(statusText); } catch (error) { fail(`release status is not valid JSON: ${error.message}`); }
 
@@ -472,38 +646,45 @@ function parseReleaseEvidence({
   const controllerSha = exactSha(status.autopilotSha, 'deploy controller autopilotSha');
   assert.equal(controllerSha, expectedSha, 'expected SHA and deploy controller SHA differ');
 
-  for (const marker of [
-    `EXACT_CHECKOUT_OK app=autopilot sha=${expectedSha}`,
-    `EXACT_APP_DEPLOY_OK app=autopilot sha=${expectedSha}`,
-    `autopilot=${expectedSha}`,
-  ]) assert.ok(output.includes(marker), `release output is missing exact marker: ${marker}`);
-  assert.ok(/EXACT_DEPLOY_SUCCESS\b/.test(output), 'release output is missing EXACT_DEPLOY_SUCCESS');
-  assert.ok(
-    /raw runtime \.env attested and override-owned keys materialized exactly once/i.test(output),
-    'release output is missing the runtime env singleton proof',
-  );
-  assert.ok(
-    /non-published, fail-closed exact image\/config passed health, DB readiness, and metered Qwen readiness/i.test(output),
-    'release output is missing non-published health/deep-readiness evidence',
-  );
-  assert.ok(
-    /health, DB\/security readiness, and metered live Qwen readiness passed/i.test(output),
-    'release output is missing final health/deep-readiness evidence',
-  );
-  assert.ok(
-    /unique pending identity verified; independent work-item \+ memory cleanup proved zero residue/i.test(output),
-    'release output is missing the authenticated decision and zero-residue canary',
-  );
+  if (Object.prototype.hasOwnProperty.call(status, 'schema')) {
+    parseCloudAssistantSentinel(status, output, outputSource.bytes, expectedSha);
+  } else {
+    // Backward-compatible adapter for the original exact-deploy controller. New
+    // Cloud Assistant evidence must use its explicit JSON sentinel schema above;
+    // it is never converted into synthetic legacy log markers.
+    for (const marker of [
+      `EXACT_CHECKOUT_OK app=autopilot sha=${expectedSha}`,
+      `EXACT_APP_DEPLOY_OK app=autopilot sha=${expectedSha}`,
+      `autopilot=${expectedSha}`,
+    ]) assert.ok(output.includes(marker), `release output is missing exact marker: ${marker}`);
+    assert.ok(/EXACT_DEPLOY_SUCCESS\b/.test(output), 'release output is missing EXACT_DEPLOY_SUCCESS');
+    assert.ok(
+      /raw runtime \.env attested and override-owned keys materialized exactly once/i.test(output),
+      'release output is missing the runtime env singleton proof',
+    );
+    assert.ok(
+      /non-published, fail-closed exact image\/config passed health, DB readiness, and metered Qwen readiness/i.test(output),
+      'release output is missing non-published health/deep-readiness evidence',
+    );
+    assert.ok(
+      /health, DB\/security readiness, and metered live Qwen readiness passed/i.test(output),
+      'release output is missing final health/deep-readiness evidence',
+    );
+    assert.ok(
+      /unique pending identity verified; independent work-item \+ memory cleanup proved zero residue/i.test(output),
+      'release output is missing the authenticated decision and zero-residue canary',
+    );
+  }
   assert.ok(deployState.includes(expectedSha), 'DEPLOY_STATE does not name the exact expected release SHA');
 
   const maxAgeHours = Number(process.env.MAX_RELEASE_EVIDENCE_AGE_HOURS || 72);
   assert.ok(Number.isFinite(maxAgeHours) && maxAgeHours > 0 && maxAgeHours <= 168, 'MAX_RELEASE_EVIDENCE_AGE_HOURS must be in (0,168]');
-  const newestMtime = Math.min(fs.statSync(statusPath).mtimeMs, fs.statSync(outputPath).mtimeMs);
+  const newestMtime = Math.min(Number(statusSource.stats.mtimeMs), Number(outputSource.stats.mtimeMs));
   const ageMs = Date.now() - newestMtime;
   assert.ok(ageMs >= -5 * 60_000, 'release evidence timestamp is implausibly in the future');
   assert.ok(ageMs <= maxAgeHours * 3_600_000, `release evidence is older than ${maxAgeHours} hours`);
 
-  const head = exactSha(git('rev-parse', 'HEAD'), 'submission HEAD');
+  const head = exactSha(git('rev-parse', 'HEAD'), 'capture-source HEAD');
   execFileSync('git', ['merge-base', '--is-ancestor', expectedSha, head], {
     cwd: ROOT, stdio: ['ignore', 'ignore', 'pipe'],
   });
@@ -513,14 +694,15 @@ function parseReleaseEvidence({
       cwd: ROOT, stdio: ['ignore', 'ignore', 'pipe'],
     });
     const remoteMain = exactSha(git('rev-parse', 'origin/main'), 'origin/main');
-    assert.equal(head, remoteMain, 'submission HEAD at capture must equal public origin/main');
+    assert.equal(head, remoteMain, 'capture-source HEAD must equal public origin/main');
   }
   return {
     expectedSha,
-    head,
-    statusSha256: sha256(statusPath),
-    outputSha256: sha256(outputPath),
+    captureSourceHead: head,
+    statusSha256: sha256Bytes(statusSource.bytes),
+    outputSha256: sha256Bytes(outputSource.bytes),
     statusAttempt: status.attempt,
+    evidenceSchema: status.schema || 'legacy-exact-deploy-markers-v1',
   };
 }
 
@@ -807,9 +989,9 @@ async function renderProof(context, file, evidence, alibaba) {
     .grid{display:grid;grid-template-columns:1fr 1fr;gap:22px}.card{border:1px solid #2b3644;border-radius:18px;background:rgba(17,25,37,.96);padding:25px 27px;min-height:225px}.card h2{margin:0 0 17px;font-size:23px;color:#dce7f2}.label{color:#8392a5;font:700 13px ui-monospace,monospace;letter-spacing:.1em;text-transform:uppercase;margin-top:13px}.value{font-size:20px;margin-top:6px}.value code,.sha{font:700 17px ui-monospace,monospace;color:#a7f3d0;word-break:break-all}.ci-row{display:grid;grid-template-columns:26px 1fr 125px 78px;gap:9px;align-items:center;border-top:1px solid #263140;padding:11px 0;font-size:16px}.ci-row:first-of-type{border-top:0}.ok{color:#34d399;font-size:21px}.ci-row code{color:#a7f3d0}.checks{display:grid;grid-template-columns:1fr 1fr;gap:11px}.check{background:#0b121c;border:1px solid #263140;border-radius:11px;padding:12px 14px}.check b{display:block;color:#6ee7b7;font-size:15px}.check span{display:block;color:#aab7c5;font:14px ui-monospace,monospace;margin-top:5px}.foot{margin-top:20px;display:flex;justify-content:space-between;color:#7f8d9c;font:13px ui-monospace,monospace}.redacted{color:#fbbf24}.console-crop{position:relative;width:100%;aspect-ratio:${alibaba.crop.width}/${alibaba.crop.height};overflow:hidden;border:1px solid #344256;border-radius:10px;background:#fff}.console-crop img{position:absolute;width:${sourceWidthPercent}%;height:auto;left:${sourceLeftPercent}%;top:${sourceTopPercent}%;max-width:none}.console-proof{margin-top:9px;color:#9fb0c2;font:12px/1.35 ui-monospace,monospace}.console-proof b{color:#a7f3d0}
   </style></head><body><main id="proof"><header class="head"><div><div class="eyebrow">Release provenance · exercised runtime · sanitized</div><h1 class="title">Alibaba Cloud + Qwen — exact release proof</h1></div><div class="badge">ALL GATES VERIFIED</div></header>
   <section class="grid">
-    <article class="card"><h2>1 · Exact source and deployment identity</h2><div class="label">Deploy-controller application SHA</div><div class="value sha">${evidence.deployedSha}</div><div class="label">Public source HEAD at capture</div><div class="value sha">${evidence.head}</div><div class="label">Binding</div><div class="value">Exact checkout + exact deploy + terminal success markers; evidence hashes retained privately.</div></article>
+    <article class="card"><h2>1 · Exact source and deployment identity</h2><div class="label">Deployed runtime SHA</div><div class="value sha">${evidence.deployedRuntimeSha}</div><div class="label">Capture-source HEAD · public origin/main</div><div class="value sha">${evidence.captureSourceHead}</div><div class="label">Binding</div><div class="value">${escapeHtml(evidence.releaseEvidenceSchema)} · SHA-bound terminal controller status + exact output hash; evidence retained project-locally.</div></article>
     <article class="card"><h2>2 · Immutable GitHub gates</h2>${rows}</article>
-    <article class="card"><h2>3 · Genuine Alibaba ECS console + exact app binding</h2><div class="console-crop"><img id="console-source" src="data:image/png;base64,${sourcePng}" alt="Sanitized crop of the genuine Alibaba Cloud ECS overview console"></div><div class="console-proof"><b>RAW ${escapeHtml(alibaba.rawSha256.slice(0, 12))}…</b> · PROFILE ${escapeHtml(alibaba.profileSha256.slice(0, 12))}… · Alibaba ECS ${FIXED_REGION}<br>Account, instance, address and resource identifiers excluded by the hash-bound crop. Autopilot identity is bound by the exact deploy SHA and terminal markers in card 1.</div></article>
+    <article class="card"><h2>3 · Genuine Alibaba ECS console + exact app binding</h2><div class="console-crop"><img id="console-source" src="data:image/png;base64,${sourcePng}" alt="Sanitized crop of the genuine Alibaba Cloud ECS overview console"></div><div class="console-proof"><b>RAW ${escapeHtml(alibaba.rawSha256.slice(0, 12))}…</b> · PROFILE ${escapeHtml(alibaba.profileSha256.slice(0, 12))}… · Alibaba ECS ${FIXED_REGION}<br>Account, instance, address and resource identifiers excluded by the hash-bound crop. Autopilot identity is bound by the deployed runtime SHA and terminal controller evidence in card 1.</div></article>
     <article class="card"><h2>4 · Fresh live runtime canaries</h2><div class="checks">
       <div class="check"><b>✓ /health</b><span>ok · pgvector</span></div><div class="check"><b>✓ /ready</b><span>DB + auth + Qwen</span></div>
       <div class="check"><b>✓ /ready/deep</b><span>${escapeHtml(evidence.embeddingModel)} · ${escapeHtml(evidence.deepDimensions)} dims</span></div><div class="check"><b>✓ unauth queue</b><span>401 fail-closed</span></div>
@@ -986,25 +1168,37 @@ function transactionalPromote(rawEntries, transactionDir, { failAfterInstall = -
   fs.rmSync(transactionDir, { recursive: true, force: true });
   fs.mkdirSync(transactionDir, { recursive: true });
   const seen = new Set();
-  const entries = rawEntries.map((raw, index) => {
-    const source = insideRepo(raw.source, 'promotion source', { mustExist: true });
-    const destination = insideRepo(raw.destination, 'promotion destination');
-    assert.ok(!seen.has(destination), `duplicate promotion destination: ${path.relative(ROOT, destination)}`);
-    seen.add(destination);
-    fs.mkdirSync(path.dirname(destination), { recursive: true });
-    const staged = path.join(transactionDir, `stage-${String(index).padStart(2, '0')}`);
-    const backup = path.join(transactionDir, `backup-${String(index).padStart(2, '0')}`);
-    fs.copyFileSync(source, staged);
-    assert.equal(sha256(staged), sha256(source), `staged promotion hash mismatch: ${path.basename(destination)}`);
-    return {
-      source,
-      destination,
-      staged,
-      backup,
-      hadOriginal: fs.existsSync(destination),
-      expectedSha256: sha256(source),
-    };
-  });
+  let entries;
+  try {
+    entries = rawEntries.map((raw, index) => {
+      const source = insideRepo(raw.source, 'promotion source', { mustExist: true });
+      const destination = insideRepo(raw.destination, 'promotion destination');
+      const expectedSha256 = String(raw.expectedSha256 || '').trim();
+      assert.match(expectedSha256, SHA256_RE,
+        `promotion entry has no reviewed expected SHA-256: ${path.basename(destination)}`);
+      assert.equal(sha256(source), expectedSha256,
+        `promotion source differs from reviewed manifest: ${path.basename(destination)}`);
+      assert.ok(!seen.has(destination), `duplicate promotion destination: ${path.relative(ROOT, destination)}`);
+      seen.add(destination);
+      fs.mkdirSync(path.dirname(destination), { recursive: true });
+      const staged = path.join(transactionDir, `stage-${String(index).padStart(2, '0')}`);
+      const backup = path.join(transactionDir, `backup-${String(index).padStart(2, '0')}`);
+      fs.copyFileSync(source, staged);
+      assert.equal(sha256(staged), expectedSha256,
+        `staged promotion hash differs from reviewed manifest: ${path.basename(destination)}`);
+      return {
+        source,
+        destination,
+        staged,
+        backup,
+        hadOriginal: fs.existsSync(destination),
+        expectedSha256,
+      };
+    });
+  } catch (error) {
+    fs.rmSync(transactionDir, { recursive: true, force: true });
+    throw error;
+  }
   const journalPath = path.join(transactionDir, 'transaction.json');
   const journal = (state) => ({
     schemaVersion: 1,
@@ -1062,15 +1256,23 @@ function buildReviewManifest({ release, baseUrl, proofEvidence, live, vision, no
     name,
     pngArtifactRecord(galleryFiles[name], path.join(GALLERY_DIR, name), [1500, 1000], { source, crop: 'none' }),
   ]));
+  const architecture = {
+    path: path.relative(ROOT, insideRepo(ARCHITECTURE_PATH, 'judge architecture', { mustExist: true })).replaceAll('\\', '/'),
+    sha256: sha256(ARCHITECTURE_PATH),
+    bytes: fs.statSync(ARCHITECTURE_PATH).size,
+    format: 'JPEG',
+    metadataKeys: [],
+  };
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     status: 'passed',
     project: FIXED_PROJECT,
     capturedAt: proofEvidence.capturedAt,
     publicUrl: baseUrl,
-    exactDeployedApplicationSha: release.expectedSha,
-    submissionHeadAtCapture: release.head,
+    deployedRuntimeSha: release.expectedSha,
+    captureSourceHead: release.captureSourceHead,
     releaseEvidence: {
+      schema: release.evidenceSchema,
       statusSha256: release.statusSha256,
       outputSha256: release.outputSha256,
       attempt: release.statusAttempt,
@@ -1089,8 +1291,8 @@ function buildReviewManifest({ release, baseUrl, proofEvidence, live, vision, no
     models,
     gates: {
       exactDeploymentEvidence: true,
-      publicSourceHeadAtCapture: true,
-      githubWorkflowsGreenForDeployedSha: true,
+      captureSourceHeadMatchesPublicMain: true,
+      githubWorkflowsGreenForDeployedRuntimeSha: true,
       workflowBoundSha: release.expectedSha,
       publicHealthReady: true,
       authenticatedDeepEmbeddingProbe: true,
@@ -1127,7 +1329,7 @@ function buildReviewManifest({ release, baseUrl, proofEvidence, live, vision, no
       correction: { rebill: 'flag_for_review', control: 'draft_payment', stored: true },
     },
     githubWorkflows: github.workflows,
-    artifacts: { finalMedia, gallery },
+    artifacts: { finalMedia, gallery, architecture },
     reviewerCredentialStored: false,
     vendorIdentifiersStored: false,
   };
@@ -1459,6 +1661,179 @@ async function selfTest() {
     requirePublicHead: false,
   });
   assert.equal(parsed.expectedSha, deployed);
+  assert.equal(parsed.evidenceSchema, 'legacy-exact-deploy-markers-v1');
+
+  const sentinelOutput = {
+    ok: true,
+    confirmationAccepted: true,
+    configurationValid: true,
+    describeOnlyPreflight: true,
+    matchedInstanceCount: 1,
+    exactAddressMatch: true,
+    running: true,
+    cloudAssistantRecordCount: 1,
+    cloudAssistantAvailable: true,
+    dryRunSubmitted: true,
+    dryRunSucceeded: true,
+    dryRunTerminalStatus: 'Success',
+    dryRunExitCode: null,
+    dryRunOutputEmpty: true,
+    dryRunResultCount: 1,
+    dryRunReportedTotalCount: 0,
+    sameCommandContent: true,
+    onceSubmitted: true,
+    onceSucceeded: true,
+    onceTerminalStatus: 'Success',
+    onceExitCode: 0,
+    onceResultCount: 1,
+    onceReportedTotalCount: 0,
+    remoteFailureStage: null,
+    recognizedOutput: true,
+    droppedOutputCount: 0,
+    mutationSubmissionCount: 2,
+    mutationRequestAttemptCount: 2,
+    describeRequestAttemptCount: 30,
+    invocationPollCount: 27,
+    failureCode: null,
+  };
+  const parseSentinelFixture = () => parseReleaseEvidence({
+    statusPath, outputPath, expectedShaPath: expectedPath,
+    deployedStatePath: deployStatePath,
+    reviewerToken: 'not-the-real-reviewer-credential',
+    requirePublicHead: false,
+  });
+  const writeSentinelFixture = ({
+    observed = sentinelOutput,
+    expected = sentinelOutput,
+    schema = CLOUD_ASSISTANT_SENTINEL_SCHEMA,
+  } = {}) => {
+    fs.writeFileSync(outputPath, `${JSON.stringify(observed, null, 2)}\n`, 'utf8');
+    fs.writeFileSync(statusPath, `${JSON.stringify({
+      schema,
+      attempt: 999,
+      status: 'Success',
+      exitCode: 0,
+      terminal: true,
+      outputCaptured: true,
+      projectContained: true,
+      skipAutopilotDeploy: false,
+      autopilotSha: deployed,
+      outputSha256: sha256(outputPath),
+      expectedSafeOutput: expected,
+    }, null, 2)}\n`, 'utf8');
+  };
+
+  writeSentinelFixture();
+  const sentinelParsed = parseSentinelFixture();
+  assert.equal(sentinelParsed.expectedSha, deployed);
+  assert.equal(sentinelParsed.outputSha256, sha256(outputPath));
+  assert.equal(sentinelParsed.evidenceSchema, CLOUD_ASSISTANT_SENTINEL_SCHEMA);
+
+  const openedOutputPath = `${outputPath}.opened`;
+  const replacementOutputPath = `${outputPath}.replacement`;
+  fs.writeFileSync(replacementOutputPath, `${JSON.stringify({
+    ...sentinelOutput,
+    onceExitCode: 1,
+  }, null, 2)}\n`, 'utf8');
+  const realOpenSync = fs.openSync;
+  let releasePathSwapTriggered = false;
+  fs.openSync = function swapReleasePathAfterDescriptorOpen(candidate, ...rest) {
+    const descriptor = realOpenSync.call(fs, candidate, ...rest);
+    if (!releasePathSwapTriggered && candidate === outputPath) {
+      releasePathSwapTriggered = true;
+      fs.renameSync(outputPath, openedOutputPath);
+      fs.renameSync(replacementOutputPath, outputPath);
+    }
+    return descriptor;
+  };
+  try {
+    assert.throws(
+      parseSentinelFixture,
+      /canonical target changed while it was being read|pathname no longer identifies the descriptor-read file/,
+      'a post-open release pathname swap must fail closed even when descriptor bytes remain immutable',
+    );
+  } finally {
+    fs.openSync = realOpenSync;
+    fs.rmSync(outputPath, { force: true });
+    fs.renameSync(openedOutputPath, outputPath);
+    fs.rmSync(replacementOutputPath, { force: true });
+  }
+  assert.equal(releasePathSwapTriggered, true,
+    'release evidence post-open pathname race fixture did not execute');
+
+  const hardlinkedStatusPath = path.join(fixtureRoot, 'hardlinked-release-status.json');
+  fs.linkSync(statusPath, hardlinkedStatusPath);
+  try {
+    assert.throws(
+      () => parseReleaseEvidence({
+        statusPath: hardlinkedStatusPath,
+        outputPath,
+        expectedShaPath: expectedPath,
+        deployedStatePath: deployStatePath,
+        reviewerToken: 'not-the-real-reviewer-credential',
+        requirePublicHead: false,
+      }),
+      /exactly one hard link/,
+      'a hard-linked release status must fail before supplying evidence',
+    );
+  } finally {
+    fs.unlinkSync(hardlinkedStatusPath);
+  }
+
+  const ancestorLink = path.join(fixtureRoot, 'release-ancestor-link');
+  let ancestorLinkCreated = false;
+  try {
+    fs.symlinkSync(fixtureDir, ancestorLink, os.platform() === 'win32' ? 'junction' : 'dir');
+    ancestorLinkCreated = true;
+    assert.throws(
+      () => parseReleaseEvidence({
+        statusPath: path.join(ancestorLink, path.basename(statusPath)),
+        outputPath,
+        expectedShaPath: expectedPath,
+        deployedStatePath: deployStatePath,
+        reviewerToken: 'not-the-real-reviewer-credential',
+        requirePublicHead: false,
+      }),
+      /path and every ancestor must be canonical and non-symlinked/,
+      'release evidence below a symlink or junction ancestor must fail closed',
+    );
+  } catch (error) {
+    if (!['EPERM', 'ENOSYS', 'ENOTSUP'].includes(error?.code)) throw error;
+  } finally {
+    if (ancestorLinkCreated) fs.unlinkSync(ancestorLink);
+  }
+
+  fs.writeFileSync(outputPath, `${JSON.stringify({
+    ...sentinelOutput,
+    describeRequestAttemptCount: sentinelOutput.describeRequestAttemptCount + 1,
+  }, null, 2)}\n`, 'utf8');
+  assert.throws(parseSentinelFixture, /not hash-bound to the exact release output/,
+    'a changed Cloud Assistant output must fail its status hash binding');
+
+  writeSentinelFixture({
+    observed: { ...sentinelOutput, describeRequestAttemptCount: 31 },
+  });
+  assert.throws(parseSentinelFixture, /differs from the exact safe observation/,
+    'every safe Cloud Assistant output field must exactly match the status observation');
+
+  writeSentinelFixture({
+    observed: { ...sentinelOutput, onceExitCode: 1 },
+    expected: { ...sentinelOutput, onceExitCode: 1 },
+  });
+  assert.throws(parseSentinelFixture, /invalid onceExitCode observation/,
+    'self-consistent but unsuccessful Cloud Assistant output must fail closed');
+
+  writeSentinelFixture({
+    observed: { ...sentinelOutput, undocumentedField: true },
+    expected: { ...sentinelOutput, undocumentedField: true },
+  });
+  assert.throws(parseSentinelFixture, /must contain exactly the documented safe fields/,
+    'Cloud Assistant output with an unvalidated field must fail closed');
+
+  writeSentinelFixture({ schema: 'cloud-assistant-sentinel-v2' });
+  assert.throws(parseSentinelFixture, /unsupported release status schema/,
+    'an unknown release evidence schema must not fall back to legacy marker parsing');
+  writeSentinelFixture();
 
   const queue = [
     { id: 'capture-1', invoice: { vendor: 'SELF-RUN-ONE' } },
@@ -1529,8 +1904,8 @@ async function selfTest() {
   fs.writeFileSync(destinationOne, 'old-one\n');
   fs.writeFileSync(destinationTwo, 'old-two\n');
   const promotionEntries = [
-    { source: sourceOne, destination: destinationOne },
-    { source: sourceTwo, destination: destinationTwo },
+    { source: sourceOne, destination: destinationOne, expectedSha256: sha256(sourceOne) },
+    { source: sourceTwo, destination: destinationTwo, expectedSha256: sha256(sourceTwo) },
   ];
   assert.throws(
     () => transactionalPromote(promotionEntries, path.join(promotionRoot, 'failed-transaction'), { failAfterInstall: 1 }),
@@ -1538,6 +1913,17 @@ async function selfTest() {
   );
   assert.equal(fs.readFileSync(destinationOne, 'utf8'), 'old-one\n', 'failed promotion must restore the first reviewed final');
   assert.equal(fs.readFileSync(destinationTwo, 'utf8'), 'old-two\n', 'failed promotion must preserve untouched reviewed finals');
+  fs.writeFileSync(sourceOne, 'mutated-after-manifest\n');
+  assert.throws(
+    () => transactionalPromote(promotionEntries, path.join(promotionRoot, 'source-drift-transaction')),
+    /promotion source differs from reviewed manifest/,
+    'a candidate changed after manifest construction must never be promoted',
+  );
+  assert.equal(fs.existsSync(path.join(promotionRoot, 'source-drift-transaction')), false,
+    'failed pre-promotion integrity checks must leave no transaction scratch');
+  assert.equal(fs.readFileSync(destinationOne, 'utf8'), 'old-one\n',
+    'candidate drift must not replace the reviewed canonical file');
+  fs.writeFileSync(sourceOne, 'new-one\n');
   transactionalPromote(promotionEntries, path.join(promotionRoot, 'successful-transaction'));
   assert.equal(fs.readFileSync(destinationOne, 'utf8'), 'new-one\n');
   assert.equal(fs.readFileSync(destinationTwo, 'utf8'), 'new-two\n');
@@ -1563,7 +1949,7 @@ async function selfTest() {
   assert.equal(fs.existsSync(recoveryDir), false, 'recovered transaction scratch must be removed');
 
   fs.rmSync(alibabaFixtureRoot, { recursive: true, force: true });
-  log('[self-test] source, PENDING-cleanup-zero, rollback, and interrupted-transaction guards passed');
+  log('[self-test] release schemas, source, PENDING-cleanup-zero, rollback, and interrupted-transaction guards passed');
 }
 
 async function main() {
@@ -1774,8 +2160,9 @@ async function main() {
     log('[capture] hostile-document warning + PENDING frame ready');
 
     proofEvidence = {
-      deployedSha: release.expectedSha,
-      head: release.head,
+      deployedRuntimeSha: release.expectedSha,
+      captureSourceHead: release.captureSourceHead,
+      releaseEvidenceSchema: release.evidenceSchema,
       workflows: github.workflows,
       ready: live.ready,
       decisionModel: normalItem.proposed.modelId,
@@ -1816,9 +2203,17 @@ async function main() {
   fs.copyFileSync(manifestCandidate, path.join(runDir, 'capture-manifest.json'));
 
   const promotionEntries = [
-    ...FINAL_NAMES.map((name) => ({ source: files[name], destination: path.join(FINAL_DIR, name) })),
-    ...Object.keys(GALLERY_MAP).map((name) => ({ source: galleryFiles[name], destination: path.join(GALLERY_DIR, name) })),
-    { source: manifestCandidate, destination: REVIEW_MANIFEST_PATH },
+    ...FINAL_NAMES.map((name) => ({
+      source: files[name],
+      destination: path.join(FINAL_DIR, name),
+      expectedSha256: manifest.artifacts.finalMedia[name].sha256,
+    })),
+    ...Object.keys(GALLERY_MAP).map((name) => ({
+      source: galleryFiles[name],
+      destination: path.join(GALLERY_DIR, name),
+      expectedSha256: manifest.artifacts.gallery[name].sha256,
+    })),
+    { source: manifestCandidate, destination: REVIEW_MANIFEST_PATH, expectedSha256: sha256(manifestCandidate) },
   ];
   transactionalPromote(promotionEntries, path.join(runDir, 'promotion-transaction'));
   log(`[promote] ${FINAL_NAMES.length} final artifacts + ${Object.keys(GALLERY_MAP).length} gallery variants + CAPTURE_REVIEW.json committed transactionally`);
