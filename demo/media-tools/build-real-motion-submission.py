@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One-command final Autopilot render: caption-only base + real live motion."""
+"""Build the verified silent Autopilot visual master consumed by the narration pass."""
 from __future__ import annotations
 
 import argparse

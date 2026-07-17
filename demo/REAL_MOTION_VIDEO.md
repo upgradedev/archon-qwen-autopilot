@@ -18,15 +18,18 @@ Run from the repository root before touching the live service:
 
 ```powershell
 node --check demo/media-tools/record-live-motion.cjs
-python -m py_compile demo/media-tools/compose_real_motion_video.py demo/media-tools/build-real-motion-submission.py
+python -m py_compile demo/media-tools/compose_real_motion_video.py demo/media-tools/build-real-motion-submission.py demo/media-tools/add_rights_safe_narration.py
 node demo/media-tools/record-live-motion.cjs --self-test
 python demo/media-tools/compose_real_motion_video.py --self-test
 ```
 
 The self-tests create only ignored, unmistakably labelled fixture artifacts below
 `.artifacts/final-video/`. They verify a real browser recording, 1920×1080 pixels,
-zero recorder audio streams, frame diversity, H.264/30 fps composition, decoded
-digital silence, SRT bounds, evidence hashes and independent post-build re-verification.
+zero recorder audio streams, frame diversity, H.264/30 fps composition, the verified
+silent intermediate, SRT bounds, evidence hashes and independent post-build re-verification.
+The production narration pass additionally requires 9/9 audible cue windows, bounded
+peak/RMS/activity, exact SRT text, an unchanged visual bitstream and a hash-locked
+public-domain-source voice.
 
 ## Final production run
 
@@ -43,7 +46,11 @@ python demo/media-tools/build-real-motion-submission.py `
   --expected-sha $sha `
   --replace
 
-python demo/media-tools/compose_real_motion_video.py --verify-only
+python demo/media-tools/add_rights_safe_narration.py `
+  --piper-python .artifacts/tts/venv/Scripts/python.exe `
+  --replace
+
+python demo/media-tools/add_rights_safe_narration.py --verify-only
 ```
 
 The recorder binds the exact `CAPTURE_REVIEW` bytes and requires its decision canary
@@ -58,10 +65,10 @@ and `judge-architecture.jpg`, copies those validated bytes into a unique session
 snapshot, and points the caption renderer only at that snapshot. It rechecks the
 snapshot after rendering and the canonical evidence set after composition, so a
 concurrent pathname change cannot enter the shipped pixels or final manifest.
-It builds an action-aware highlight no longer than the canonical nine-second overlay:
-an action-centered segment (one-second pre-roll through 1.25-second post-click) retains
-the synthetic entry/click, while the final four raw seconds retain the completed proposal
-and human-boundary hold. The compositor refuses
+It builds an action-aware highlight no longer than the canonical nine-second overlay.
+The selector retains an entry/click segment, an explicit streamed-evidence/completed-
+proposal segment, and the final four-second human-boundary hold, coalescing overlaps
+without dropping any required action. The compositor refuses
 any highlight longer than its 00:19–00:28 window and records that the entire live input
 was consumed; diversity alone cannot satisfy this boundary gate.
 
@@ -72,7 +79,15 @@ Final judge-facing artifacts:
 - `demo/final-media/autopilot-demo.real-motion.json`
 - `demo/final-media/autopilot-demo.qa.json`
 - `demo/final-media/autopilot-youtube-thumbnail.png`
+- `demo/media-tools/narration-script.json`
+- `demo/media-tools/narration-voice.lock.json`
 
-The MP4 has one locally generated silent AAC compatibility stream—no voice, TTS,
-music or captured microphone/system audio. The final video, subtitles, manifest, QA
-and thumbnail hashes must pass `--verify-only` immediately before upload.
+The MP4 has one locally synthesized narration stream and no music, microphone or
+captured system audio. Caption text and burned captions come from the same canonical
+nine-cue JSON; `speechText` may differ only by the guarded `Archon`/`Qwen`/`Alibaba`
+phonetic aliases. The voice is `en_US-norman-medium` at pinned revision
+`82999b670b06c78cabeb830d535b63a31cd0ca22`; its bundled model card identifies
+public-domain LibriVox recordings and training from scratch. The tracked lock binds
+the model, config, card and revision hashes; the engine/model cache remains ignored
+inside `.artifacts/`. The final video, subtitles, manifest, QA and thumbnail hashes
+must pass the narrated `--verify-only` immediately before upload.

@@ -28,6 +28,8 @@ const SHA_RE = /^[0-9a-f]{40}$/;
 const HIGHLIGHT_WINDOW_SECONDS = 9;
 const HIGHLIGHT_ACTION_PREROLL_SECONDS = 1;
 const HIGHLIGHT_ACTION_POSTROLL_SECONDS = 1.25;
+const HIGHLIGHT_EVIDENCE_PREROLL_SECONDS = 0.5;
+const HIGHLIGHT_EVIDENCE_POSTROLL_SECONDS = 0.5;
 const HIGHLIGHT_BOUNDARY_TAIL_SECONDS = 4;
 const TOUR_STORAGE_KEY = 'archon_autopilot_tour_v1';
 const TOUR_COMPLETED_VALUE = '1';
@@ -402,6 +404,44 @@ function segmentContains(segments, atSeconds) {
   return segments.some(([start, end]) => atSeconds >= start - 0.001 && atSeconds <= end + 0.001);
 }
 
+function coalesceSegments(segments) {
+  const ordered = [...segments].sort(([a], [b]) => a - b);
+  const merged = [];
+  for (const [start, end] of ordered) {
+    assert.ok(Number.isFinite(start) && Number.isFinite(end) && start < end,
+      'highlight source segment is invalid');
+    const previous = merged.at(-1);
+    if (previous && start <= previous[1] + 0.001) previous[1] = Math.max(previous[1], end);
+    else merged.push([start, end]);
+  }
+  return merged;
+}
+
+function selectHighlightSegments(duration, required) {
+  if (duration <= HIGHLIGHT_WINDOW_SECONDS + 1e-6) return [[0, duration]];
+
+  const [entry, click, streamedEvidence, completedBoundary] = required;
+  const interactionStart = Math.max(0, entry.atSeconds - HIGHLIGHT_ACTION_PREROLL_SECONDS);
+  const interactionEnd = Math.min(duration, click.atSeconds + HIGHLIGHT_ACTION_POSTROLL_SECONDS);
+  assert.ok(interactionStart < interactionEnd, 'invoice-entry/process-click segment is empty');
+
+  // The live Qwen response can complete just before browser screenshot/teardown
+  // overhead begins. Preserve that semantic moment explicitly instead of
+  // assuming it will always fall inside the final four-second hold.
+  const evidenceStart = Math.max(0,
+    Math.min(streamedEvidence.atSeconds, completedBoundary.atSeconds) - HIGHLIGHT_EVIDENCE_PREROLL_SECONDS);
+  const evidenceEnd = Math.min(duration,
+    Math.max(streamedEvidence.atSeconds, completedBoundary.atSeconds) + HIGHLIGHT_EVIDENCE_POSTROLL_SECONDS);
+  assert.ok(evidenceStart < evidenceEnd, 'streamed-evidence/completed-boundary segment is empty');
+
+  const boundaryStart = Math.max(0, duration - HIGHLIGHT_BOUNDARY_TAIL_SECONDS);
+  return coalesceSegments([
+    [interactionStart, interactionEnd],
+    [evidenceStart, evidenceEnd],
+    [boundaryStart, duration],
+  ]);
+}
+
 function createHighlight(raw, output, actions, { fixture = false } = {}) {
   const rawMedia = mediaSummary(raw);
   const duration = rawMedia.durationSeconds;
@@ -435,18 +475,7 @@ function createHighlight(raw, output, actions, { fixture = false } = {}) {
     assert.ok(action.atSeconds <= duration + 0.001, `${action.label} timestamp is outside the raw recording`);
   }
 
-  let sourceSegments;
-  if (duration <= HIGHLIGHT_WINDOW_SECONDS + 1e-6) {
-    sourceSegments = [[0, duration]];
-  } else {
-    const interactionStart = Math.max(0, entry.atSeconds - HIGHLIGHT_ACTION_PREROLL_SECONDS);
-    const interactionEnd = Math.min(duration, click.atSeconds + HIGHLIGHT_ACTION_POSTROLL_SECONDS);
-    assert.ok(interactionStart < interactionEnd, 'invoice-entry/process-click segment is empty');
-    const boundaryStart = Math.max(0, duration - HIGHLIGHT_BOUNDARY_TAIL_SECONDS);
-    sourceSegments = interactionEnd >= boundaryStart
-      ? [[interactionStart, duration]]
-      : [[interactionStart, interactionEnd], [boundaryStart, duration]];
-  }
+  const sourceSegments = selectHighlightSegments(duration, required);
   const retainedDuration = sourceSegments.reduce((total, [start, end]) => total + end - start, 0);
   assert.ok(retainedDuration <= HIGHLIGHT_WINDOW_SECONDS + 1e-6,
     'required interaction and completed-boundary footage cannot fit the canonical 9-second window');
@@ -478,6 +507,10 @@ function createHighlight(raw, output, actions, { fixture = false } = {}) {
     highlightWindowSeconds: HIGHLIGHT_WINDOW_SECONDS,
     selectionStrategy: 'required-action coverage plus completed-boundary tail',
     sourceSegments,
+    semanticEvidencePaddingSeconds: {
+      before: HIGHLIGHT_EVIDENCE_PREROLL_SECONDS,
+      after: HIGHLIGHT_EVIDENCE_POSTROLL_SECONDS,
+    },
     retainedDurationSeconds: Number(retainedDuration.toFixed(6)),
     requiredActionCoverage: required.map(({ label, atSeconds }) => ({ label, atSeconds, retained: true })),
     finalBoundaryTailSeconds: Number((finalSegment[1] - finalSegment[0]).toFixed(6)),
@@ -661,6 +694,24 @@ async function selfTest() {
     () => validateRelevantTraceTools(['recall_vendor_history', 'draft_payment'], 'unsafe self-test trace'),
     /non-read\/analyze trace step/,
   );
+  const separatedCompletionSegments = selectHighlightSegments(17, [
+    { label: 'invoice-entry', atSeconds: 2.6 },
+    { label: 'process-click', atSeconds: 3.3 },
+    { label: 'streamed-evidence', atSeconds: 11.95 },
+    { label: 'completed-boundary', atSeconds: 12.05 },
+  ]);
+  assert.ok(separatedCompletionSegments.length >= 2,
+    'self-test did not exercise separated semantic-completion footage');
+  for (const atSeconds of [2.6, 3.3, 11.95, 12.05]) {
+    assert.ok(segmentContains(separatedCompletionSegments, atSeconds),
+      `action-aware selector omitted self-test action at ${atSeconds}s`);
+  }
+  assert.ok(separatedCompletionSegments.reduce((total, [start, end]) => total + end - start, 0)
+      <= HIGHLIGHT_WINDOW_SECONDS,
+  'action-aware selector exceeded the canonical window in the separated-completion regression');
+  assert.ok(separatedCompletionSegments.at(-1)[1] === 17
+      && separatedCompletionSegments.at(-1)[0] <= 13,
+  'action-aware selector omitted the canonical final four-second hold');
   const evidence = path.join(root, 'CAPTURE_REVIEW.json');
   fs.writeFileSync(evidence, `${JSON.stringify({ status: 'passed', deployedRuntimeSha: expectedSha })}\n`);
   const manifest = await capture({ expectedSha, evidenceFile: evidence, baseUrl: DEFAULT_URL,

@@ -38,8 +38,8 @@ visible in at least one shot.
   Reject visible; do not click until the recording is rolling.
 - [ ] **Amend audit:** Decided view with proposed→approved argument diff and reviewer
   outcome.
-- [ ] **Correction learning:** guided panel after all three explicit steps: €5,000
-  re-bill → `flag_for_review`, €3,000 control → `draft_payment`.
+- [ ] **Correction learning:** guided panel after all three explicit steps: matching
+  re-bill → `flag_for_review`, corrected control → `draft_payment`.
 - [ ] **Measured workflow evidence:** `/impact-metrics` panel, preserving its no-ROI disclaimer.
 - [ ] **Injection visibility:** recognized attack banner + located match while the
   proposal remains PENDING. Avoid wording that claims universal detection.
@@ -112,10 +112,10 @@ signed-out publication checks.
   repo-contained counterbalanced artifact and confirm it says `promotion-pass`.
 - [ ] Require the real-motion builder's internal `CAPTION_ONLY=true` base: fixed
   168-second/30-fps beat windows, burned captions, measured English SRT, and locally
-  generated digital silence—no TTS or third-party music.
-- [ ] Watch the rendered MP4 from beginning to end with headphones and muted. In
-  caption-only mode, require intentional silence and no unexpected sound; in
-  narrated mode, require no clipped audio, silent ending, or drift. In either mode,
+  generated digital silence. Then require `add_rights_safe_narration.py --replace`
+  to add only the hash-locked local voice—no music or captured audio.
+- [ ] Watch the rendered MP4 from beginning to end with headphones and muted. Require
+  9/9 audible cues, no clipped audio, missing ending or drift. Also
   reject unreadable overlays, blank frames, stale numbers, or token flashes.
 - [ ] Verify duration with `ffprobe`; the automated publication safety gate is
   **strictly below 175 seconds**, leaving margin below the contest's `<3:00` rule.
@@ -129,7 +129,7 @@ signed-out publication checks.
   URL**—not a repository blob—as the Devpost video URL.
 - [ ] Retain and verify `autopilot-demo.en.srt`,
   `autopilot-demo.real-motion.json`, and `autopilot-demo.qa.json`; run
-  `python demo/media-tools/compose_real_motion_video.py --verify-only` and require
+  `python demo/media-tools/add_rights_safe_narration.py --verify-only` and require
   the recorded MP4/SRT/thumbnail/evidence hashes, nine cues, rights profile, genuine
   frame diversity, 1080p stream contract, and `<175s` duration to match.
 

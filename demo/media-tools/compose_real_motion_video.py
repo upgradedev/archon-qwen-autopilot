@@ -9,8 +9,10 @@ reviewer credential.
 
 Production inputs must be regular project-contained files.  The interaction
 manifest must bind the exact CAPTURE_REVIEW bytes, deployed runtime SHA, public origin and
-raw browser-video hash.  The final remains rights-safe: no TTS or third-party music;
-the compatibility AAC stream must decode to digital silence.
+raw browser-video hash. This compositor creates and verifies the silent evidence-bound
+intermediate. The canonical publication verifier also accepts the subsequent schema-v2
+local narration pass only when its public-domain-source voice lock, no-music/no-capture
+rights profile, audio metrics and exact artifact hashes all pass.
 """
 from __future__ import annotations
 
@@ -173,19 +175,31 @@ def frame_rate(value: str | None) -> float:
 
 
 def decoded_s16_peak(path: Path) -> int:
+    return decoded_s16_stats(path)["peak"]
+
+
+def decoded_s16_stats(path: Path) -> dict[str, Any]:
     raw = run([
         "ffmpeg", "-v", "error", "-i", str(path), "-map", "0:a:0", "-vn",
         "-ac", "2", "-ar", "48000", "-f", "s16le", "-"
-    ], "decode compatibility silence", binary=True)
+    ], "decode final audio", binary=True)
     content = bytes(raw)
     require(len(content) % 2 == 0, "decoded PCM byte count is not sample-aligned")
     if not content:
-        return 0
+        return {"peak": 0, "rms": 0.0, "nonSilentFraction": 0.0, "samples": 0}
     samples = array.array("h")
     samples.frombytes(content)
     if sys.byteorder != "little":
         samples.byteswap()
-    return max(abs(int(sample)) for sample in samples)
+    peak = max(abs(int(sample)) for sample in samples)
+    square_sum = sum(int(sample) * int(sample) for sample in samples)
+    non_silent = sum(1 for sample in samples if abs(int(sample)) >= 256)
+    return {
+        "peak": peak,
+        "rms": round(math.sqrt(square_sum / len(samples)), 3),
+        "nonSilentFraction": round(non_silent / len(samples), 6),
+        "samples": len(samples),
+    }
 
 
 def frame_hashes(path: Path, *, start: float = 0.0, duration: float | None = None) -> list[str]:
@@ -581,11 +595,56 @@ def verify_existing(manifest_path: Path, qa_path: Path, *, allow_fixture: bool =
     require(measured["width"] == 1920 and measured["height"] == 1080, "final is not 1920x1080")
     require(measured["videoCodec"] == "h264" and measured["pixelFormat"] == "yuv420p", "final is not H.264/yuv420p")
     require(abs(frame_rate(measured["averageFrameRate"]) - FPS) < 0.02, "final is not 30 fps")
-    require(measured["audioStreamCount"] == 1 and measured["audioCodec"] == "aac", "final lacks one AAC silence stream")
+    require(measured["audioStreamCount"] == 1 and measured["audioCodec"] == "aac", "final lacks one AAC audio stream")
     require(measured["audioSampleRate"] == 48000 and measured["audioChannels"] == 2,
-            "final silence stream is not 48 kHz stereo")
-    peak = decoded_s16_peak(final_video)
-    require(peak <= 8, f"final audio is not digital silence (decoded signed-16 peak {peak})")
+            "final audio stream is not 48 kHz stereo")
+    audio_stats = decoded_s16_stats(final_video)
+    peak = int(audio_stats["peak"])
+    rights = manifest.get("rightsProfile")
+    require(isinstance(rights, dict), "final manifest has no rights profile")
+    narrated = rights.get("voice") is True or rights.get("tts") is True
+    if narrated:
+        require(manifest.get("schemaVersion") == 2,
+                "narrated final must use real-motion manifest schema version 2")
+        require(rights.get("voice") is True and rights.get("tts") is True,
+                "narrated final rights profile must declare voice and TTS")
+        require(rights.get("thirdPartyMusic") is False and rights.get("capturedAudio") is False,
+                "narrated final must exclude third-party music and captured audio")
+        require(1_000 <= peak < 32_700, f"narrated final audio peak is implausible or clipped ({peak})")
+        require(float(audio_stats["rms"]) >= 350, "narrated final audio RMS is too low")
+        require(0.03 <= float(audio_stats["nonSilentFraction"]) <= 0.9,
+                "narrated final audio activity is implausible")
+        narration = manifest.get("narration")
+        require(isinstance(narration, dict), "narrated final has no narration provenance")
+        script_record = narration.get("script")
+        voice_lock_record = narration.get("voiceLock")
+        require(isinstance(script_record, dict) and isinstance(voice_lock_record, dict),
+                "narration provenance is missing script or voice-lock records")
+        narration_script = project_path(str(script_record.get("path") or ""), "narration script", exists=True)
+        voice_lock = project_path(str(voice_lock_record.get("path") or ""), "narration voice lock", exists=True)
+        require(script_record.get("sha256") == sha256_file(narration_script), "narration script hash drift")
+        require(voice_lock_record.get("sha256") == sha256_file(voice_lock), "narration voice-lock hash drift")
+        lock = read_json(voice_lock, "narration voice lock")
+        require(lock.get("outputRights", {}).get("thirdPartyMusic") is False,
+                "narration voice lock does not exclude third-party music")
+        require(lock.get("outputRights", {}).get("capturedAudio") is False,
+                "narration voice lock does not exclude captured audio")
+        qa_audio = qa.get("audio", {})
+        require(qa_audio.get("tts") is True and qa_audio.get("voice") is True
+                and qa_audio.get("music") is False and qa_audio.get("capturedAudio") is False,
+                "build-time QA narration rights differ from the manifest")
+        require(qa_audio.get("decodedPeakS16") == peak,
+                "build-time QA narration peak differs from re-measurement")
+        require(abs(float(qa_audio.get("decodedRmsS16", -1)) - float(audio_stats["rms"])) <= 0.01,
+                "build-time QA narration RMS differs from re-measurement")
+        require(abs(float(qa_audio.get("nonSilentFraction", -1))
+                    - float(audio_stats["nonSilentFraction"])) <= 0.000001,
+                "build-time QA narration activity differs from re-measurement")
+    else:
+        require(rights.get("voice") is False and rights.get("tts") is False
+                and rights.get("thirdPartyMusic") is False,
+                "silent final rights profile is incomplete")
+        require(peak <= 8, f"final audio is not digital silence (decoded signed-16 peak {peak})")
     srt_qa = validate_srt(subtitles, float(measured["durationSeconds"]))
     start = float(live_record.get("overlayStartSeconds"))
     end = float(live_record.get("overlayEndSeconds"))
@@ -607,6 +666,8 @@ def verify_existing(manifest_path: Path, qa_path: Path, *, allow_fixture: bool =
         "exactRuntimeSource": expected_sha,
         "durationSeconds": measured["durationSeconds"],
         "decodedPeakS16": peak,
+        "decodedRmsS16": audio_stats["rms"],
+        "audioMode": "rights-safe narrated TTS" if narrated else "digital silence",
         "subtitleCues": srt_qa["cues"],
         "liveFrameDiversity": live_motion,
         "shippedFrameDiversity": shipped_motion,
@@ -720,7 +781,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             print(
                 f"real-motion verify: PASS · {verified['durationSeconds']:.3f}s · "
-                f"silent peak {verified['decodedPeakS16']} · {verified['subtitleCues']} SRT cues · "
+                f"{verified['audioMode']} · peak {verified['decodedPeakS16']} · {verified['subtitleCues']} SRT cues · "
                 f"exact SHA {verified['exactRuntimeSource'][:12]}"
             )
             return 0
