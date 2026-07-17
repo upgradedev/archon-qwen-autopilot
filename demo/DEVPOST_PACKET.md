@@ -1,4 +1,4 @@
-# Archon Autopilot — Devpost draft packet
+# Archon Autopilot: Devpost draft packet
 
 This file is the field-by-field assembly sheet for the Qwen Cloud Hackathon entry.
 It is deliberately safe to commit: **never put the reviewer token, private contact
@@ -32,15 +32,15 @@ page so a human can inspect every field and consent to the rules.
 
 **Project name**
 
-> Archon Autopilot — Human-Gated AP Agent
+> Archon Autopilot: Human-Gated AP Agent
 
 **Tagline / elevator pitch**
 
-> Qwen reads invoices, recalls vendor history, and proposes an auditable action—then a structural human gate keeps money under human control.
+> Qwen does the invoice work and proposes one auditable action. A structural human gate keeps the consequential decision under human control.
 
 **Track**
 
-> Track 4 — Autopilot Agent
+> Track 4: Autopilot Agent
 
 **Primary category / problem**
 
@@ -84,10 +84,11 @@ Use this only if Devpost exposes a separate short-summary field:
 
 - If the form has one rich **Description** field, paste the body below the divider in
   [`SUBMISSION.md`](SUBMISSION.md).
-- If the form exposes the standard Devpost story sections, paste the matching English
-  sections from [`PROJECT_STORY.md`](PROJECT_STORY.md): **Inspiration**, **What it
-  does**, **How we built it**, **Challenges we ran into**, **Accomplishments that
-  we're proud of**, **What we learned**, and **What's next**.
+- If the form exposes separate story fields, paste the matching sections from
+  [`PROJECT_STORY.md`](PROJECT_STORY.md) in order: **The AP inbox was the real
+  starting point**, **The product stops where consequences begin**, **What enforces the
+  boundary**, **The parts that fought back**, **The proof points we care about**,
+  **What changed our minds while building**, and **The next useful version**.
 - Keep the first visible paragraph and the differentiator above the fold. Do not put
   CI totals before the product story.
 - Preview the rendered result. Repair broken lists, code fences, and relative image
@@ -99,7 +100,7 @@ Use this only if Devpost exposes a separate short-summary field:
 
 > `qwen-plus` drives a bounded multi-step function-calling loop over five side-effect-free read/analyze skills and four terminal proposal skills. `qwen-vl-max` extracts uploaded PDF, PNG, and JPEG invoices before they enter the same workflow. `text-embedding-v4` grounds duplicate and amount-anomaly checks in persistent pgvector vendor history. A local stdio MCP surface exposes exactly four proposal/read tools and no decision or execution capability. All three model paths use the DashScope OpenAI-compatible endpoint implemented in `src/qwen/client.ts` and `src/qwen/vision.ts`.
 
-**Proof of Alibaba Cloud deployment — required code link**
+**Proof of Alibaba Cloud deployment: required code link**
 
 > https://github.com/upgradedev/archon-qwen-autopilot/blob/main/src/qwen/client.ts
 
@@ -109,7 +110,7 @@ Use this only if Devpost exposes a separate short-summary field:
 
 **What was built during the submission period**
 
-> Not applicable — this is a new competition-period Track-4 product started 2026-07-04, after the 2026-05-26 submission-period start. It carries forward the Archon name and limited shared plumbing patterns from the separate MemoryAgent foundation (provider client, pgvector, health, and deployment conventions), not that entry's judged self-audit/resolution core. During the window we built the AP normalizer and validator, bounded Qwen tool loop, durable PENDING/approval state machine, correction feedback, AP sinks, narrower MCP/custom-skill surfaces, document intake, adversarial/evaluation suites, CI, submission artifacts, and Alibaba deployment. The two entries have separate repositories, demos, narratives, and track-specific functionality; shared context is disclosed rather than claimed as newly authored evidence.
+> This is a new competition-period Track-4 product started 2026-07-04, after the 2026-05-26 submission-period start. It carries forward the Archon name and limited shared plumbing patterns from the separate MemoryAgent foundation (provider client, pgvector, health, and deployment conventions), not that entry's judged self-audit/resolution core. During the window we built the AP normalizer and validator, bounded Qwen tool loop, durable PENDING/approval state machine, correction feedback, AP sinks, narrower MCP/custom-skill surfaces, document intake, adversarial/evaluation suites, CI, submission artifacts, and Alibaba deployment. The two entries have separate repositories, demos, narratives, and track-specific functionality; shared context is disclosed rather than claimed as newly authored evidence.
 
 **Multiple-entry uniqueness statement, if requested**
 
@@ -199,7 +200,7 @@ Replace bracketed values directly in Devpost; do not save them in Git.
 >
 > **Scope:** payment and specialist-review adapters are simulated. SMTP vendor reply and the fsynced append-only JSONL journal are configurable post-approval transports; UI success does not claim recipient delivery or a bank/ERP integration. The `22/22` result is a tuned developer-labelled deterministic regression, not live-Qwen accuracy.
 >
-> **Access help:** `[OPTIONAL_ACCESS_CONTACT — only in a confirmed non-public field]`
+> **Access help:** `[OPTIONAL_ACCESS_CONTACT]` (only in a confirmed non-public field)
 
 Before saving, inspect the resulting public preview logged out, then test the judge
 flow in a signed-out browser with no cached token. If the token appears anywhere
@@ -232,8 +233,8 @@ public repository intentionally does not guess or retain them.
 |---|---|
 | Submitter type | `[HUMAN CONFIRM: Individual / Team / Organization]` |
 | Organization name | Leave blank only if the confirmed submitter type is Individual/Team and no organization applies. |
-| Country of residence | `[HUMAN CONFIRM AND ENTER DIRECTLY]` — appears publicly in the gallery. |
-| Newly built or previously existing | **New** — the distinct Track-4 repository starts 2026-07-04; retain the shared-plumbing disclosure. |
+| Country of residence | `[HUMAN CONFIRM AND ENTER DIRECTLY]`; appears publicly in the gallery. |
+| Newly built or previously existing | **New**. The distinct Track-4 repository starts 2026-07-04; retain the shared-plumbing disclosure. |
 | Start date | **07-04-26** |
 | Required pre-May-26/update explanation | Paste **What was built during the submission period** from section 5 verbatim. |
 | Track | **Track 4: Autopilot Agent** |

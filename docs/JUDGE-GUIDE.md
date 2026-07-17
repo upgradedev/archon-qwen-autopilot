@@ -1,4 +1,4 @@
-# Judge guide — Archon Autopilot in five minutes
+# Judge guide: Archon Autopilot in five minutes
 
 This is the shortest reproducible path through the Track-4 submission. The public
 intake accepts invoices and streams the agent's evidence-gathering tool/observation

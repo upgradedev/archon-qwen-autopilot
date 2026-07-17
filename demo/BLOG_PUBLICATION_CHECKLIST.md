@@ -49,4 +49,4 @@ journey is preferable to publishing only the short social draft.
 
 ## Suggested final call to action
 
-> Try the live, human-gated workflow at https://autopilot.43.106.13.19.sslip.io and inspect the MIT-licensed implementation at https://github.com/upgradedev/archon-qwen-autopilot. The public demo video shows the exact release moving from ambiguous document intake to a bounded Qwen proposal, human correction, and audited outcome—without giving the model authority to move money.
+> Try the live, human-gated workflow at https://autopilot.43.106.13.19.sslip.io and inspect the MIT-licensed implementation at https://github.com/upgradedev/archon-qwen-autopilot. The public demo video shows the exact release moving from ambiguous document intake to a bounded Qwen proposal, human correction, and audited outcome, without giving the model authority to move money.
