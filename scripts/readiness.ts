@@ -485,7 +485,7 @@ async function presentation(): Promise<CriterionSpec> {
   //    promotion and a synthetic mid-commit fault restores the reviewed finals.
   {
     let passed = false;
-    let evidence = "media capture self-test did not run";
+    let evidence: string;
     try {
       const output = execFileSync(process.execPath, ["demo/media-tools/capture-final-media.cjs", "--self-test"], {
         cwd: ROOT,

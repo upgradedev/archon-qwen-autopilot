@@ -722,19 +722,23 @@ test("CHECK 6 · housekeeping: documentation inventory is exhaustive and stale s
 test("CHECK 6 · public copy: canonical URLs and bounded non-price rhetoric stay aligned", () => {
   const videoUrl = "https://www.youtube.com/watch?v=Vc2mJdsoSX0";
   const blogUrl = "https://dev.to/efousekis/building-archon-autopilot-where-qwen-proposes-and-humans-control-the-money-4mfg";
+  const completeHttpsTokens = (markdown: string): Set<string> =>
+    new Set([...markdown.matchAll(/https:\/\/[^\s<>()\]]+/g)].map((match) => match[0]!));
   for (const path of [
     join(ROOT, "README.md"),
     join(ROOT, "demo", "BLOG.md"),
     join(ROOT, "demo", "DEVPOST_PACKET.md"),
     join(ROOT, "demo", "POST_DRAFTS.md"),
   ]) {
-    assert.ok(readFileSync(path, "utf8").includes(videoUrl), `${path} does not carry the canonical public video URL`);
+    assert.ok(completeHttpsTokens(readFileSync(path, "utf8")).has(videoUrl),
+      `${path} does not carry the exact canonical public video URL`);
   }
   for (const path of [
     join(ROOT, "demo", "DEVPOST_PACKET.md"),
     join(ROOT, "demo", "POST_DRAFTS.md"),
   ]) {
-    assert.ok(readFileSync(path, "utf8").includes(blogUrl), `${path} does not carry the canonical public build-article URL`);
+    assert.ok(completeHttpsTokens(readFileSync(path, "utf8")).has(blogUrl),
+      `${path} does not carry the exact canonical public build-article URL`);
   }
 
   const publicCopy = [
