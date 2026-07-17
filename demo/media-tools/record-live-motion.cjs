@@ -29,6 +29,14 @@ const HIGHLIGHT_WINDOW_SECONDS = 9;
 const HIGHLIGHT_ACTION_PREROLL_SECONDS = 1;
 const HIGHLIGHT_ACTION_POSTROLL_SECONDS = 1.25;
 const HIGHLIGHT_BOUNDARY_TAIL_SECONDS = 4;
+const TOUR_STORAGE_KEY = 'archon_autopilot_tour_v1';
+const TOUR_COMPLETED_VALUE = '1';
+const BROWSER_LAUNCH_WATCHDOG_MS = 45_000;
+const NAVIGATION_WATCHDOG_MS = 60_000;
+const CLICK_WATCHDOG_MS = 15_000;
+const PROPOSAL_WATCHDOG_MS = 180_000;
+const LIVE_INTERACTION_WATCHDOG_MS = 240_000;
+const CLEANUP_WATCHDOG_MS = 10_000;
 const ALLOWED_TRACE_TOOLS = Object.freeze([
   'recall_vendor_history',
   'validate_invoice',
@@ -37,6 +45,62 @@ const ALLOWED_TRACE_TOOLS = Object.freeze([
   'request_more_context',
 ]);
 const REQUIRED_CORE_TRACE_TOOLS = Object.freeze(['recall_vendor_history', 'validate_invoice']);
+
+let phaseLogFile = null;
+let phaseEvents = [];
+let networkEvents = [];
+
+function resetDiagnostics(runtime) {
+  phaseLogFile = path.join(runtime, 'recorder-diagnostics.jsonl');
+  phaseEvents = [];
+  networkEvents = [];
+  fs.writeFileSync(phaseLogFile, '', { encoding: 'utf8', flag: 'wx' });
+}
+
+function reportPhase(phase) {
+  const entry = { at: new Date().toISOString(), phase };
+  phaseEvents.push(entry);
+  if (phaseLogFile) fs.appendFileSync(phaseLogFile, `${JSON.stringify(entry)}\n`, 'utf8');
+  process.stderr.write(`Autopilot live recorder: PHASE · ${phase}\n`);
+}
+
+function reportNetwork(type, method, rawUrl, status, baseUrl) {
+  let parsed;
+  try { parsed = new URL(rawUrl); } catch { return; }
+  if (parsed.origin !== baseUrl) return;
+  const entry = {
+    at: new Date().toISOString(),
+    type,
+    method: String(method || 'GET').toUpperCase(),
+    path: parsed.pathname,
+    ...(Number.isInteger(status) ? { status } : {}),
+  };
+  networkEvents.push(entry);
+  if (phaseLogFile) fs.appendFileSync(phaseLogFile, `${JSON.stringify(entry)}\n`, 'utf8');
+}
+
+async function withWatchdog(label, timeoutMs, operation) {
+  let timer;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(operation),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} exceeded the ${timeoutMs}ms watchdog`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function boundedCleanup(label, operation) {
+  try {
+    await withWatchdog(label, CLEANUP_WATCHDOG_MS, operation);
+    reportPhase(`${label} complete`);
+  } catch {
+    reportPhase(`${label} did not complete inside cleanup watchdog`);
+  }
+}
 
 function fail(message) { throw new Error(message); }
 
@@ -125,6 +189,14 @@ function validateRelevantTraceTools(rawTools, label) {
   for (const tool of tools) assert.ok(ALLOWED_TRACE_TOOLS.includes(tool), `${label} contains a non-read/analyze trace step`);
   for (const required of REQUIRED_CORE_TRACE_TOOLS) assert.ok(tools.includes(required), `${label} is missing core trace step ${required}`);
   return tools;
+}
+
+function validateTourSourceContract() {
+  const ui = fs.readFileSync(path.join(ROOT, 'src', 'ui.html'), 'utf8');
+  assert.match(ui, /const TOUR_KEY\s*=\s*'archon_autopilot_tour_v1'/,
+    'recorder tour key drifted from src/ui.html');
+  assert.match(ui, /localStorage\.getItem\(TOUR_KEY\)\s*===\s*'1'/,
+    'recorder tour completion value drifted from src/ui.html');
 }
 
 function validateEvidence(file, expectedSha, baseUrl, fixture) {
@@ -229,12 +301,23 @@ function mark(actions, started, action) {
 async function recordLive(page, baseUrl, poster) {
   const started = Date.now();
   const actions = [];
-  await page.goto(`${baseUrl}/`, { waitUntil: 'networkidle', timeout: 90_000 });
+  reportPhase('navigate public origin');
+  await withWatchdog('public-origin navigation', NAVIGATION_WATCHDOG_MS,
+    () => page.goto(`${baseUrl}/`, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_WATCHDOG_MS }));
+  reportPhase('public DOM ready');
   assert.equal(new URL(page.url()).origin, baseUrl, 'navigation left the pinned public origin');
   await addRecordingOverlay(page);
   const token = page.locator('#reviewerToken');
   assert.equal(await token.count(), 1, 'reviewer token field is missing');
   assert.equal(await token.inputValue(), '', 'reviewer token field is not blank');
+  assert.equal(await page.evaluate((key) => localStorage.getItem(key), TOUR_STORAGE_KEY), TOUR_COMPLETED_VALUE,
+    'guided-tour completion marker is missing or stale');
+  const tourOverlay = page.locator('#tourOverlay');
+  assert.equal(await tourOverlay.count(), 1, 'guided-tour overlay is missing');
+  await page.waitForFunction(() => !document.querySelector('#tourOverlay')?.classList.contains('show'), null,
+    { timeout: 5_000 });
+  assert.equal(await tourOverlay.evaluate((element) => element.classList.contains('show')), false,
+    'guided-tour overlay intercepts the recording interaction');
   mark(actions, started, 'loaded live public Autopilot with reviewer workspace locked');
   await page.waitForTimeout(900);
 
@@ -254,10 +337,18 @@ async function recordLive(page, baseUrl, poster) {
   await invoice.press('End');
   mark(actions, started, 'entered an original synthetic invoice in the public UI');
   await page.waitForTimeout(650);
-  await page.locator('#processBtn').click();
+  await withWatchdog('public Process click', CLICK_WATCHDOG_MS,
+    () => page.locator('#processBtn').click({ timeout: CLICK_WATCHDOG_MS }));
   mark(actions, started, 'clicked Process invoice to start the live Qwen evidence loop');
+  reportPhase('public process request started');
   await page.locator('#processView').waitFor({ state: 'visible', timeout: 30_000 });
-  await page.waitForFunction(() => /Proposal generated in isolated preview mode\./i.test(document.querySelector('#processView')?.innerText || ''), null, { timeout: 300_000 });
+  await withWatchdog('public proposal completion', PROPOSAL_WATCHDOG_MS,
+    () => page.waitForFunction(
+      () => /Proposal generated in isolated preview mode\./i.test(document.querySelector('#processView')?.innerText || ''),
+      null,
+      { timeout: PROPOSAL_WATCHDOG_MS },
+    ));
+  reportPhase('public proposal rendered');
   const visibleTraceTools = (await page.locator('#processView .proc-step .tool').allInnerTexts()).map((tool) => tool.trim());
   validateRelevantTraceTools(visibleTraceTools, 'visible public preview');
   mark(actions, started, `observed relevant read/analyze steps stream into the UI: ${visibleTraceTools.join(' → ')}`);
@@ -394,7 +485,8 @@ function createHighlight(raw, output, actions, { fixture = false } = {}) {
   };
 }
 
-async function capture({ expectedSha, evidenceFile, baseUrl, output, manifestFile, poster, replace, fixture }) {
+async function capture({ expectedSha, evidenceFile, baseUrl, output, manifestFile, poster, replace, fixture,
+  fixtureFailure = '' }) {
   assert.match(expectedSha, SHA_RE, 'expected SHA must be 40 lowercase hex characters');
   const evidenceSnapshot = validateEvidence(evidenceFile, expectedSha, baseUrl, fixture);
   const evidence = evidenceSnapshot.payload;
@@ -402,37 +494,87 @@ async function capture({ expectedSha, evidenceFile, baseUrl, output, manifestFil
   for (const file of [output, manifestFile, poster]) {
     if (!replace && fs.existsSync(file)) fail(`refusing to replace existing ${relative(file)} without --replace`);
     fs.mkdirSync(path.dirname(file), { recursive: true });
+    if (replace) fs.rmSync(file, { force: true });
   }
   const runtime = insideRepo('.artifacts/final-video/autopilot-recording-runtime', 'recording runtime');
   fs.rmSync(runtime, { recursive: true, force: true });
   fs.mkdirSync(runtime, { recursive: true });
+  resetDiagnostics(runtime);
   const capturedAt = new Date().toISOString();
-  const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
-  const context = await browser.newContext({
-    viewport: { width: 1920, height: 1080 },
-    screen: { width: 1920, height: 1080 },
-    ignoreHTTPSErrors: false,
-    recordVideo: { dir: runtime, size: { width: 1920, height: 1080 } },
-  });
-  if (!fixture) {
-    await context.addInitScript(() => { try { localStorage.setItem('archon_autopilot_tour_v1', 'done'); } catch (_) {} });
-    await context.route('**/*', async (route) => {
-      const url = new URL(route.request().url());
-      if ((url.protocol === 'http:' || url.protocol === 'https:') && url.origin !== baseUrl) await route.abort();
-      else await route.continue();
+  let browser = null;
+  let context = null;
+  let page = null;
+  let video = null;
+  let raw = null;
+  let recording = null;
+  try {
+    reportPhase('launch Chromium headless shell');
+    browser = await withWatchdog('Chromium launch', BROWSER_LAUNCH_WATCHDOG_MS,
+      () => chromium.launch({ headless: true, args: ['--no-sandbox'] }));
+    reportPhase('Chromium launched');
+    context = await browser.newContext({
+      viewport: { width: 1920, height: 1080 },
+      screen: { width: 1920, height: 1080 },
+      ignoreHTTPSErrors: false,
+      recordVideo: { dir: runtime, size: { width: 1920, height: 1080 } },
     });
+    if (!fixture) {
+      await context.addInitScript(({ key, value }) => {
+        try { localStorage.setItem(key, value); } catch (_) {}
+      }, { key: TOUR_STORAGE_KEY, value: TOUR_COMPLETED_VALUE });
+      await context.route('**/*', async (route) => {
+        let url;
+        try { url = new URL(route.request().url()); }
+        catch { await route.abort(); return; }
+        if ((url.protocol === 'http:' || url.protocol === 'https:') && url.origin !== baseUrl) await route.abort();
+        else await route.continue();
+      });
+    }
+    page = await context.newPage();
+    page.setDefaultTimeout(90_000);
+    if (!fixture) {
+      page.on('request', (request) => reportNetwork('request', request.method(), request.url(), null, baseUrl));
+      page.on('response', (response) => reportNetwork('response', response.request().method(), response.url(), response.status(), baseUrl));
+      page.on('requestfailed', (request) => reportNetwork('requestfailed', request.method(), request.url(), null, baseUrl));
+    }
+    reportPhase('recording page created');
+    if (fixtureFailure === 'after-page-created') fail('self-test injected browser-phase failure');
+    recording = await withWatchdog(
+      fixture ? 'fixture browser interaction' : 'live browser interaction',
+      fixture ? 60_000 : LIVE_INTERACTION_WATCHDOG_MS,
+      () => fixture ? recordFixture(page, poster) : recordLive(page, baseUrl, poster),
+    );
+    video = page.video();
+    assert.ok(video, 'Playwright did not create a video handle');
+    await withWatchdog('recording page close', CLEANUP_WATCHDOG_MS, () => page.close());
+    page = null;
+    reportPhase('recording page closed');
+    await withWatchdog('recording context close', CLEANUP_WATCHDOG_MS, () => context.close());
+    context = null;
+    reportPhase('recording context closed');
+    raw = await withWatchdog('raw video finalization', CLEANUP_WATCHDOG_MS, () => video.path());
+    await withWatchdog('Chromium close', CLEANUP_WATCHDOG_MS, () => browser.close());
+    browser = null;
+    reportPhase('Chromium closed and raw video finalized');
+  } catch (error) {
+    reportPhase('capture failed; preserving bounded diagnostics');
+    if (page && !page.isClosed()) {
+      await boundedCleanup('failure-state screenshot', () => page.screenshot({
+        path: path.join(runtime, 'failure-state.png'),
+        fullPage: false,
+        animations: 'disabled',
+        timeout: 5_000,
+      }));
+    }
+    throw error;
+  } finally {
+    if (page && !page.isClosed()) await boundedCleanup('recording page cleanup', () => page.close());
+    if (context) await boundedCleanup('recording context cleanup', () => context.close());
+    if (browser) await boundedCleanup('Chromium cleanup', () => browser.close());
   }
-  const page = await context.newPage();
-  page.setDefaultTimeout(90_000);
-  const recording = fixture ? await recordFixture(page, poster) : await recordLive(page, baseUrl, poster);
   const actions = recording.actions;
-  const video = page.video();
-  await page.close();
-  await context.close();
-  assert.ok(video, 'Playwright did not create a video handle');
-  const raw = await video.path();
-  await browser.close();
   assert.ok(fs.statSync(raw).size > 10_000, 'raw browser recording is missing or empty');
+  reportPhase('build verified action-aware highlight');
   const highlight = createHighlight(raw, output, actions, { fixture });
   const media = mediaSummary(output);
   assert.deepEqual([media.width, media.height], [1920, 1080], 'highlight is not 1920x1080');
@@ -451,6 +593,7 @@ async function capture({ expectedSha, evidenceFile, baseUrl, output, manifestFil
   }
   const motion = frameDiversity(output, Math.min(media.durationSeconds, 30));
   assert.ok(motion.uniqueFrames >= 8 && motion.uniqueRatio >= 0.25, 'highlight is too static to prove genuine interaction');
+  reportPhase('highlight media and frame diversity verified');
   assert.equal(sha256(evidenceFile), evidenceSnapshot.sha256,
     'CAPTURE_REVIEW changed after validation while live motion was being recorded');
   const manifest = {
@@ -468,6 +611,20 @@ async function capture({ expectedSha, evidenceFile, baseUrl, output, manifestFil
     reviewerCredentialRendered: false,
     durableReviewerWritesCreated: false,
     publicFlow: fixture ? 'fixture only' : 'real isolated non-durable preview',
+    recorderReliability: {
+      browser: 'Playwright Chromium headless shell',
+      tourCompletionMarker: fixture ? null : { key: TOUR_STORAGE_KEY, value: TOUR_COMPLETED_VALUE, overlayHiddenAsserted: true },
+      watchdogMilliseconds: {
+        browserLaunch: BROWSER_LAUNCH_WATCHDOG_MS,
+        navigation: NAVIGATION_WATCHDOG_MS,
+        processClick: CLICK_WATCHDOG_MS,
+        proposalCompletion: PROPOSAL_WATCHDOG_MS,
+        liveInteraction: LIVE_INTERACTION_WATCHDOG_MS,
+        cleanup: CLEANUP_WATCHDOG_MS,
+      },
+      phaseEvents: [...phaseEvents],
+      sameOriginNetworkEvents: [...networkEvents],
+    },
     boundDecisionCanary: fixture ? null : {
       modelId: evidence.models.decision,
       traceTools: evidence.canaries.decision.traceTools,
@@ -495,6 +652,7 @@ async function selfTest() {
   fs.rmSync(root, { recursive: true, force: true });
   fs.mkdirSync(root, { recursive: true });
   const expectedSha = '1'.repeat(40);
+  validateTourSourceContract();
   assert.deepEqual(
     validateRelevantTraceTools(['recall_vendor_history', 'validate_invoice'], 'self-test trace'),
     ['recall_vendor_history', 'validate_invoice'],
@@ -515,6 +673,43 @@ async function selfTest() {
     'self-test did not require the entry, click, streamed-evidence, and completed-boundary actions');
   assert.ok(manifest.edit.requiredActionCoverage.every((entry) => entry.retained === true),
     'self-test action-aware highlight omitted a required action');
+  await assert.rejects(
+    withWatchdog('self-test watchdog', 25, () => new Promise(() => {})),
+    /self-test watchdog exceeded the 25ms watchdog/,
+    'watchdog must reject a browser operation that never settles',
+  );
+  const browserFailureOutput = path.join(root, 'browser-failure-fixture.mp4');
+  const browserFailureManifest = path.join(root, 'browser-failure-fixture.manifest.json');
+  const browserFailurePoster = path.join(root, 'browser-failure-fixture-poster.png');
+  await assert.rejects(
+    capture({
+      expectedSha,
+      evidenceFile: evidence,
+      baseUrl: DEFAULT_URL,
+      output: browserFailureOutput,
+      manifestFile: browserFailureManifest,
+      poster: browserFailurePoster,
+      replace: false,
+      fixture: true,
+      fixtureFailure: 'after-page-created',
+    }),
+    /self-test injected browser-phase failure/,
+    'browser-phase failure must propagate after bounded cleanup',
+  );
+  for (const stale of [browserFailureOutput, browserFailureManifest, browserFailurePoster]) {
+    assert.equal(fs.existsSync(stale), false, 'failed browser capture left a stale publication artifact');
+  }
+  const failureDiagnostics = fs.readFileSync(
+    insideRepo('.artifacts/final-video/autopilot-recording-runtime/recorder-diagnostics.jsonl',
+      'failure diagnostics', { mustExist: true }),
+    'utf8',
+  );
+  for (const expectedPhase of [
+    'capture failed; preserving bounded diagnostics',
+    'recording page cleanup complete',
+    'recording context cleanup complete',
+    'Chromium cleanup complete',
+  ]) assert.match(failureDiagnostics, new RegExp(expectedPhase), `failure diagnostics omitted ${expectedPhase}`);
   const originalEvidence = fs.readFileSync(evidence);
   const evidenceMutation = setTimeout(() => {
     fs.writeFileSync(evidence, `${JSON.stringify({
@@ -564,5 +759,8 @@ async function main() {
 
 main().catch((error) => {
   process.stderr.write(`Autopilot live recorder: FAIL · ${error.message}\n`);
-  process.exitCode = 2;
+  // A browser transport that itself stopped responding must never keep this CLI
+  // alive after the bounded cleanup attempts above. Closing the Node pipe also
+  // makes Chromium terminate its --remote-debugging-pipe session.
+  process.exit(2);
 });
