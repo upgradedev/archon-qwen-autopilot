@@ -150,8 +150,9 @@ Upload only reviewed, sanitized final files. Recommended order:
    - Alt: **Human approval screen showing editable proposal arguments and the audited
      before-and-after amendment.**
 3. `demo/gallery/autopilot-03-correction-learning.png` (1500×1000, no crop)
-   - Caption: **A €5,000 re-bill above a human-corrected €3,000 amount is escalated;
-     the compliant €3,000 control remains a payment proposal. No model weights change.**
+   - Caption: **A material re-bill above a verified human-corrected amount is
+     escalated; the compliant corrected-amount control remains a payment proposal.
+     No model weights change.**
    - Alt: **Side-by-side correction test in which only the non-compliant re-bill is
      routed to review.**
 4. `demo/gallery/autopilot-04-security-pending.png` (1500×1000, no crop)
@@ -193,7 +194,7 @@ Replace bracketed values directly in Devpost; do not save them in Git.
 > 2. Use the bundled synthetic sample invoice in the document panel; extract it and process it through the reviewer flow.
 > 3. Open the resulting PENDING card and expand **How the agent decided**. Verify that recall is first and validation is present; duplicate, variance, or context observations appear only when that invoice warrants them. Inspect the concise model rationale.
 > 4. Amend a safe editable argument or reject the synthetic item. Open **Decided** to inspect the proposed-to-approved diff and result.
-> 5. Use the guided correction-learning panel to compare the €5,000 re-bill with the €3,000 control.
+> 5. Use the guided correction-learning panel to compare the material re-bill with the compliant corrected-amount control.
 > 6. Remove or reject any remaining synthetic PENDING item; do not use real vendor data.
 >
 > **Scope:** payment and specialist-review adapters are simulated. SMTP vendor reply and the fsynced append-only JSONL journal are configurable post-approval transports; UI success does not claim recipient delivery or a bank/ERP integration. The `22/22` result is a tuned developer-labelled deterministic regression, not live-Qwen accuracy.

@@ -22,9 +22,10 @@ The public-main engineering gates are green, and Alibaba Cloud Assistant attempt
 verified deployed runtime SHA `030950e9…` through a hash-bound compact terminal
 sentinel after immutable checkout, the singleton runtime-env contract, non-published
 and final readiness, a real-Qwen PENDING canary, and zero-residue cleanup. The
-remaining variables are presentation/publication: make the recording and screenshots
-explain that exact workflow within three minutes without exposing the reviewer
-credential, then verify every public link signed out.
+canonical screenshots, 168-second video, architecture, deck, and public-link packet
+are now tracked, and the public video and build article are linked consistently. The
+remaining external control is final Devpost review and the entrant-authorized submit;
+this repository does not attempt either action.
 
 ## Rubric readiness review
 
@@ -33,12 +34,11 @@ credential, then verify every public link signed out.
 | **Innovation & AI Creativity (30%)** | **Strong differentiator** | Bounded Qwen function-calling loop; model catalog separated into five read/analyze and four proposal skills; human gate doubles as a correction signal that changes a later decision; injection resistance comes from unreachable execution rather than trusting a classifier. | The offline `22/22` is a deterministic policy result, not live-model accuracy; no multi-agent/A2A layer, by deliberate design. |
 | **Technical Depth & Engineering (30%)** | **Strong engineering evidence** | Authenticated HTTP/UI exclusively owns decisions; a four-tool MCP surface shares intake/memory but is limited to proposal/read operations; Qwen vision + embeddings + chat; pgvector memory; strict auth; production quotas; atomic claims; explicit uncertain-outcome recovery; durable restart-safe ledger; Node/real-pgvector/browser/adversarial gates; ≥80% coverage in every dimension. | The frozen vision benchmark is synthetic rather than representative real-world traffic; the local MCP surface can still read proposal/vendor state and must be access-controlled at the process boundary; SMTP cannot promise recipient-level exactly once. |
 | **Problem Value & Impact (25%)** | **Credible value with bounded synthetic evidence** | Solves a real AP bottleneck while retaining human control; duplicate/anomaly checks use cross-session evidence; configurable SMTP and durable JSONL ledger create real post-approval effects. Within an authored 12-case workflow model, the assisted arm uses fewer modeled base active-review seconds and human checkpoints while both arms match developer policy labels. | The impact artifact is a fixed synthetic workflow comparison, not a human study, field trial, production benchmark, labor-savings or ROI claim. Payment and specialist case systems remain simulated. |
-| **Presentation (15%) — artifacts** | **Prepared; public media still pending** | Strong README, architecture, judge guide, evidence matrix, honest eval method, Devpost copy, story, blog, and reproducible commands. | Final public hosted video, refreshed screenshots, and published post are human-owned and must still be supplied. |
+| **Presentation (15%) — artifacts** | **Prepared and publicly linked** | Strong README, canonical modern architecture, judge guide, evidence matrix, honest eval method, Devpost copy, story, public build article, final screenshots, and a public 168-second video. | The video is intentionally caption-led with digital silence; it is compliant and independently QA-bound, but narration remains a presentation tradeoff rather than a technical defect. Final Devpost submission remains an entrant-only act. |
 
-The strict-union organizer packet also requires a final PPTX/PDF judge deck when the
-separate Qwen flow requests it. The draft builder is prepared, but no placeholder
-deck is deliverable: it must use exact-release screenshots and pass layout/hash
-review before upload.
+The optional strict-union organizer packet has a tracked PPTX/PDF judge deck generated
+from exact-release screenshots. It remains an upload candidate only after the final
+layout/hash review required by the packet.
 
 The table is a release checklist, not a forecast. Competition scoring and placement
 belong exclusively to the independent judges after they review the final submitted
@@ -146,20 +146,16 @@ fail-safe review behavior.
 | Coverage | **Four-metric ≥80% gate; final values from CI** | Statements, branches, functions, and lines all gate the commit |
 | Adversarial | **Final immutable CI total** | Repository threat cases, not proof against every future attack |
 | Hosted load ramp | **50 VUs · 13,204 HTTP requests · 0 HTTP failures** | Published deterministic offline application-path stress evidence; Fake Qwen + in-memory storage, not production provider/database capacity or live latency |
-| Readiness | **≥95% automatable gate + explicit user-gated work** | Final playback/hosting and deployment capture are never auto-claimed; recipient delivery is not a claim |
+| Readiness | **≥95% automatable gate + explicit user-gated work** | Final signed-out playback and live-app availability are rechecked by a human; tracked public URLs and hash-bound deployment evidence are not mislabelled as unfinished uploads/redeploys |
 | Audits | **Final immutable CI result** | Snapshot of advisories for the submitted commit, not a permanent guarantee |
 
-## Remaining action
+## Release control
 
-No additional product feature is required for a competitive submission. The exact
-runtime SHA is already deployed; the remaining sequence is **merge the pre-capture
-tooling/docs as the clean public capture-source HEAD → immutable hosted gates → bind
-the existing deployed runtime SHA to fresh live canaries → sanitized proof →
-video/screenshots/post → commit the final submitted HEAD → final immutable hosted
-gates → Devpost draft**. Follow
-[`FINAL_MEDIA_CHECKLIST.md`](FINAL_MEDIA_CHECKLIST.md) and
-[`DEVPOST_PACKET.md`](DEVPOST_PACKET.md); follow the operator-only
-[`POST_PUBLICATION_CHECKLIST.md`](POST_PUBLICATION_CHECKLIST.md), then use only the
-fenced public copy in [`POST_DRAFTS.md`](POST_DRAFTS.md); and
-keep the claim/evidence wording aligned with
-[`../docs/CLAIM_EVIDENCE_MATRIX.md`](../docs/CLAIM_EVIDENCE_MATRIX.md).
+No additional Autopilot product feature or media build is required. The deployed
+runtime identity, capture-source identity, and later documentation/media commits stay
+deliberately separate. Repository truth is indexed in
+[`../docs/README.md`](../docs/README.md); external values and the draft-only stop gate
+live in [`DEVPOST_PACKET.md`](DEVPOST_PACKET.md). Before the entrant authorizes final
+submission, re-run the immutable hosted gates for the exact submission SHA and verify
+every public link signed out. Do not infer completion from unchecked template boxes,
+and do not press the final Devpost submit from an engineering workflow.

@@ -13,6 +13,7 @@ Judge shortcuts: [5-minute guide](docs/JUDGE-GUIDE.md) ·
 [claim/evidence matrix](docs/CLAIM_EVIDENCE_MATRIX.md) ·
 [synthetic impact study](docs/IMPACT_STUDY.md) ·
 [security boundaries](SECURITY.md) ·
+[documentation map](docs/README.md) ·
 [exact release proof](demo/BUILD_RECORDING.md) ·
 [final recording run sheet](demo/VIDEO_RECORDING_CHECKLIST.md)
 
@@ -163,11 +164,12 @@ Both tiers are formalized as a first-class, introspectable **custom-skills catal
 
 ## Architecture
 
-> The judge-first 16:9 render is at
-> [`docs/judge-architecture.svg`](docs/judge-architecture.svg). A detailed static
-> render remains at [`docs/architecture.png`](docs/architecture.png) (also
-> [`docs/architecture.svg`](docs/architecture.svg)) as a fallback if the live
-> mermaid does not render.
+> The canonical judge-first 16:9 render is
+> [`docs/judge-architecture.svg`](docs/judge-architecture.svg), with a sanitized
+> Devpost-ready raster at
+> [`demo/final-media/judge-architecture.jpg`](demo/final-media/judge-architecture.jpg).
+> Both are generated and checked as one release asset; no legacy architecture is a
+> submission source.
 >
 ```mermaid
 flowchart TD
@@ -262,8 +264,8 @@ pgvector for persistent memory and the approval queue.
   never touch a side-effect sink) or at intake. Proposals wait in a durable approval
   queue with their tool/observation trace and concise rationale; approve / amend / reject are explicit
   human acts, and the amended args are exactly what runs.
-- **Production-readiness** — injectable dependencies, an offline-first design
-  (zero credentials, zero spend in CI), the full testing pyramid, gitleaks +
+- **Production-readiness** — injectable dependencies, deterministic offline provider
+  adapters in CI, the full testing pyramid, gitleaks +
   dep-audit in CI, swagger docs, a Dockerfile + compose, and a deploy note for
   Alibaba Cloud ECS / Function Compute + ApsaraDB RDS for PostgreSQL (pgvector).
 
@@ -899,12 +901,12 @@ runs the eval (22/22), measures the learning-from-corrections delta, drives a
 prompt-injection through the real agent (asserting no auto-execute + no forged gate),
 invokes **both real sinks** through their transport seams, and verifies the
 docs/video/architecture surface. Checks that need a human with credentials or a browser
-— final playback review, a hosted video URL, a live-box redeploy — are reported
+— final playback review, signed-out public-host playback, and live-box availability — are reported
 `user-gated`, never auto-claimed. Recipient delivery is a deliberate non-claim, not an
 unfinished gate: SMTP evidence stops at tested transport submission/acceptance.
 
 The final report and adversarial totals are read from the immutable CI artifact for
-the submission commit. User-owned publication/deployment checks remain visibly
+the submission commit. User-owned final availability/playback checks remain visibly
 `user-gated`; they are never converted into automated passes. Dependency findings
 are likewise reported by the commit's `npm audit` CI job, not frozen in prose.
 
@@ -1034,8 +1036,8 @@ considered decision, not a gap:
   and a human approves the exact args. A consensus/debate step injects
   **nondeterminism** (the same invoice can be argued either way run-to-run) right at
   the money-adjacent edge, which is exactly where we chose predictability.
-- **Cost and latency.** Multiple extra `qwen-plus` turns per invoice for a verdict a
-  human still has to confirm — it spends budget and adds latency without changing who
+- **Latency and complexity.** Multiple extra `qwen-plus` turns per invoice for a
+  verdict a human still has to confirm add latency and operational surface without changing who
   is ultimately accountable (the approver).
 - **The value it targets is already covered**, deterministically: cross-checks
   (R1–R6), memory-grounded duplicate/anomaly detection, the injection fence + advisory

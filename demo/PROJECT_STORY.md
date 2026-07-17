@@ -13,7 +13,7 @@ arrive as messy emails and PDFs, in different layouts, with fields missing or
 mistyped. Someone has to read each one, remember whether this vendor is new or
 recurring, notice that *this* invoice looks suspiciously like one already paid last
 month, check that the numbers even add up — and only then decide: post it, pay it,
-query the vendor, or escalate. It is repetitive, it needs memory, and the cost of a
+query the vendor, or escalate. It is repetitive, it needs memory, and the impact of a
 wrong call is real money out the door (a double payment) or a supplier left waiting.
 
 The obvious pitch is "automate it away." We think that pitch is *wrong*, and
@@ -35,8 +35,8 @@ vendor invoice it runs the AP workflow end to end — up to, but not through, th
 point of consequence:
 
 1. **Intake + normalize** — a messy invoice (`POST /intake`) is coerced into a clean
-   record: alias keys (`supplier`/`payee` → vendor), string amounts (`"€ 2.500,00"`,
-   EU decimals, `"USD 900"`), bad dates, inferred totals — every coercion recorded,
+   record: alias keys (`supplier`/`payee` → vendor), localized currency strings,
+   mixed decimal conventions, bad dates, inferred totals — every coercion recorded,
    never silently dropped.
 2. **Validate** — six cross-checks (R1 amount sanity, R2 required fields, R3 tax
    reconciliation, R4 line-item integrity, R5 duplicate, R6 amount anomaly).
@@ -108,7 +108,7 @@ the real `openai` client to `qwen-plus`, or a `FakeQwenChatClient` that returns 
 canned assistant message carrying a `tool_calls` entry *in the exact shape DashScope
 returns* (driven by the deterministic `EVIDENCE:` line the loop embeds in the step
 prompt, produced by `computeEvidence`). So the real multi-step tool-call **parse path
-is exercised in CI**, with no key. That was a deliberate choice: the integration we
+is exercised in CI** through the deterministic provider seam. That was a deliberate choice: the integration we
 most want to trust is the one CI can't skip.
 
 ### The human-in-the-loop integrity guarantee
@@ -217,15 +217,16 @@ autonomous** side-effect-free read/analyze skills (`recall_vendor_history`,
 Invoices don't only arrive as JSON — they arrive as PDFs and photos. `POST
 /extract/document` and `POST /intake/document` accept an uploaded PDF/PNG/JPG and read
 it into the same structured invoice record with **`qwen-vl-max`** (`src/qwen/vision.ts`),
-which then runs the identical multi-step loop. Absent a key, a deterministic fake
+which then runs the identical multi-step loop. Without configured provider access, a deterministic fake
 vision path keeps the upload flow testable in CI.
 
 ### Offline-first, so it's testable
 
-Every external dependency has an injectable seam. With no `DASHSCOPE_API_KEY`, the
-deterministic `FakeQwenChatClient` + `FakeEmbedder` engage and the **whole loop —
-intake → decide → approve → execute → remember — runs with zero credentials and zero
-spend.** That is what lets the full test pyramid *and the decision-quality eval* run
+Every external dependency has an injectable seam. Without configured live-provider
+access, the deterministic `FakeQwenChatClient` + `FakeEmbedder` engage and the
+**whole loop — intake → decide → approve → execute → remember — runs without
+external provider calls.** That is what lets the full test pyramid *and the
+decision-quality eval* run
 in CI on every commit.
 
 ### We measured the decisions
@@ -240,7 +241,7 @@ every miss; no live score is claimed until that clean-commit artifact exists.
 ## Challenges we ran into
 
 - **Messy input is the whole front door.** Real invoices don't arrive clean.
-  Getting `"€ 2.500,00"`, EU vs. US decimal conventions, `"USD 900"`, alias keys, and
+  Handling localized currency strings, mixed decimal conventions, alias keys, and
   unparseable dates to normalize into a record validation can reason about — while
   *recording* every coercion for the reviewer — took the bulk of the normalizer.
 - **Testing an LLM integration without an LLM in CI.** We wanted the actual
@@ -278,8 +279,8 @@ every miss; no live score is claimed until that clean-commit artifact exists.
 - **The memory write-back loop, working end to end.** A vendor seen once is
   recognised next time; the new-vendor → recurring-vendor transition is demonstrable
   on screen and covered by tests.
-- **Offline-first, reproducible with zero credentials.** The whole loop, the test
-  pyramid, and the eval gate run in CI with no key and no spend, via deterministic
+- **Offline-first and reproducible.** The whole loop, the test pyramid, and the eval
+  gate run in CI without external provider calls, via deterministic
   Fakes — while the identical code runs live against Qwen + pgvector.
 - **Honest scope.** A real multi-step loop with two **real configurable** terminal
   transports (SMTP + durable JSONL ledger), simulated payment/review adapters, and a
