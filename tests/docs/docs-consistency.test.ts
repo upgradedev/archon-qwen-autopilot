@@ -699,7 +699,20 @@ test("CHECK 6 · media: Devpost thumbnail is exact 3:2, original, and self-conta
 });
 
 test("CHECK 6 · media: canonical architecture JPEG has no public metadata segments", () => {
+  const svg = readFileSync(join(ROOT, "docs", "judge-architecture.svg"), "utf8");
+  const blog = readFileSync(join(ROOT, "demo", "BLOG.md"), "utf8");
+  const story = readFileSync(join(ROOT, "demo", "PROJECT_STORY.md"), "utf8");
   const jpeg = readFileSync(join(ROOT, "demo", "final-media", "judge-architecture.jpg"));
+
+  assert.match(svg, /Qwen proposes\. Deterministic controls constrain\. A human authorizes every consequence\./);
+  assert.match(svg, /MODEL STOPS/);
+  assert.match(svg, /STRUCTURAL CONSEQUENCE BOUNDARY/);
+  assert.doesNotMatch(svg, /€|\$\s*\d|hidden costs?/i, "judge architecture must not use amount or hidden-cost rhetoric");
+  for (const [name, markdown] of [["blog", blog], ["project story", story]] as const) {
+    assert.match(markdown, /\.\/final-media\/judge-architecture\.jpg/, `${name} must use the readable judge architecture`);
+    assert.doesNotMatch(markdown, /!\[[^\]]*System Architecture[^\]]*\]\(\.\.\/docs\/architecture\.png\)/i,
+      `${name} must not present the dense technical appendix as the judge-facing System Architecture`);
+  }
   assert.deepEqual([...jpeg.subarray(0, 2)], [0xff, 0xd8], "architecture asset must be JPEG");
 
   const metadataMarkers = new Set([
@@ -743,6 +756,7 @@ test("CHECK 6 · media: canonical architecture JPEG has no public metadata segme
 
   const renderer = readFileSync(join(ROOT, "scripts", "render-submission-assets.mjs"), "utf8");
   assert.match(renderer, /--write\|--check/);
+  assert.match(renderer, /demo\/final-media\/judge-architecture\.jpg is not the canonical raster of docs\/judge-architecture\.svg/);
   assert.match(renderer, /entropy-coded image data changed while stripping metadata/i);
 });
 

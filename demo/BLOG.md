@@ -20,9 +20,12 @@ and how we measured whether the agent's decisions are any good.
 
 ## System Architecture
 
-Below is the system architecture diagram showing the Autopilot agent loop, human-in-the-loop gate, and defense layer:
+Below is the judge-facing system architecture: one readable proposal flow, an explicit
+"model stops" boundary, authenticated human control, and a separate durable evidence
+loop. The dense component-level render remains available in the repository as a
+technical appendix.
 
-![System Architecture](../docs/architecture.png)
+![Archon Autopilot system architecture](./final-media/judge-architecture.jpg)
 
 ## The workflow: reason all the way up to the point of consequence
 

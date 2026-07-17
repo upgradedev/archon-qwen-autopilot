@@ -84,7 +84,7 @@ Alibaba deployment.
 
 Below is the system architecture diagram showing the Autopilot agent loop, human-in-the-loop gate, and defense layer:
 
-![System Architecture](../docs/architecture.png)
+![Archon Autopilot system architecture](./final-media/judge-architecture.jpg)
 
 ## How we built it
 
