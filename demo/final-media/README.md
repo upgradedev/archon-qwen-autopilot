@@ -9,7 +9,7 @@ build scratch belong in ignored `demo/.private-captures/` or `.artifacts/`.
 Obsolete pre-auth UI captures were removed; only explicitly promoted files in this
 directory can become gallery evidence.
 
-Final expected artifacts:
+Promoted canonical artifacts:
 
 - `judge-architecture.jpg` — sanitized 1600×900 judge-facing architecture
   raster generated from `../../docs/judge-architecture.svg`; it distinguishes
@@ -18,7 +18,7 @@ Final expected artifacts:
 - `autopilot-live-intake-pending.png` — final reviewer flow, Qwen tool/observation
   trace and durable PENDING proposal.
 - `autopilot-human-amend-diff.png` — proposed→approved argument diff and decided result.
-- `autopilot-correction-learning.png` — €5,000 re-bill and €3,000 control comparison.
+- `autopilot-correction-learning.png` — matching re-bill and corrected-control comparison.
 - `autopilot-security-pending.png` — recognized hostile-input warning while the item
   remains PENDING behind the structural decision boundary.
 - `autopilot-alibaba-proof.png` — sanitized app-specific deployment identity, public
@@ -26,14 +26,14 @@ Final expected artifacts:
   actual decision/vision canaries and verified live model IDs; no credentials or
   administrative identifiers.
 - `autopilot-demo.mp4` — reviewed nine-beat render below the 175-second publication
-  safety limit. The hosted
+  safety limit, with hash-locked local narration and no music/captured audio. The hosted
   Public video URL, not this repository file, is used in Devpost.
 - `autopilot-demo.en.srt` — exact nine-cue English sidecar measured from the same
   frame-quantized beat windows as the final video.
 - `autopilot-demo.real-motion.json` — final evidence/rights/hash manifest binding the
   caption-only base, genuine public-preview footage, `CAPTURE_REVIEW`, exact runtime,
-  MP4, SRT and thumbnail.
-- `autopilot-demo.qa.json` — independent post-compose media, silence, timing,
+  narration script/voice lock, MP4, SRT and thumbnail.
+- `autopilot-demo.qa.json` — independent post-compose media, audio, timing,
   frame-diversity and hash verification consumed by `--verify-only`.
 
 The live capture transaction also writes tracked
@@ -52,7 +52,7 @@ changing an otherwise valid manifest or subtitle without altering repository dat
 
 ```powershell
 git -c core.autocrlf=false checkout HEAD -- demo/gallery/CAPTURE_REVIEW.json demo/final-media/autopilot-demo.en.srt demo/final-media/autopilot-demo.real-motion.json demo/final-media/autopilot-demo.qa.json
-python demo/media-tools/compose_real_motion_video.py --verify-only
+python demo/media-tools/add_rights_safe_narration.py --verify-only
 ```
 
 ## Reproducible authored-asset pass
@@ -73,5 +73,5 @@ install the lockfile-selected browser with `PLAYWRIGHT_BROWSERS_PATH` pointed at
 ignored project-local `.artifacts/ms-playwright` directory; do not store submission
 masters in that scratch directory.
 
-These files do not exist until the **new exact-current-source** post-deploy capture
-pass; never substitute historical release media or media from another entry.
+These files were promoted by the **exact-current-source** post-deploy capture pass;
+never substitute historical release media or media from another entry.

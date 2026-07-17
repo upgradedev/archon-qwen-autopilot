@@ -2,10 +2,10 @@
   "schemaVersion": 3,
   "status": "passed",
   "project": "archon-qwen-autopilot",
-  "capturedAt": "2026-07-17T01:14:25Z",
+  "capturedAt": "2026-07-17T07:38:01Z",
   "publicUrl": "https://autopilot.43.106.13.19.sslip.io",
   "deployedRuntimeSha": "030950e9b1e2353ee64f422ad050feb9733745bc",
-  "captureSourceHead": "51f73aebd7fcf25dce6afde472cdbcdfb7dbdcca",
+  "captureSourceHead": "e06f0be94279945c93751abe69526e697967e644",
   "releaseEvidence": {
     "schema": "cloud-assistant-sentinel-v1",
     "statusSha256": "8b7eced35474e5fc47a79cd7022f403a2dc94b0c4216e3700cdf1dda351d4ae2",
@@ -136,8 +136,8 @@
     "finalMedia": {
       "autopilot-live-intake-pending.png": {
         "path": "demo/final-media/autopilot-live-intake-pending.png",
-        "sha256": "72b0f7472641290f0c799cb4427d24d9a39e3722dd8e72976f0bd53534d28b5c",
-        "bytes": 224022,
+        "sha256": "187b99a6c8861b020ff89ab026c24f3c454e4c3d4278cc799d358f8c74642bca",
+        "bytes": 227737,
         "dimensions": {
           "width": 1920,
           "height": 1080
@@ -148,8 +148,8 @@
       },
       "autopilot-human-amend-diff.png": {
         "path": "demo/final-media/autopilot-human-amend-diff.png",
-        "sha256": "83156b31f4e0cd3329d25a92a40ef546886e0e3b12efd8188170f028ff140c09",
-        "bytes": 145322,
+        "sha256": "8b8aff254ed9f6d9411056868231cdfb192bbf0898044b28e80e077285cbead2",
+        "bytes": 145669,
         "dimensions": {
           "width": 1920,
           "height": 1080
@@ -172,8 +172,8 @@
       },
       "autopilot-security-pending.png": {
         "path": "demo/final-media/autopilot-security-pending.png",
-        "sha256": "f3cbd966769782668b85b2633dd18de0f56d0315baf2700c246caeb7d65111c0",
-        "bytes": 197302,
+        "sha256": "ac8fb350e4b59fea40cc71d4e7590ea52806988b27c4e532a1378216927e1891",
+        "bytes": 197923,
         "dimensions": {
           "width": 1920,
           "height": 1080
@@ -184,8 +184,8 @@
       },
       "autopilot-alibaba-proof.png": {
         "path": "demo/final-media/autopilot-alibaba-proof.png",
-        "sha256": "07b1c11655057a7adc73ec1e0d109f870320b80d88afa658cb7627632e046bb4",
-        "bytes": 271882,
+        "sha256": "cbd03a7d33f2fbd9839a558c97f7b927a3b8afeb9e49b5e87f0cba47cd71f13d",
+        "bytes": 272295,
         "dimensions": {
           "width": 1920,
           "height": 1080
@@ -196,8 +196,8 @@
       },
       "autopilot-youtube-thumbnail.png": {
         "path": "demo/final-media/autopilot-youtube-thumbnail.png",
-        "sha256": "e9ebd07342b47f003e18acf2a3f7dfd8e25f427396c42f2603acb3e85a0b58eb",
-        "bytes": 338175,
+        "sha256": "f84043163589ce6e3cd93456cee9f351d3a306c423070f11d62ee6c29a195643",
+        "bytes": 341989,
         "dimensions": {
           "width": 1280,
           "height": 720
@@ -210,8 +210,8 @@
     "gallery": {
       "autopilot-01-live-intake-pending.png": {
         "path": "demo/gallery/autopilot-01-live-intake-pending.png",
-        "sha256": "ad23707654930dc7c38dc2d7f2bf425d3b562b0e3317a5f95f270441c6912abd",
-        "bytes": 395767,
+        "sha256": "d8aabbdb88ef09d277ad41d0414c8d600168c241270fe583f10e340dfd18d319",
+        "bytes": 405687,
         "dimensions": {
           "width": 1500,
           "height": 1000
@@ -224,8 +224,8 @@
       },
       "autopilot-02-human-amend-diff.png": {
         "path": "demo/gallery/autopilot-02-human-amend-diff.png",
-        "sha256": "66ecb2277414cc1b11ae60e3a21416055aad6af83b749776e59f9e43ba42a2c4",
-        "bytes": 205162,
+        "sha256": "ee533651075cb1d70776ad94ac3dcf6cae704d97878d252f80ff29dcd75d6c37",
+        "bytes": 205572,
         "dimensions": {
           "width": 1500,
           "height": 1000
@@ -252,8 +252,8 @@
       },
       "autopilot-04-security-pending.png": {
         "path": "demo/gallery/autopilot-04-security-pending.png",
-        "sha256": "4cf5a5ebd4f1f08b9a1cfadff0edd0cfca3df7c60ff8106de31300ca96b3924f",
-        "bytes": 340491,
+        "sha256": "758859fcd1ed8d87460a5e59a0eb0dd08f8b9e1873c973904e7c03e5cd54286e",
+        "bytes": 340760,
         "dimensions": {
           "width": 1500,
           "height": 1000
@@ -266,8 +266,8 @@
       },
       "autopilot-05-alibaba-qwen-proof.png": {
         "path": "demo/gallery/autopilot-05-alibaba-qwen-proof.png",
-        "sha256": "4e49cfe0c48c1ddb94f19ef9ae3d51bdde28f29392fdb3370c6a0fe105061191",
-        "bytes": 411104,
+        "sha256": "1dbf5fda48db765bf1bebac5a377658619776ea2e6373f2557aacf4b628d187a",
+        "bytes": 411436,
         "dimensions": {
           "width": 1500,
           "height": 1000
@@ -281,8 +281,8 @@
     },
     "architecture": {
       "path": "demo/final-media/judge-architecture.jpg",
-      "sha256": "0487fae27df6a8923ed9200b03ccdaf01ffed5d5faa972f62e54d791c584d54a",
-      "bytes": 223115,
+      "sha256": "ff38a6ac87677e16d169766a3e8fd27d0eaff5f427294b9fc0187c14c3d7d059",
+      "bytes": 343799,
       "format": "JPEG",
       "metadataKeys": []
     }

@@ -1,72 +1,287 @@
 {
-  "builder": "caption-led-real-motion-compositor-v1",
+  "baseComposition": {
+    "manifestSha256": "8f659168b5bde4432cdcee7ae54a0574a8fcff0400cabc8ef598f1e55b47e2a0",
+    "qaSha256": "499a3974259e853f7add0f67d561b8923bf863a82872d6abae2da069d97b23c3",
+    "silentDecodedPeakS16": 0,
+    "silentVideoSha256": "fe3a9ab9d3ee654dff1a8d7d5bb816ccbfc6f89072375de8712f91c1b54ab500",
+    "visualStreamSha256": "2f5abecfb4b946e40c29fd49e4b707b0b634a157ae436e970e7022eb66b506f0"
+  },
+  "builder": "caption-led-real-motion-plus-rights-safe-narration-v1",
   "claimBoundary": "Live footage demonstrates interaction with the deployed app; benchmark and security claims remain bounded by CAPTURE_REVIEW and the existing caption source.",
   "evidence": {
     "captureReviewPath": "demo/gallery/CAPTURE_REVIEW.json",
-    "captureReviewSha256": "0159277a1275e7d9ad2995d0f82b19abe5b0dfce59b836e880ea155b7ee6bf2c"
+    "captureReviewSha256": "765cd1139b17b6a25d202b56ac42d0458375a8eb2a946b4fd3ae808bba939d66"
   },
   "exactRuntimeSource": "030950e9b1e2353ee64f422ad050feb9733745bc",
-  "generatedAt": "2026-07-17T02:23:34Z",
+  "generatedAt": "2026-07-17T08:40:08Z",
   "inputs": {
     "baseVideo": {
-      "path": ".artifacts/final-video/base-030950e9b1e2-26da3e3c1d6f90e0/caption-base.single-link.mp4",
-      "sha256": "a37cdcd4ca51962229175f40a023575308e643c34066dae3573d89014487c741"
+      "path": ".artifacts/final-video/base-030950e9b1e2-823783595def1d63/caption-base.single-link.mp4",
+      "sha256": "397b1068201bf7a2267b2ef96b9e9ae5e9dfe0a6ab8f8213aa4098e74c5f536a"
     },
     "subtitles": {
-      "path": ".artifacts/final-video/base-030950e9b1e2-26da3e3c1d6f90e0/caption-base.single-link.en.srt",
-      "sha256": "7c5c9a109c1b04b249e060b4694ef5bf4eeda0856505702fd5f112c1cf7d0fa2"
+      "path": ".artifacts/final-video/base-030950e9b1e2-823783595def1d63/caption-base.single-link.en.srt",
+      "sha256": "e210bd4269867b3016db2d41d1b763519aeb13b70677f88d7a653a8dddbb133e"
     },
     "thumbnail": {
       "path": "demo/final-media/autopilot-youtube-thumbnail.png",
-      "sha256": "e9ebd07342b47f003e18acf2a3f7dfd8e25f427396c42f2603acb3e85a0b58eb"
+      "sha256": "f84043163589ce6e3cd93456cee9f351d3a306c423070f11d62ee6c29a195643"
     }
   },
   "liveInteraction": {
     "actions": [
       {
         "action": "loaded live public Autopilot with reviewer workspace locked",
-        "atSeconds": 1.668
+        "atSeconds": 1.605
       },
       {
         "action": "entered an original synthetic invoice in the public UI",
-        "atSeconds": 2.615
+        "atSeconds": 2.548
       },
       {
         "action": "clicked Process invoice to start the live Qwen evidence loop",
-        "atSeconds": 3.312
+        "atSeconds": 3.258
       },
       {
-        "action": "observed relevant read/analyze steps stream into the UI: recall_vendor_history → validate_invoice → check_duplicate",
-        "atSeconds": 13.729
+        "action": "observed relevant read/analyze steps stream into the UI: recall_vendor_history → validate_invoice",
+        "atSeconds": 10.293
       },
       {
         "action": "showed the completed non-durable proposal and human-boundary copy",
-        "atSeconds": 13.822
+        "atSeconds": 10.356
       }
     ],
     "liveInputFullyConsumed": true,
     "manifestPath": ".artifacts/final-video/autopilot-live-interaction.manifest.json",
-    "manifestSha256": "611d668b7425fddfe65b388aa8aa4aadbeed777c0e624c17c49e7d7a40aa1403",
+    "manifestSha256": "853424c0b318ea7526a6ed1e8b33886ed56c91425aa9a043ab7f4d4f2d5a95ef",
     "overlayEndSeconds": 28.0,
     "overlayStartSeconds": 19.0,
     "videoPath": ".artifacts/final-video/autopilot-live-interaction.mp4",
-    "videoSha256": "4e6c6be97c93a75f9508343bee302384db2a50e68932e4f3910b5965c8614ca1"
+    "videoSha256": "f5df791fea60fbabcd027770cea64f2c178c5a2c50872f4657af2578e476b756"
+  },
+  "narration": {
+    "cueCount": 9,
+    "cueMetrics": [
+      {
+        "captionTextSha256": "cdf4534b1d20b741381767dcd1ec87c7d72bb8a57b77b6fe51e513a1293d68df",
+        "endSeconds": 13.0,
+        "finalWindowAudio": {
+          "nonSilentFraction": 0.541476,
+          "peak": 19541,
+          "rms": 2657.614,
+          "samples": 1248000
+        },
+        "id": "stakes",
+        "processedDurationSeconds": 11.082,
+        "rawDurationSeconds": 11.084989,
+        "speechStartSeconds": 0.45,
+        "speechTextSha256": "19a93466d2a1c0917b167eb7b19f23d786786e6535a9080555698c9298d5415a",
+        "speedFactor": 1.0,
+        "startSeconds": 0.0,
+        "voiceWavSha256": "a53c21003e510e6b891983cc91a96d40feff2e4e4344a4d94cb3d1151c3703a3",
+        "wordCount": 27,
+        "wordsPerMinute": 146.18
+      },
+      {
+        "captionTextSha256": "f466400b09ce184ffc300497c16005235a451b7809128847f56b427a4071cdbb",
+        "endSeconds": 28.0,
+        "finalWindowAudio": {
+          "nonSilentFraction": 0.512462,
+          "peak": 19682,
+          "rms": 2752.795,
+          "samples": 1440000
+        },
+        "id": "product-boundary",
+        "processedDurationSeconds": 12.281875,
+        "rawDurationSeconds": 12.292426,
+        "speechStartSeconds": 13.45,
+        "speechTextSha256": "80d3a869023695973f8787bf1c9bae085d26946f5d374cb6619ebc934b0c4088",
+        "speedFactor": 1.0,
+        "startSeconds": 13.0,
+        "voiceWavSha256": "c075f231e7f95b63eb26d624f8930a95ceb5405a13d9db70a3a69d6c9972c21e",
+        "wordCount": 29,
+        "wordsPerMinute": 141.67
+      },
+      {
+        "captionTextSha256": "153ad089103181ad5c24cc2306f26c5f16a8213d6182e16aadbbe38cc6e22066",
+        "endSeconds": 52.0,
+        "finalWindowAudio": {
+          "nonSilentFraction": 0.4548,
+          "peak": 19574,
+          "rms": 2408.052,
+          "samples": 2304000
+        },
+        "id": "live-pending",
+        "processedDurationSeconds": 17.354604,
+        "rawDurationSeconds": 17.363447,
+        "speechStartSeconds": 28.45,
+        "speechTextSha256": "97509f410ec973f9a5b1ed094d2a915cfdfa8f41a2a74370c6ee3b3137b10c6c",
+        "speedFactor": 1.0,
+        "startSeconds": 28.0,
+        "voiceWavSha256": "22b812f12415b874059f9193f65f444e7847b38d2386647e9851140af08d244f",
+        "wordCount": 44,
+        "wordsPerMinute": 152.12
+      },
+      {
+        "captionTextSha256": "c1b3fbb783bbfc8efea0e9c28d7af4fa7bb6637c1a2ca83399e8950eb25a0049",
+        "endSeconds": 71.0,
+        "finalWindowAudio": {
+          "nonSilentFraction": 0.594376,
+          "peak": 19523,
+          "rms": 2933.032,
+          "samples": 1824000
+        },
+        "id": "human-control",
+        "processedDurationSeconds": 17.152479,
+        "rawDurationSeconds": 17.167347,
+        "speechStartSeconds": 52.45,
+        "speechTextSha256": "c1b3fbb783bbfc8efea0e9c28d7af4fa7bb6637c1a2ca83399e8950eb25a0049",
+        "speedFactor": 1.0,
+        "startSeconds": 52.0,
+        "voiceWavSha256": "84b3b7fabcb463753e7b11c572ad20364370f3370fd3d012bf311dcb9664838c",
+        "wordCount": 38,
+        "wordsPerMinute": 132.93
+      },
+      {
+        "captionTextSha256": "5eef7ce9856cc578d94bd930abb12f5e754e76d44e1a368bef82fb93ba0ccb7d",
+        "endSeconds": 94.0,
+        "finalWindowAudio": {
+          "nonSilentFraction": 0.438613,
+          "peak": 19487,
+          "rms": 2474.681,
+          "samples": 2208000
+        },
+        "id": "correction-evidence",
+        "processedDurationSeconds": 14.421958,
+        "rawDurationSeconds": 14.427392,
+        "speechStartSeconds": 71.45,
+        "speechTextSha256": "5eef7ce9856cc578d94bd930abb12f5e754e76d44e1a368bef82fb93ba0ccb7d",
+        "speedFactor": 1.0,
+        "startSeconds": 71.0,
+        "voiceWavSha256": "ad825a0919621e3ae10677f93eefc03490e3110f0241d8a07e7c46491eb57a26",
+        "wordCount": 42,
+        "wordsPerMinute": 174.73
+      },
+      {
+        "captionTextSha256": "e9f8347534565da67d3bfba8f2501d8d50fe0ab501ded830137b23f6b94c00b6",
+        "endSeconds": 113.0,
+        "finalWindowAudio": {
+          "nonSilentFraction": 0.622939,
+          "peak": 19711,
+          "rms": 2813.76,
+          "samples": 1824000
+        },
+        "id": "measured-evidence",
+        "processedDurationSeconds": 17.958729,
+        "rawDurationSeconds": 18.572154,
+        "speechStartSeconds": 94.45,
+        "speechTextSha256": "e9f8347534565da67d3bfba8f2501d8d50fe0ab501ded830137b23f6b94c00b6",
+        "speedFactor": 1.03466,
+        "startSeconds": 94.0,
+        "voiceWavSha256": "940872107d0b4cba2fd74d249a603044370b5a997fbc3921c8ec788294bb1b93",
+        "wordCount": 40,
+        "wordsPerMinute": 133.64
+      },
+      {
+        "captionTextSha256": "091c21b07fb6bf8d00d358176c6e60f42c4167d91ddda2f4c882ebe0b16ac1dc",
+        "endSeconds": 134.0,
+        "finalWindowAudio": {
+          "nonSilentFraction": 0.499922,
+          "peak": 19692,
+          "rms": 2668.649,
+          "samples": 2016000
+        },
+        "id": "structural-safety",
+        "processedDurationSeconds": 15.542083,
+        "rawDurationSeconds": 15.55483,
+        "speechStartSeconds": 113.45,
+        "speechTextSha256": "091c21b07fb6bf8d00d358176c6e60f42c4167d91ddda2f4c882ebe0b16ac1dc",
+        "speedFactor": 1.0,
+        "startSeconds": 113.0,
+        "voiceWavSha256": "74864cdba616be88d3975ff0d3400d405cca0c015b211668a43de9da9f7d5748",
+        "wordCount": 42,
+        "wordsPerMinute": 162.14
+      },
+      {
+        "captionTextSha256": "15a17120b5d5827ee3d195f6498d4341a1c1fbe4b8f043f556b5b98b2ee64b3a",
+        "endSeconds": 154.0,
+        "finalWindowAudio": {
+          "nonSilentFraction": 0.54518,
+          "peak": 19481,
+          "rms": 2674.744,
+          "samples": 1920000
+        },
+        "id": "alibaba-qwen-proof",
+        "processedDurationSeconds": 16.893167,
+        "rawDurationSeconds": 16.901587,
+        "speechStartSeconds": 134.45,
+        "speechTextSha256": "6a4910dc50bdeeda8d5965b70be7eb336f1aea5eb2ca4a8ed02df60fb5a8705e",
+        "speedFactor": 1.0,
+        "startSeconds": 134.0,
+        "voiceWavSha256": "a6b44371e52e1bff20f06f487b632aa9aa635c61d0ea898a8a61125543255392",
+        "wordCount": 43,
+        "wordsPerMinute": 152.72
+      },
+      {
+        "captionTextSha256": "2c444017e63337d6757aaf3c09afb34461a0a87ac472af062be500ec19141095",
+        "endSeconds": 168.0,
+        "finalWindowAudio": {
+          "nonSilentFraction": 0.448289,
+          "peak": 19453,
+          "rms": 2343.91,
+          "samples": 1344000
+        },
+        "id": "close",
+        "processedDurationSeconds": 9.735292,
+        "rawDurationSeconds": 9.749841,
+        "speechStartSeconds": 154.45,
+        "speechTextSha256": "08d2276f174eb582c886694f2041b05b402b380290cfc19989c29bf01857a03b",
+        "speedFactor": 1.0,
+        "startSeconds": 154.0,
+        "voiceWavSha256": "0f232153f6347ddb9c3bee33be6da006f3c461f406122e40e52c12576b4a508f",
+        "wordCount": 28,
+        "wordsPerMinute": 172.57
+      }
+    ],
+    "engine": {
+      "name": "piper-tts",
+      "usage": "local synthesis only; engine and virtual environment are not distributed",
+      "version": "1.4.1"
+    },
+    "masterPcmSha256": "d5976f7747b6a601d586155ebc2b0940252ea749dd15a8d362557cc14fb2a909",
+    "script": {
+      "path": "demo/media-tools/narration-script.json",
+      "sha256": "07ed5ae46fce3aeeeca488635b7ae1fcff3cf8c944f11b3ec74eb1e8d32d3963"
+    },
+    "voice": {
+      "configSha256": "6c2db7f558a4a8deb9fe822583c1c5105f6c4e834dd0f9de8ad17a888ee9fe1d",
+      "id": "en_US-norman-medium",
+      "modelCardSha256": "60eaf4d10009d1bd4a1aa555d337dae00f60421d72fee415b9139a021e7cb5d0",
+      "modelSha256": "b9739443232a80a59c7d18810dd856899bf16a7964725f5ab81ea49b1351cb71",
+      "sourceRevision": "82999b670b06c78cabeb830d535b63a31cd0ca22",
+      "trainingDataset": "LibriVox recordings",
+      "trainingDatasetLicense": "public domain"
+    },
+    "voiceLock": {
+      "path": "demo/media-tools/narration-voice.lock.json",
+      "sha256": "761f0e1d7ff6852ddb968a28ea9ac08ec0402d8e18f690692f4e5eff41530fb5"
+    }
   },
   "outputs": {
     "qa": {
       "path": "demo/final-media/autopilot-demo.qa.json",
-      "sha256": "499a3974259e853f7add0f67d561b8923bf863a82872d6abae2da069d97b23c3"
+      "sha256": "9f539e49fd3fb1dcb3e92ded2e8a357b9d80c32445f0dfc1cd0ee849057d0eab"
     },
     "subtitles": {
       "cues": 9,
       "firstStart": 0.0,
       "lastEnd": 168.0,
       "path": "demo/final-media/autopilot-demo.en.srt",
-      "sha256": "7c5c9a109c1b04b249e060b4694ef5bf4eeda0856505702fd5f112c1cf7d0fa2"
+      "sha256": "e210bd4269867b3016db2d41d1b763519aeb13b70677f88d7a653a8dddbb133e"
     },
     "thumbnail": {
       "path": "demo/final-media/autopilot-youtube-thumbnail.png",
-      "sha256": "e9ebd07342b47f003e18acf2a3f7dfd8e25f427396c42f2603acb3e85a0b58eb"
+      "sha256": "f84043163589ce6e3cd93456cee9f351d3a306c423070f11d62ee6c29a195643"
     },
     "video": {
       "audioChannels": 2,
@@ -79,7 +294,7 @@
       "height": 1080,
       "path": "demo/final-media/autopilot-demo.mp4",
       "pixelFormat": "yuv420p",
-      "sha256": "86ba3acde85ad9911ede0c80243674bca5719704eecd7b513f49cba7a43cce5f",
+      "sha256": "06e89dbfd5fefc864568c306056796bc19e5e24eeb76a423b6d07047f10409cc",
       "videoCodec": "h264",
       "videoStreamCount": 1,
       "width": 1920
@@ -87,11 +302,12 @@
   },
   "publicUrl": "https://autopilot.43.106.13.19.sslip.io",
   "rightsProfile": {
-    "audio": "locally generated digital silence",
+    "audio": "locally synthesized narration from a hash-locked public-domain-source voice; no music",
+    "capturedAudio": false,
     "thirdPartyMusic": false,
-    "tts": false,
-    "voice": false
+    "tts": true,
+    "voice": true
   },
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "status": "passed"
 }

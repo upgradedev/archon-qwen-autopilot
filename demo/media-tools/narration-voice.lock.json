@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "engine": {
+    "name": "piper-tts",
+    "version": "1.4.1",
+    "usage": "local synthesis only; engine and virtual environment are not distributed"
+  },
+  "voice": {
+    "id": "en_US-norman-medium",
+    "language": "en-US",
+    "sourceRepository": "https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_US/norman/medium",
+    "sourceRevision": "82999b670b06c78cabeb830d535b63a31cd0ca22",
+    "trainingDataset": "LibriVox recordings",
+    "trainingDatasetLicense": "public domain",
+    "modelCardStatement": "Trained from scratch from approximately 15.5 hours of LibriVox recordings.",
+    "files": {
+      "en_US-norman-medium.onnx": "b9739443232a80a59c7d18810dd856899bf16a7964725f5ab81ea49b1351cb71",
+      "en_US-norman-medium.onnx.json": "6c2db7f558a4a8deb9fe822583c1c5105f6c4e834dd0f9de8ad17a888ee9fe1d",
+      "MODEL_CARD": "60eaf4d10009d1bd4a1aa555d337dae00f60421d72fee415b9139a021e7cb5d0",
+      "SOURCE_REVISION.txt": "6a1566b3206cdc5d893070794a3e89b6e0bf84eeaee1a727fae48dc61eda0996"
+    }
+  },
+  "outputRights": {
+    "capturedAudio": false,
+    "music": false,
+    "thirdPartyMusic": false,
+    "voice": true,
+    "tts": true
+  }
+}

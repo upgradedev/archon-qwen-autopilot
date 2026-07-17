@@ -45,8 +45,8 @@ not add a tenth idea.
 4. **Exact human control:** amend typed arguments, approve, then show proposed→approved
    diff and the configured JSONL outcome. State atomic claim and explicit uncertain
    recovery.
-5. **Correction signal:** €3,000 baseline → human-corrected €5,000 overbill → €5,000
-   re-bill review, with €3,000 negative control still a payment proposal.
+5. **Correction signal:** verified baseline → human-corrected overbill → matching
+   re-bill review, with the corrected control still a payment proposal.
 6. **Evidence:** `22/22` tuned developer-labelled deterministic regression, average
    `2.4` autonomous evidence steps (53/22, rounded), a fixed 12-case synthetic
    workflow model, and 16 original synthetic vision fixtures. No candidate model was
@@ -109,22 +109,26 @@ python demo/media-tools/build-real-motion-submission.py `
   --expected-sha 030950e9b1e2353ee64f422ad050feb9733745bc `
   --replace
 
-python demo/media-tools/compose_real_motion_video.py --verify-only
+python demo/media-tools/add_rights_safe_narration.py `
+  --piper-python .artifacts/tts/venv/Scripts/python.exe `
+  --replace
+
+python demo/media-tools/add_rights_safe_narration.py --verify-only
 ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 demo/final-media/autopilot-demo.mp4
 ```
 
-The one-command builder creates the fixed 168-second/30-fps caption-only base
-internally, then overlays genuine public-preview motion while preserving generated
-digital silence. It must create `autopilot-demo.en.srt`,
+The visual builder creates the fixed 168-second/30-fps caption-only base internally,
+then overlays genuine public-preview motion. The separate local narration pass
+replaces only verified digital silence and creates the final `autopilot-demo.en.srt`,
 `autopilot-demo.real-motion.json`, and `autopilot-demo.qa.json` beside the MP4.
 
 - [ ] Renderer reports exactly `9 beats`; final is 1920×1080 H.264/AAC and `<175s`.
-- [ ] Watch once with headphones and once muted with captions/overlays. Caption-only
-  mode must contain intentional digital silence and no unexpected sound; narrated
-  mode must contain no clipped word, silent ending, or drift. Neither mode may have
+- [ ] Watch once with headphones and once muted with captions/overlays. The publication
+  candidate must have clear narration with no clipped word, missing cue or drift and
+  no music, microphone or captured system audio. It must not have
   a blank lead-in, unreadable crop/caption, or stale label.
-- [ ] Real-motion manifest + QA report no captured speech, no TTS, no third-party
-  music, nine cues, 30 fps, 1920×1080, genuine frame diversity, and a strict
+- [ ] Real-motion manifest + QA report local TTS, no captured audio, no third-party
+  music, nine audible cues, 30 fps, 1920×1080, genuine frame diversity, and a strict
   duration below 175 seconds; MP4/SRT/thumbnail/evidence hashes match. They must also
   attest that the ≤9-second action-aware highlight ends at the final raw browser frame
   and was consumed in full by the 00:19–00:28 overlay.

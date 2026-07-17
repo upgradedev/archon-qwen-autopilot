@@ -539,14 +539,19 @@ test("CHECK 6 · media: obsolete pre-auth UI captures remain deleted", () => {
 
 test("CHECK 6 · media: proof narration separates runtime, capture-source and submitted HEADs", () => {
   const renderer = readFileSync(join(ROOT, "scripts", "make_frames.py"), "utf8").toLowerCase();
+  const narration = JSON.parse(
+    readFileSync(join(ROOT, "demo", "media-tools", "narration-script.json"), "utf8"),
+  ) as { cues?: Array<{ id?: string; text?: string }> };
+  const proof = narration.cues?.find((cue) => cue.id === "alibaba-qwen-proof")?.text?.toLowerCase() ?? "";
   assert.ok(
-    renderer.includes("recorded deployed runtime")
-      && renderer.includes("capture-source head")
-      && renderer.includes("final submitted head"),
+    renderer.includes("narration-script.json")
+      && proof.includes("recorded deployment hash")
+      && proof.includes("capture-source commit")
+      && proof.includes("submitted head"),
     "Alibaba proof narration must distinguish deployed runtime, capture-source and final submitted identities",
   );
   assert.ok(
-    !renderer.includes("comes from the exact final commit"),
+    !proof.includes("comes from the exact final commit"),
     "proof narration must not collapse deployed runtime SHA and final submitted HEAD",
   );
 });

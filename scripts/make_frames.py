@@ -581,6 +581,32 @@ def build_beats(assets) -> list[Beat]:
         if any(model_id and model_id.lower() not in model_label.lower() for model_id in candidate_ids):
             raise SystemExit("VIDEO_MODEL_LABEL must match the promoted candidate model IDs")
 
+    narration_path = repo_contained_path(
+        os.path.join(repo_root, "demo", "media-tools", "narration-script.json"),
+        "canonical narration script",
+        repo_root,
+        must_exist=True,
+    )
+    try:
+        with open(narration_path, encoding="utf-8") as narration_file:
+            narration_payload = json.load(narration_file)
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"invalid canonical narration script: {exc}") from exc
+    narration_rows = narration_payload.get("cues") if isinstance(narration_payload, dict) else None
+    if not isinstance(narration_rows, list):
+        raise SystemExit("canonical narration script has no cue list")
+    narration_by_id = {
+        str(row.get("id")): str(row.get("text", "")).strip()
+        for row in narration_rows if isinstance(row, dict)
+    }
+    expected_narration_ids = {
+        "stakes", "product-boundary", "live-pending", "human-control",
+        "correction-evidence", "measured-evidence", "structural-safety",
+        "alibaba-qwen-proof", "close",
+    }
+    if set(narration_by_id) != expected_narration_ids or any(not text for text in narration_by_id.values()):
+        raise SystemExit("canonical narration script must contain the exact nine non-empty judge-beat cues")
+
     beats: list[Beat] = []
 
     def add(bid, narration, factory):
@@ -588,9 +614,7 @@ def build_beats(assets) -> list[Beat]:
 
     # 1 · Stakes
     add("01-stakes",
-        "Accounts-payable teams must extract, validate, de-duplicate and triage every "
-        "invoice under time pressure. Archon Autopilot automates the evidence gathering, "
-        "but never unattended payment. This is our Track Four Autopilot Agent.",
+        narration_by_id["stakes"],
         lambda: scene_bullets(
             "Track 4 · the stakes", "Automate evidence gathering, never unattended payment",
             ["Extract and validate invoices under time pressure",
@@ -600,75 +624,49 @@ def build_beats(assets) -> list[Beat]:
 
     # 2 · Product boundary
     add("02-boundary",
-        "This is an independent accounts-payable orchestration product. Public intake is "
-        "an isolated, redacted preview with no durable queue item. Authenticated reviewer "
-        "intake creates durable pending work. Qwen proposes through bounded tools; only the "
-        "human interface can decide or execute.",
+        narration_by_id["product-boundary"],
         lambda: scene_image(media["architecture"], "Product and trust boundary",
             "Public PREVIEW ≠ reviewer PENDING · model proposes · human decides"))
 
     # 3 · Original synthetic invoice to PENDING on the live deployment
     add("03-live-pending",
-        "On the final Alibaba deployment, an original synthetic invoice document enters the reviewer flow. Qwen "
-        "extracts the document, recalls vendor evidence, validates arithmetic, and selects "
-        "the relevant duplicate, variance, or context checks. The live trace shows tool calls and observations, "
-        "then stops at one durable pending proposal. Nothing has executed.",
+        narration_by_id["live-pending"],
         lambda: scene_image(media["pending"], "Synthetic invoice → durable PENDING",
             "Original demo data · Qwen evidence loop · nothing executed"))
 
     # 4 · Exact human control
     add("04-human-control",
-        "The reviewer sees the exact proposed action and arguments, then approves, amends "
-        "or rejects. Here the amendment is schema-validated and the decided view preserves "
-        "the before-and-after diff. Approved arguments equal executed arguments. An atomic "
-        "claim blocks replay; uncertain SMTP delivery is never called recipient-exactly-once "
-        "and is never blindly retried.",
+        narration_by_id["human-control"],
         lambda: scene_image(media["amend"], "Exact human control",
             "proposed → approved diff · atomic claim · explicit recovery"))
 
     # 5 · Correction changes behavior
     add("05-learning",
-        "The gate also creates correction evidence. A normal three-thousand-euro baseline "
-        "is followed by a five-thousand-euro overbill amended back to three thousand. On the "
-        "next bounded run, the five-thousand re-bill is flagged for review, while the "
-        "three-thousand control remains a payment proposal.",
+        narration_by_id["correction-evidence"],
         lambda: scene_image(media["learning"], "Correction changes the next decision",
-            "€5,000 re-bill → review · €3,000 control → proposal"))
+            "matching re-bill → review · corrected control → proposal"))
 
     # 6 · Measured evidence
     add("06-evidence",
-        "The deterministic workflow matches all twenty-two developer-labelled regression "
-        "cases, with an average two-point-four autonomous evidence steps before a proposal. "
-        "That is not live-model accuracy or a labor-savings result. A fixed twelve-case "
-        "synthetic workflow comparison reports only modeled review seconds and checkpoints, "
-        "and sixteen original vision fixtures retain raw outcomes. No candidate model was promoted.",
+        narration_by_id["measured-evidence"],
         lambda: scene_eval(
             "22/22 tuned offline · 12-case modeled workflow · 16 vision fixtures"))
 
     # 7 · Structural safety
     add("07-safety",
-        "A hostile invoice can influence a proposal, so recognized patterns are surfaced to "
-        "the reviewer; we do not claim universal detection. The stronger invariant is "
-        "structural: the model and four-tool MCP catalog contain no approve, amend, reject, "
-        "recover or pay capability. The proposal remains pending behind the human gate.",
+        narration_by_id["structural-safety"],
         lambda: scene_image(media["security"], "Structural safety under hostile input",
             "recognized warning · decision verbs absent · proposal still PENDING"))
 
     # 8 · Alibaba/Qwen proof
     add("08-alibaba-proof",
-        "Autopilot's proof binds its recorded deployed runtime SHA to the Alibaba deployment "
-        "and a separate clean capture-source head; the later final submitted head is only linked. "
-        "It shows Alibaba identity, public network-free health and readiness, authenticated "
-        "deep readiness, plus real Qwen decision and vision canaries. The displayed deployed "
-        "models are qwen-plus and qwen-vl-max; no candidate was promoted.",
+        narration_by_id["alibaba-qwen-proof"],
         lambda: scene_image(media["alibaba"], "Alibaba Cloud + Qwen proof",
             "/health · /ready · authenticated /ready/deep · decision + vision canaries"))
 
     # 9 · Close
     add("09-close",
-        "Archon Autopilot is open source under M.I.T., live on Alibaba Cloud, and submitted "
-        "to Track Four. Bounded where judgment helps; deterministic and human-controlled "
-        "where money moves.",
+        narration_by_id["close"],
         lambda: scene_outro(
             "Track 4 · bounded Qwen judgment · human-controlled money movement",
             public_url, model_label))

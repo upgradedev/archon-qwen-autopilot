@@ -14,7 +14,7 @@ the video to be publicly visible on YouTube, Vimeo, or Youku and below three min
 >
 > Qwen reads ambiguous invoice documents, recalls persistent vendor evidence first, validates finance fields, selects only the duplicate/variance/context checks warranted by that evidence, and proposes exactly one action. It then stops at a durable PENDING item. The model and four-tool MCP surface have no approval or execution authority; only an authenticated human can approve, amend, reject, or recover an action.
 >
-> Human corrections become evidence for later decisions: a €5,000 re-bill above a human-corrected €3,000 amount is escalated, while the compliant €3,000 control is not. No model weights are updated.
+> Human corrections become evidence for later decisions: after a reviewer corrects an overbill, a matching re-bill is escalated while the corrected control is not. No model weights are updated.
 >
 > Live app: https://autopilot.43.106.13.19.sslip.io
 >
@@ -24,7 +24,7 @@ the video to be publicly visible on YouTube, Vimeo, or Youku and below three min
 >
 > Alibaba/Qwen code proof: https://github.com/upgradedev/archon-qwen-autopilot/blob/main/src/qwen/client.ts
 >
-> Technical build journey: [PUBLIC_BLOG_URL — replace after signed-out publication, or remove this line]
+> Technical build journey: https://dev.to/efousekis/building-archon-autopilot-where-qwen-proposes-and-humans-control-the-money-4mfg
 >
 > Models: qwen-plus · qwen-vl-max · text-embedding-v4 through the DashScope-compatible Qwen path on Alibaba Cloud.
 >
@@ -77,5 +77,5 @@ model/SHA label. Save the reviewed thumbnail under `demo/final-media/`.
 - [ ] Use only a reviewed, rights-cleared thumbnail.
 - [ ] Check title, description, captions, thumbnail, and links on mobile and desktop.
 - [ ] Open the public page signed out/incognito and play from beginning to end.
-- [ ] Copy the canonical public page URL into `DEVPOST_PACKET.md`'s human-owned value
-  at draft time; do not hard-code an unpublished URL in Git.
+- [ ] Confirm the canonical public video URL in `DEVPOST_PACKET.md` matches the newly
+  uploaded narrated release before the Devpost draft is reviewed.

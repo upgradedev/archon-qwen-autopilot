@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "language": "en-US",
+  "timelineSeconds": 168,
+  "policy": {
+    "capturedAudio": false,
+    "currencyExamples": false,
+    "music": false,
+    "numericMoneyExamples": false,
+    "phoneticAliasesOnly": true
+  },
+  "cues": [
+    {
+      "id": "stakes",
+      "startSeconds": 0,
+      "endSeconds": 13,
+      "text": "Accounts payable runs on evidence, but money movement demands accountability. Archon Autopilot investigates invoices, then stops for human authorization. This is our Qwen Cloud Track Four agent.",
+      "speechText": "Accounts payable runs on evidence, but money movement demands accountability. Ark-on Autopilot investigates invoices, then stops for human authorization. This is our Kwen Cloud Track Four agent."
+    },
+    {
+      "id": "product-boundary",
+      "startSeconds": 13,
+      "endSeconds": 28,
+      "text": "Public intake is an isolated, redacted preview. Authenticated intake creates durable pending work. Qwen may gather evidence and propose an action; only the reviewer interface can decide or execute.",
+      "speechText": "Public intake is an isolated, redacted preview. Authenticated intake creates durable pending work. Kwen may gather evidence and propose an action; only the reviewer interface can decide or execute."
+    },
+    {
+      "id": "live-pending",
+      "startSeconds": 28,
+      "endSeconds": 52,
+      "text": "On Alibaba Cloud, a synthetic invoice enters the reviewer flow. Qwen Vision extracts it. Qwen Plus recalls vendor history, validates the numbers, and selects only relevant duplicate, variance, or context checks. The visible trace ends at one durable pending proposal. Nothing has executed.",
+      "speechText": "On Ali Baba Cloud, a synthetic invoice enters the reviewer flow. Kwen Vision extracts it. Kwen Plus recalls vendor history, validates the numbers, and selects only relevant duplicate, variance, or context checks. The visible trace ends at one durable pending proposal. Nothing has executed."
+    },
+    {
+      "id": "human-control",
+      "startSeconds": 52,
+      "endSeconds": 71,
+      "text": "The reviewer sees the exact proposal, evidence, and arguments, then approves, amends, or rejects. The decided view preserves the before-and-after diff. Executed arguments must equal authorized arguments. Atomic claiming blocks replay, and uncertain delivery is never blindly retried."
+    },
+    {
+      "id": "correction-evidence",
+      "startSeconds": 71,
+      "endSeconds": 94,
+      "text": "The gate also creates correction evidence. After a reviewer corrects a material overbill to the verified baseline, a matching re-bill is escalated on the next bounded run. The corrected control remains a payment proposal. This changes future behavior without changing model weights."
+    },
+    {
+      "id": "measured-evidence",
+      "startSeconds": 94,
+      "endSeconds": 113,
+      "text": "We keep every claim bounded. Twenty-two developer-labelled offline regressions pass, alongside a fixed twelve-case synthetic workflow model and sixteen hash-locked vision fixtures. These are reproducibility artifacts, not live-model accuracy, labor savings, or return on investment. No candidate model was promoted."
+    },
+    {
+      "id": "structural-safety",
+      "startSeconds": 113,
+      "endSeconds": 134,
+      "text": "A hostile invoice can influence a proposal, so recognized patterns are surfaced. The stronger invariant is structural: neither the model nor the four-tool M C P catalog can approve, amend, reject, recover, or pay. Every proposal remains behind the authenticated human gate."
+    },
+    {
+      "id": "alibaba-qwen-proof",
+      "startSeconds": 134,
+      "endSeconds": 154,
+      "text": "Deployment proof separates the recorded deployment hash, the clean capture-source commit, and the later submitted head. Public health, authenticated deep readiness, and real decision and vision canaries exercise Qwen Plus and Qwen V L Max on Alibaba Cloud. The evidence remains hash-bound.",
+      "speechText": "Deployment proof separates the recorded deployment hash, the clean capture-source commit, and the later submitted head. Public health, authenticated deep readiness, and real decision and vision canaries exercise Kwen Plus and Kwen V L Max on Ali Baba Cloud. The evidence remains hash-bound."
+    },
+    {
+      "id": "close",
+      "startSeconds": 154,
+      "endSeconds": 168,
+      "text": "Archon Autopilot is live and open source under the M I T license. It is built for Track Four. Judgment is bounded; money movement stays deterministic and human-controlled.",
+      "speechText": "Ark-on Autopilot is live and open source under the M I T license. It is built for Track Four. Judgment is bounded; money movement stays deterministic and human-controlled."
+    }
+  ]
+}

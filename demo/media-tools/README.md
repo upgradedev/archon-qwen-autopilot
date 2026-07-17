@@ -88,8 +88,8 @@ The command aborts without promotion unless all of these are true:
   duplicate, variance, or context checks warranted by that invoice—with no execution;
 - a genuine Alibaba ECS console capture decodes at the reviewed dimensions, stays
   private, and contributes only the hash-bound safe crop to the publishable proof;
-- the three-step correction challenge yields `€5,000 → flag_for_review` and the
-  `€3,000 → draft_payment` negative control, with stored correction evidence;
+- the three-step correction challenge routes the matching re-bill to review and keeps
+  the corrected negative control as a payment proposal, with stored correction evidence;
 - a synthetic hostile document visibly surfaces a recognized-injection warning and
   still stops at PENDING;
 - authenticated cleanup rejects every still-PENDING item carrying this run's exact
@@ -133,8 +133,10 @@ address, and administrative-principal identifiers are intentionally absent.
 
 The final video build also writes `demo/final-media/autopilot-demo.en.srt`. It has
 one English cue per final narration beat, using that beat's exact measured,
-frame-quantized audio window. The capture command itself does not synthesize or
-publish a voice and does not make any voice-rights assertion.
+frame-quantized audio window and the same canonical text used for burned captions.
+`add_rights_safe_narration.py` then synthesizes the pinned local voice and records
+model/config/card/revision hashes plus per-cue audio QA. The capture command itself
+does not synthesize or publish a voice.
 
 ## Safety and retry behavior
 

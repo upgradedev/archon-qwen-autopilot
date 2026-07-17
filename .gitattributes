@@ -24,6 +24,15 @@ eval/promotion-poppler.lock.json text eol=lf
 eval/results/evidence-ledger.json text eol=lf
 eval/results/*-attempt-*.json text eol=lf
 
+# Final publication evidence is mutually hash-bound. Keep its canonical UTF-8/LF
+# bytes in every checkout so Windows core.autocrlf cannot invalidate the recorder,
+# SRT, narration provenance, QA, or final real-motion manifest.
+demo/gallery/CAPTURE_REVIEW.json text eol=lf
+demo/final-media/*.srt text eol=lf
+demo/final-media/*.json text eol=lf
+demo/media-tools/narration-script.json text eol=lf
+demo/media-tools/narration-voice.lock.json text eol=lf
+
 # Impact evidence hashes the LF-canonical UTF-8 text form and the replay inputs
 # are pinned LF in every checkout. This makes the source/evidence binding stable
 # across Windows and Linux without weakening lone-CR rejection in the analyzer.
