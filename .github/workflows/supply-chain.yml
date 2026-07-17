@@ -52,9 +52,9 @@ jobs:
       EXPECTED_RUNTIME_APK_INVENTORY_LOCK_SHA256: 43aaf8086d5bad54e1152cb8e2ae1a7c172aff1c21b72af2bd8dde91dac61786
       EXPECTED_RUNTIME_APK_ARCHIVES_MANIFEST_SHA256: fa52b2f0cf44a64bc10c96f8989e48b2ca04d6fd20d2bd2eca420d0b52acd5da
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "24.18.0"
           cache: npm
@@ -501,7 +501,7 @@ jobs:
           )
 
       - name: Retain SBOM evidence before vulnerability scanning
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: production-sbom-${{ github.sha }}
           path: |
@@ -612,14 +612,14 @@ jobs:
 
       - name: Upload Grype SARIF to GitHub code scanning
         if: ${{ !cancelled() && steps.validate_supply_evidence.outcome == 'success' }}
-        uses: github/codeql-action/upload-sarif@02c5e83432fe5497fd85b873b6c9f16a8578e1d9 # v3.37.0
+        uses: github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a # v4.37.1
         with:
           sarif_file: .artifacts/supply-chain/grype-report.sarif
           category: grype-production-image
 
       - name: Retain SBOM, scan, database, and provenance evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: production-supply-chain-${{ github.sha }}
           path: |

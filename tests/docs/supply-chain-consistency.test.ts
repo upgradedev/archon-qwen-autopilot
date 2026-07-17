@@ -22,11 +22,11 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const readText = (relativePath: string) => readFileSync(join(ROOT, relativePath), "utf8");
 
 const ACTION_PINS = new Map([
-  ["actions/checkout", { sha: "34e114876b0b11c390a56381ad16ebd13914f8d5", release: "v4.3.1" }],
-  ["actions/setup-node", { sha: "49933ea5288caeca8642d1e84afbd3f7d6820020", release: "v4.4.0" }],
-  ["actions/setup-python", { sha: "a26af69be951a213d495a4c3e4e4022e16d87065", release: "v5.6.0" }],
-  ["actions/upload-artifact", { sha: "ea165f8d65b6e75b540449e92b4886f43607fa02", release: "v4.6.2" }],
-  ["github/codeql-action", { sha: "02c5e83432fe5497fd85b873b6c9f16a8578e1d9", release: "v3.37.0" }],
+  ["actions/checkout", { sha: "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0", release: "v7.0.0" }],
+  ["actions/setup-node", { sha: "820762786026740c76f36085b0efc47a31fe5020", release: "v7.0.0" }],
+  ["actions/setup-python", { sha: "ece7cb06caefa5fff74198d8649806c4678c61a1", release: "v6.3.0" }],
+  ["actions/upload-artifact", { sha: "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", release: "v7.0.1" }],
+  ["github/codeql-action", { sha: "7188fc363630916deb702c7fdcf4e481b751f97a", release: "v4.37.1" }],
 ]);
 
 const EXPECTED_ACTION_INVENTORY = new Map([
@@ -61,17 +61,17 @@ interface DockerInstruction {
 }
 
 const CODEQL_INIT =
-  "github/codeql-action/init@02c5e83432fe5497fd85b873b6c9f16a8578e1d9";
+  "github/codeql-action/init@7188fc363630916deb702c7fdcf4e481b751f97a";
 const CODEQL_ANALYZE =
-  "github/codeql-action/analyze@02c5e83432fe5497fd85b873b6c9f16a8578e1d9";
+  "github/codeql-action/analyze@7188fc363630916deb702c7fdcf4e481b751f97a";
 const CODEQL_UPLOAD =
-  "github/codeql-action/upload-sarif@02c5e83432fe5497fd85b873b6c9f16a8578e1d9";
+  "github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a";
 const CHECKOUT =
-  "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5";
+  "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0";
 const SETUP_NODE =
-  "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020";
+  "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020";
 const UPLOAD_ARTIFACT =
-  "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02";
+  "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a";
 const SYFT_POLICY_PATH = "$EVIDENCE_DIR/input-locks/syft-policy.yaml";
 const GRYPE_POLICY_PATH = "$EVIDENCE_DIR/input-locks/grype-policy.yaml";
 const SYFT_COMMAND = '"$TOOLS_DIR/syft/syft"';
@@ -1963,7 +1963,7 @@ test("SUPPLY adversarial — quoted uses are validated and YAML comments are not
     `jobs:
   test:
     steps:
-      - "uses": actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - "uses": actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 `,
     "quoted-approved.yml",
   );
@@ -1998,8 +1998,8 @@ test("SUPPLY adversarial — ambiguous YAML, aliases, complex keys, and quoted w
       `jobs:
   test:
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-        "uses": actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        "uses": actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
 `,
       "duplicate-key.yml",
     ),
@@ -2019,7 +2019,7 @@ jobs:
   assert.throws(() =>
     parseWorkflowSource(
       `? [uses]
-: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
 `,
       "complex-key.yml",
     ),
