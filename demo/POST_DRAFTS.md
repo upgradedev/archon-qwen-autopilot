@@ -1,9 +1,9 @@
 # Archon Autopilot — public post copy
 
-Replace bracketed publication URLs only after signed-out verification. Remove an
-optional URL line rather than publishing a placeholder.
+The demo and build-journey URLs below are the signed-out-verified public YouTube video
+and dev.to article. Keep every claim and caveat exactly as written when reposting.
 
-## LinkedIn / long-form social
+## Long-form social (dev.to / X)
 
 ```text
 We built Archon Autopilot for the Qwen Cloud Hackathon, Track 4: a human-gated
@@ -47,9 +47,9 @@ Live: https://autopilot.43.106.13.19.sslip.io
 
 Code (MIT): https://github.com/upgradedev/archon-qwen-autopilot
 
-Demo: [PUBLIC_VIDEO_URL]
+Demo: https://www.youtube.com/watch?v=Vc2mJdsoSX0
 
-Build journey: [PUBLIC_BLOG_URL]
+Build journey: https://dev.to/efousekis/building-archon-autopilot-where-qwen-proposes-and-humans-control-the-money-4mfg
 
 #Qwen #AlibabaCloud #AIHackathon #AgenticAI #FinTech #HumanInTheLoop
 ```
@@ -72,7 +72,7 @@ Archon Autopilot (Track 4): Qwen recalls first, validates, selects only relevant
 4/4 Live on Alibaba Cloud / Qwen, MIT licensed:
 https://autopilot.43.106.13.19.sslip.io
 https://github.com/upgradedev/archon-qwen-autopilot
-[PUBLIC_VIDEO_URL]
+https://www.youtube.com/watch?v=Vc2mJdsoSX0
 ```
 
 ## Devpost community update
