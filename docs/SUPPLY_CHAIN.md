@@ -1,6 +1,6 @@
 # Supply-chain lock and verification
 
-Verified on **2026-07-16**. These pins make the executable CI/runtime inputs
+Verified on **2026-07-17**. These pins make the executable CI/runtime inputs
 reviewable and prevent mutable major tags or package-repository state from silently
 changing the final submission build.
 
@@ -14,12 +14,12 @@ changing the final submission build.
 | Final installed APK inventory | 51 exact versions in `runtime-apk-inventory.lock` | Includes the 45-entry requirement closure plus six packages present only in the immutable Wolfi base; hosted `apk info -v` output must match exactly and is retained |
 | CI pgvector | `pgvector/pgvector:0.8.5-pg16-bookworm@sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb` | Docker Registry v2 returned this OCI-index digest for the official image tag |
 | Load generator | `k6` v2.1.0 Linux AMD64 | [Official Grafana k6 release](https://github.com/grafana/k6/releases/tag/v2.1.0); tarball SHA-256 `295d961ebfca306f295f1133068dcd403a8171c87f387928f5f30b0fbcff858a` matches its published checksum manifest |
-| Source analyzer | CodeQL Action v3.37.0 commit `02c5e83432fe5497fd85b873b6c9f16a8578e1d9`; bundled CLI/query bundle `2.26.0` | [Exact official Action commit](https://github.com/github/codeql-action/commit/02c5e83432fe5497fd85b873b6c9f16a8578e1d9); the commit's `defaults.json` selects `codeql-bundle-v2.26.0` |
+| Source analyzer | CodeQL Action v4.37.1 commit `7188fc363630916deb702c7fdcf4e481b751f97a`; bundled CLI/query bundle `2.26.1` | [Exact official Action commit](https://github.com/github/codeql-action/commit/7188fc363630916deb702c7fdcf4e481b751f97a); the commit's `defaults.json` selects `codeql-bundle-v2.26.1` |
 | SBOM generator | Syft v1.46.0 Linux AMD64 | [Official Anchore Syft release](https://github.com/anchore/syft/releases/tag/v1.46.0); tarball SHA-256 `d654f678b709eb53c393d38519d5ed7d2e57205529404018614cfefa0fb2b5ca`; extracted executable SHA-256 `574df1a0862ff88ad933be214e81069e35b17618a13e019f8f1c84fe063222a2`; reviewed `.syft.yaml` SHA-256 `426021b3be44dd47ae4ca10de945f7e3fe4fd520619d5825c48e1324f925a533` |
 | Image vulnerability scanner | Grype v0.115.0 Linux AMD64 | [Official Anchore Grype release](https://github.com/anchore/grype/releases/tag/v0.115.0); tarball SHA-256 `3fad92940650e514c0aa2dad83526942a055e210cec09a8a59d9c024adc2b90e`; extracted executable SHA-256 `05ffd2c28a607e48fb2269d9aac5b3d53e8a51bbac501946644745eae2119907`; reviewed `.grype.yaml` SHA-256 `5c7e79f0d60429243c7e085a483997ec0be11d0303b413bafae716c8ffae68b5` |
 | Vulnerability intelligence | Grype DB schema v6.1.8, built 2026-07-15 | Exact archive URL in `.github/workflows/supply-chain.yml`; SHA-256 `0d9ac9d49c93649ea6bf713c60960b46e33c939d49ac7de52df649453d29cf8e` |
 | JavaScript graph | `package-lock.json` | `npm ci`; registry tarballs are integrity-checked from the lock |
-| GitHub Actions | Full 40-character commit SHAs | Human-readable exact release comments sit beside every `uses:` reference |
+| GitHub Actions | `checkout` v7.0.0 commit `9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0`; `setup-node` v7.0.0 commit `820762786026740c76f36085b0efc47a31fe5020`; `setup-python` v6.3.0 commit `ece7cb06caefa5fff74198d8649806c4678c61a1`; `upload-artifact` v7.0.1 commit `043fb46d1a93c77aae656e7c1c64a875d1fc6a0a` | Official releases: [checkout v7.0.0](https://github.com/actions/checkout/releases/tag/v7.0.0), [setup-node v7.0.0](https://github.com/actions/setup-node/releases/tag/v7.0.0), [setup-python v6.3.0](https://github.com/actions/setup-python/releases/tag/v6.3.0), [upload-artifact v7.0.1](https://github.com/actions/upload-artifact/releases/tag/v7.0.1); every reference is a full 40-character commit SHA and each pinned `action.yml` declares Node 24 |
 | Video Python graph | Python `3.11.15` plus `requirements.lock` | `pip --require-hashes --only-binary=:all:` and `pip check` |
 | Local promotion Poppler | Windows x64 package spec `poppler=26.05.0=h4b9d284_3`; executable SHA-256 `742cbbd9a00931ad16c6618410bc40471375d639a45c61c1d86f3dcfc54b6388`; 178-file bundle SHA-256 `26876d12591351aa880d98a4a84b7a3f9d242f043ee95716ac8198ed0f5b0e30` | Runtime is provisioned under ignored `.artifacts/supply-chain/poppler/`; every keyed artifact re-attests the package metadata, executable and complete bundle against `eval/promotion-poppler.lock.json` |
 
