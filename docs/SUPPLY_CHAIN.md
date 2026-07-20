@@ -1,6 +1,6 @@
 # Supply-chain lock and verification
 
-Verified on **2026-07-17**. These pins make the executable CI/runtime inputs
+Verified on **2026-07-20**. These pins make the executable CI/runtime inputs
 reviewable and prevent mutable major tags or package-repository state from silently
 changing the final submission build.
 
