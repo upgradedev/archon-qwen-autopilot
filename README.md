@@ -1,12 +1,15 @@
 # Archon Autopilot: a human-gated accounts-payable agent (Qwen · Track 4)
 
-[![CI](https://github.com/upgradedev/archon-qwen-autopilot/actions/workflows/ci.yml/badge.svg)](https://github.com/upgradedev/archon-qwen-autopilot/actions/workflows/ci.yml)
+[![CI](https://github.com/upgradedev/archon-qwen-autopilot/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/upgradedev/archon-qwen-autopilot/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/upgradedev/archon-qwen-autopilot/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/upgradedev/archon-qwen-autopilot/actions/workflows/codeql.yml)
+[![Supply Chain](https://github.com/upgradedev/archon-qwen-autopilot/actions/workflows/supply-chain.yml/badge.svg?branch=main)](https://github.com/upgradedev/archon-qwen-autopilot/actions/workflows/supply-chain.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-Alibaba%20Cloud-ff6a00?logo=alibabacloud&logoColor=white)](https://autopilot.43.106.13.19.sslip.io)
-[![Demo video](https://img.shields.io/badge/Demo-2%3A48%20on%20YouTube-red?logo=youtube)](https://www.youtube.com/watch?v=-q-CkOcdS14)
+[![Demo Video](https://img.shields.io/badge/Demo%20Video-2%3A48%20on%20YouTube-red?logo=youtube&logoColor=white)](https://www.youtube.com/watch?v=-q-CkOcdS14)
 [![Tests](https://img.shields.io/badge/Tests-full%20pyramid%20CI--gated-brightgreen)](.github/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/Coverage-%E2%89%A580%25%20four--metric%20gate-brightgreen)](.github/workflows/ci.yml)
-[![Project Story](https://img.shields.io/badge/Project%20Story-Devpost-003e54)](demo/PROJECT_STORY.md)
+[![Build Journey](https://img.shields.io/badge/Build%20Journey-dev.to-0A0A0A?logo=devdotto)](https://dev.to/efousekis/building-archon-autopilot-where-qwen-proposes-and-humans-control-the-money-4mfg)
+[![Devpost](https://img.shields.io/badge/Devpost-Submitted-003E54?logo=devpost&logoColor=white)](https://devpost.com/software/archon-autopilot-human-gated-ap-agent)
 
 If you're judging the project, start here: [5-minute guide](docs/JUDGE-GUIDE.md) ·
 [16:9 architecture](docs/judge-architecture.svg) ·
