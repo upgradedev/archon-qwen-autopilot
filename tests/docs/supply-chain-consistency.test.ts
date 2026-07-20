@@ -965,9 +965,9 @@ test("SUPPLY 3 — the image inventory and scanner/database inputs are byte-pinn
     dbSha: "0d9ac9d49c93649ea6bf713c60960b46e33c939d49ac7de52df649453d29cf8e",
     syftPolicySha: "426021b3be44dd47ae4ca10de945f7e3fe4fd520619d5825c48e1324f925a533",
     grypePolicySha: "5c7e79f0d60429243c7e085a483997ec0be11d0303b413bafae716c8ffae68b5",
-    runtimePackagesSha: "1314f23bb0d8ff37a45494fdf5763ec944c6f11aa3358d0e20c45ccecfe45659",
-    runtimeInventorySha: "43aaf8086d5bad54e1152cb8e2ae1a7c172aff1c21b72af2bd8dde91dac61786",
-    runtimeArchivesSha: "fa52b2f0cf44a64bc10c96f8989e48b2ca04d6fd20d2bd2eca420d0b52acd5da",
+    runtimePackagesSha: "9b72224ae4993508a325444c099fd9d67d438fa965d193d774f9d50b3b5cf1dd",
+    runtimeInventorySha: "c393f3a9ab0dede0d372344c82797f605a9118d203a17561d75951766b5f1802",
+    runtimeArchivesSha: "e45b06e31c415e7f414b67a450b1e356c19d30d01253a104ba75e827ea05a2ff",
   };
   exactKeys(
     environment,
@@ -1382,7 +1382,7 @@ test("SUPPLY 3 — the image inventory and scanner/database inputs are byte-pinn
   const runtimePackagesBytes = readFileSync(join(ROOT, "runtime-packages.lock"));
   assert.equal(
     sha256(runtimePackagesBytes),
-    "1314f23bb0d8ff37a45494fdf5763ec944c6f11aa3358d0e20c45ccecfe45659",
+    "9b72224ae4993508a325444c099fd9d67d438fa965d193d774f9d50b3b5cf1dd",
     "the reviewed runtime requirement lock identity drifted",
   );
   assert.equal(runtimePackagesBytes.includes(Buffer.from("\r\n")), false, "the runtime requirement lock must use LF");
@@ -1409,7 +1409,7 @@ test("SUPPLY 3 — the image inventory and scanner/database inputs are byte-pinn
   const runtimeInventoryBytes = readFileSync(join(ROOT, "runtime-apk-inventory.lock"));
   assert.equal(
     sha256(runtimeInventoryBytes),
-    "43aaf8086d5bad54e1152cb8e2ae1a7c172aff1c21b72af2bd8dde91dac61786",
+    "c393f3a9ab0dede0d372344c82797f605a9118d203a17561d75951766b5f1802",
     "the reviewed final APK inventory identity drifted",
   );
   assert.equal(runtimeInventoryBytes.includes(Buffer.from("\r\n")), false, "the final APK inventory must use LF");
@@ -1447,7 +1447,7 @@ test("SUPPLY 3 — the image inventory and scanner/database inputs are byte-pinn
   const archiveManifestBytes = readFileSync(archiveManifestPath);
   assert.equal(
     sha256(archiveManifestBytes),
-    "fa52b2f0cf44a64bc10c96f8989e48b2ca04d6fd20d2bd2eca420d0b52acd5da",
+    "e45b06e31c415e7f414b67a450b1e356c19d30d01253a104ba75e827ea05a2ff",
     "the reviewed raw APK archive manifest identity drifted",
   );
   assert.equal(archiveManifestBytes.includes(Buffer.from("\r\n")), false, "the APK archive manifest must use LF");
